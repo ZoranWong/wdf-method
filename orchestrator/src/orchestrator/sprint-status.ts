@@ -208,7 +208,7 @@ export class SprintStatusManager {
     return this.status.global_state.merge_queue ?? { enabled: false, items: [] };
   }
 
-  async enqueueMerge(item: Omit<typeof this.status.global_state.merge_queue.items[0], 'merge_status'>): Promise<void> {
+  async enqueueMerge(item: any): Promise<void> {
     const mq = this.status.global_state.merge_queue;
     if (!mq) throw new Error('Merge queue not initialized');
     // Check duplicate
@@ -219,7 +219,7 @@ export class SprintStatusManager {
     await this.save();
   }
 
-  async updateMergeItem(storyId: string, updates: Partial<typeof this.status.global_state.merge_queue.items[0]>): Promise<void> {
+  async updateMergeItem(storyId: string, updates: any): Promise<void> {
     const mq = this.status.global_state.merge_queue;
     if (!mq) return;
     const item = mq.items.find(i => i.story_id === storyId);

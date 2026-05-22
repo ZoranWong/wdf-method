@@ -151,7 +151,7 @@ export interface GateCheck {
 }
 
 export interface GateCard {
-  phase: number;
+  phase?: number;
   sub_phase?: string;
   checks: GateCheck[];
   all_pass: boolean;
@@ -192,7 +192,7 @@ export interface SubState {
   status: string;
   state_history?: { state: string; at: string; by?: string }[];
   artifacts?: { type: string; path: string; status: string; sha256?: string }[];
-  gate_card?: { checks: GateCheck[]; all_pass: boolean };
+  gate_card?: { phase?: number; checks: GateCheck[]; all_pass: boolean };
   stories?: StoryStatus[];
 }
 
@@ -200,7 +200,7 @@ export interface PhaseState {
   status: string;
   state_history?: { state: string; at: string; by?: string }[];
   artifacts?: { type: string; path: string; status: string; sha256?: string }[];
-  gate_card?: { checks: GateCheck[]; all_pass: boolean };
+  gate_card?: { phase?: number; checks: GateCheck[]; all_pass: boolean };
   substates?: Record<string, SubState>;
   change_requests?: string[];
 }

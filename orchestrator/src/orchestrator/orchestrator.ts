@@ -44,7 +44,7 @@ function parseSimpleToml(content: string): Record<string, any> {
     const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
     if (kvMatch) {
       const key = kvMatch[1];
-      let value = kvMatch[2].trim();
+      let value: any = kvMatch[2].trim();
 
       // Parse value types
       if (value.startsWith('"') && value.endsWith('"')) {
@@ -62,7 +62,7 @@ function parseSimpleToml(content: string): Record<string, any> {
         if (arrMatch) {
           value = arrMatch[1]
             .split(',')
-            .map(s => s.trim().replace(/"/g, ''))
+            .map((s: string) => s.trim().replace(/"/g, ''))
             .filter(Boolean);
         }
       }
@@ -82,9 +82,9 @@ function parseSimpleToml(content: string): Record<string, any> {
 export class PhaseOrchestrator {
   private projectRoot: string;
   private skillRoot: string;
-  private state: SprintStatusManager;
-  private worktree: WorktreeManager;
-  private gateEvaluator: GateEvaluator;
+  private state!: SprintStatusManager;
+  private worktree!: WorktreeManager;
+  private gateEvaluator!: GateEvaluator;
   private storyRunner!: StoryRunner;
   private mergeQueue!: MergeQueueManager;
   private config: Partial<WorkflowConfig>;
@@ -417,8 +417,8 @@ export class PhaseOrchestrator {
   /**
    * Run BE Track sub-phases 4.2 → 4.3 → 4.4 (AUTO-CONTINUE) → 4.5 → 4.6 (CODE_ACCEPTANCE)
    */
-  private async runBETrack(stories: typeof this.state.data.global_state.development_order): Promise<void> {
-    if (stories.length === 0) {
+  private async runBETrack(stories: NonNullable<typeof this.state.data.global_state.development_order>): Promise<void> {
+    if (!stories || stories.length === 0) {
       console.log('  BE Track: No stories');
       return;
     }

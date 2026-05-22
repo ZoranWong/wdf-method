@@ -49,7 +49,7 @@ export interface HealthCheckResult {
   missing: string[];
   unavailable: { name: string; skillInvocation: string; usedIn: string; critical: boolean }[];
   critical_missing: string[];
-  acceptance_commands: { name: string; available: boolean }[];
+  acceptance_commands: { name: string; available: boolean; usedIn?: string }[];
   overall: 'healthy' | 'degraded' | 'blocked';
 }
 
