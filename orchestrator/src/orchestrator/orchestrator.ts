@@ -5,6 +5,7 @@ import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
+import { SignalManager } from './signal-manager.js';
 import { WorkflowConfig, AcceptanceGateConfig, ScopeLockConfig, Track, DevMode, TriageMode } from './types.js';
 
 // Dynamic import for TOML parser since it may not be in deps
@@ -534,6 +535,12 @@ export class PhaseOrchestrator {
     const maxIterations = 100;
 
     while (runs < maxIterations) {
+      // V3.6: Check pause signal before each dispatch
+      if (this.checkPauseSignal()) {
+        console.log('  ⏸  Pause signal detected — halting new dispatches');
+        break;
+      }
+
       const result = await this.storyRunner.runNextStory(track);
       if (!result) break;
       runs++;
@@ -670,5 +677,34 @@ export class PhaseOrchestrator {
    */
   displayMergeQueue(): string {
     return this.mergeQueue.displayQueue();
+  }
+
+  // ── V3.6 Pause/Resume ──
+
+  /** Gracefully pause the workflow */
+  async pause(reason?: string): Promise<string> {
+    SignalManager.pauseAll(reason);
+    const activeAgents = SignalManager.listActiveAgents();
+    for (const agentId of activeAgents) {
+      SignalManager.pauseAgent(agentId);
+    }
+    await this.state.setOverallStatus('paused');
+    return `Paused. ${activeAgents.length} agent(s) notified. Resume: /web-dev-flow resume`;
+  }
+
+  /** Resume from paused state */
+  async resume(): Promise<string> {
+    SignalManager.resumeAll();
+    const activeAgents = SignalManager.listActiveAgents();
+    for (const agentId of activeAgents) {
+      SignalManager.clearAgentCommand(agentId);
+    }
+    await this.state.setOverallStatus('implementation');
+    return `Resumed. ${activeAgents.length} agent(s) will continue at next sub-step.`;
+  }
+
+  /** Check if pause signal is active (called before each story dispatch) */
+  private checkPauseSignal(): boolean {
+    return SignalManager.isPaused();
   }
 }
