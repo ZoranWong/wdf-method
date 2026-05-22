@@ -108,8 +108,7 @@ export class PhaseOrchestrator {
     } else {
       this.state = await SprintStatusManager.load(trackingPath);
     }
-    // V3.6: Initialize signals in project directory (survives reboots, protected by FS perms)
-    SignalManager.init(this.projectRoot);
+    // V3.6: Signals at ~/.wdf-method/signals/ — outside all worktrees, auto-created on first use
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);

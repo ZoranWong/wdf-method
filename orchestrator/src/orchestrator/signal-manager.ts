@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 
-// V3.6: Signals live in the project's .claude/ directory, not /tmp.
-// Survives reboots, protected by project filesystem permissions.
-let SIGNAL_DIR = '/tmp/web-dev-flow/signals'; // legacy default, overridden in init()
+// V3.6: Signals live in user home, outside any git worktree.
+// All worktrees (main + story/*) share the same home directory.
+// Survives reboots, protected by user filesystem permissions.
+let SIGNAL_DIR = join(homedir(), '.wdf-method', 'signals');
 
 interface PauseCommand {
   type: 'pause' | 'abort' | 'none';
@@ -25,11 +27,8 @@ interface AgentStatus {
  * All agents (main orchestrator + story agents) share this directory.
  */
 export class SignalManager {
-  /** Initialize signal directory. Call once at orchestrator startup. */
-  static init(projectRoot: string): void {
-    SIGNAL_DIR = join(projectRoot, '.claude', 'signals');
-    if (!existsSync(SIGNAL_DIR)) mkdirSync(SIGNAL_DIR, { recursive: true });
-  }
+  // Signals at ~/.wdf-method/signals/ — outside all git worktrees, persists across reboots
+  // No need for init() — path is constant and always accessible from any worktree
 
   /** Write global pause signal */
   static pauseAll(reason?: string): void {
