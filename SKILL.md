@@ -1,5 +1,5 @@
 ---
-name: web-dev-flow
+name: wdf
 version: "3.6.0"
 description: Automates the full lifecycle of web project development — PRD through frontend-backend parallel implementation with dual-layer FSM state management, Gate Cards, Change Requests, acceptance command patterns, quality gates, and auto-run hands-free execution mode. Restructured around BMAD's 4-phase model (Analysis → Planning → Solutioning → Implementation). Use when the user says "start web project", "web development workflow", "build a web app", "full-stack development", "web-dev-flow", or wants to go from idea to deployed web application.
 allowed-tools: Read Write Bash Grep Glob Edit Agent Task Skill
