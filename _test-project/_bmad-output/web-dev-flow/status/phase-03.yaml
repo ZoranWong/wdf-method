@@ -1,0 +1,27 @@
+phase_3:
+  status: "IN_PROGRESS"
+  state_history:
+    - { state: "NOT_STARTED", at: "2026-05-21T09:05:00Z" }
+    - { state: "IN_PROGRESS", at: "2026-05-21T17:35:00Z" }
+  gate_card:
+    phase: 3
+    checks:
+      - { id: "G3-01", status: "pass" }
+      - { id: "G3-02", status: "pass" }
+      - { id: "G3-03", status: "pass" }
+      - { id: "G3-04", status: "pass" }
+      - { id: "G3-05", status: "pass" }
+      - { id: "G3-06", status: "pass" }
+    all_pass: true
+  artifacts:
+    - { type: "epics", path: "epics.md", status: "locked" }
+  substates:
+    phase_3_1: { status: "LOCKED" }
+    phase_3_2: { status: "LOCKED" }
+    phase_3_3: { status: "LOCKED" }
+    phase_3_4: { status: "SKIPPED" }
+    phase_3_5: { status: "LOCKED" }
+    phase_3_6: { status: "LOCKED" }
+    phase_3_7: { status: "LOCKED" }
+    phase_3_8: { status: "NOT_STARTED" }
+    phase_3_9: { status: "NOT_STARTED" }

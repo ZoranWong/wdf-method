@@ -1,0 +1,61 @@
+# web-dev-flow — Module Configuration
+# This file is read by the BMAD installer to configure project setup.
+# Variables from core module (user_name, project_name, output_folder) are inserted.
+
+code: wdf
+name: "Web Dev Flow"
+description: "Full-lifecycle web development automation: PRD through parallel BE/FE implementation with FSM-gated quality"
+default_selected: false
+
+output_folder:
+  prompt: "Where should web-dev-flow output artifacts be stored?"
+  default: "_bmad-output"
+  result: "{project-root}/{value}"
+
+dev_mode:
+  prompt: "What is your project architecture style?"
+  default: "separated"
+  result: "{value}"
+  single-select:
+    - value: "separated"
+      label: "Separated — Frontend and backend are separate projects"
+    - value: "full_stack"
+      label: "Full-stack — Single unified codebase (Next.js, Nuxt, Remix)"
+
+default_frontend_framework:
+  prompt: "Preferred frontend framework?"
+  default: "react"
+  result: "{value}"
+  single-select:
+    - value: "react"
+      label: "React + Vite"
+    - value: "vue"
+      label: "Vue + Vite"
+    - value: "svelte"
+      label: "Svelte + Vite"
+    - value: "next"
+      label: "Next.js (full-stack)"
+
+default_backend_framework:
+  prompt: "Preferred backend framework?"
+  default: "express"
+  result: "{value}"
+  single-select:
+    - value: "express"
+      label: "Express.js"
+    - value: "nest"
+      label: "NestJS"
+    - value: "fastify"
+      label: "Fastify"
+    - value: "none"
+      label: "None (frontend-only)"
+
+# Directories to create during installation
+directories:
+  - "{output_folder}/web-dev-flow"
+  - "{output_folder}/web-dev-flow/_output/planning"
+  - "{output_folder}/web-dev-flow/_output/solutioning"
+  - "{output_folder}/web-dev-flow/_output/acceptance"
+  - "{output_folder}/web-dev-flow/status"
+  - "{output_folder}/web-dev-flow/status/merge-queue/items"
+  - "{output_folder}/web-dev-flow/status/stories"

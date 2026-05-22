@@ -1,0 +1,278 @@
+# ─────────────────────────────────────────
+# Gate Card Schema — web-dev-flow V3
+# Defines the structure of a phase gate card that MUST be satisfied
+# before a phase can be entered.
+# ─────────────────────────────────────────
+
+schema: "gate-card"
+version: "3.6.0"
+
+gate_card:
+  phase:
+    type: "integer"
+    description: "The phase this gate card controls (1-4)"
+    minimum: 1
+    maximum: 4
+
+  sub_phase:
+    type: "string"
+    description: "Sub-phase identifier if applicable (e.g. '2.1')"
+    required: false
+    pattern: "^[1-4]\\.\\d+$"
+
+  enters_from:
+    type: "integer"
+    description: "Phase from which entry is allowed"
+    minimum: 0
+    maximum: 3
+
+  checks:
+    type: "array"
+    description: "Ordered list of gate checks that must all pass"
+    min_items: 1
+    items:
+
+      - id:
+          type: "string"
+          description: "Unique check identifier (e.g. 'G2-01')"
+          pattern: "^G[1-4]-\\d{2}$"
+
+        description:
+          type: "string"
+          description: "Human-readable description of what this check verifies"
+
+        type:
+          type: "string"
+          description: "The kind of check to perform"
+          enum:
+            - "artifact_exists"           # File must exist at path
+            - "artifact_metadata"         # Frontmatter field must match expected value
+            - "artifact_checksum"         # SHA-256 must match
+            - "user_confirmation"         # User must explicitly confirm
+            - "dependency_status"         # Dependent artifact must have specified status
+            - "quality_threshold"         # Numeric threshold must be met
+            - "all_stories_complete"      # All stories in a set must be complete
+            - "code_acceptance"           # Code acceptance checks
+            - "feature_acceptance"        # Feature acceptance checks
+            - "ui_acceptance"             # UI acceptance checks
+            - "e2e_browser_acceptance"    # E2E browser acceptance checks
+            - "scope_boundary"             # Scope write paths within implementation_boundary
+
+        source:
+          type: "string"
+          description: "Path or reference to the artifact to check (e.g. '{prd_output}')"
+          required: false
+
+        field:
+          type: "string"
+          description: "The frontmatter field to inspect (for artifact_metadata type)"
+          required: false
+
+        operator:
+          type: "string"
+          description: "Comparison operator"
+          enum:
+            - "eq"
+            - "neq"
+            - "in"
+            - "not_in"
+            - "contains_all"
+            - "gte"
+            - "lte"
+          required: false
+
+        expected:
+          description: "Expected value(s). Type depends on operator."
+          required: false
+
+        status:
+          type: "string"
+          description: "Result of this check after evaluation"
+          enum: ["pending", "pass", "fail", "skipped"]
+          default: "pending"
+
+  all_pass:
+    type: "boolean"
+    description: "Aggregate: true only if every check.status == 'pass'"
+    default: false
+
+  # ── Code Acceptance Fields (for code_acceptance check type) ──
+  code_acceptance:
+    type: "object"
+    description: "Code acceptance check fields (valid when type = 'code_acceptance')"
+    required: false
+    properties:
+      review_passed:
+        type: "boolean"
+        description: "Code review completed with approval"
+      test_coverage:
+        type: "number"
+        description: "Test coverage percentage (e.g. 80)"
+      acceptance_checks_all_pass:
+        type: "boolean"
+        description: "All acceptance_check commands exit 0"
+
+  # ── Feature Acceptance Fields (for feature_acceptance check type) ──
+  feature_acceptance:
+    type: "object"
+    description: "Feature acceptance check fields (valid when type = 'feature_acceptance')"
+    required: false
+    properties:
+      all_stories_code_accepted:
+        type: "boolean"
+        description: "All stories have passed code acceptance"
+      contract_verified:
+        type: "boolean"
+        description: "API contract matches spec exactly"
+      e2e_critical_paths_pass:
+        type: "boolean"
+        description: "E2E tests for all critical paths pass"
+
+  # ── UI Acceptance Fields (for ui_acceptance check type) ──
+  ui_acceptance:
+    type: "object"
+    description: "UI acceptance check fields (valid when type = 'ui_acceptance')"
+    required: false
+    properties:
+      visual_parity:
+        type: "string"
+        description: "Visual comparison against design specs"
+        enum: ["pass", "fail"]
+      a11y_critical_issues:
+        type: "number"
+        description: "Number of critical a11y issues (should be 0)"
+      a11y_serious_issues:
+        type: "number"
+        description: "Number of serious a11y issues (should be 0)"
+      lighthouse_performance:
+        type: "number"
+        description: "Lighthouse performance score (0-100)"
+      lighthouse_accessibility:
+        type: "number"
+        description: "Lighthouse accessibility score (0-100)"
+      lighthouse_best_practices:
+        type: "number"
+        description: "Lighthouse best practices score (0-100)"
+      bundle_size_kb:
+        type: "number"
+        description: "JavaScript bundle size in KB"
+
+  # ── E2E Browser Acceptance Fields (for e2e_browser_acceptance check type) ──
+  e2e_browser_acceptance:
+    type: "object"
+    description: "E2E browser acceptance check fields (valid when type = 'e2e_browser_acceptance')"
+    required: false
+    properties:
+      browser_tests_pass:
+        type: "boolean"
+        description: "Browser automation tests pass"
+      visual_regression_pct_diff:
+        type: "number"
+        description: "Visual regression percentage difference"
+      cross_browser:
+        type: "object"
+        properties:
+          chrome:
+            type: "string"
+            enum: ["pass", "fail"]
+          firefox:
+            type: "string"
+            enum: ["pass", "fail"]
+          safari:
+            type: "string"
+            enum: ["pass", "fail"]
+      responsive:
+        type: "object"
+        properties:
+          mobile:
+            type: "string"
+            enum: ["pass", "fail"]
+          tablet:
+            type: "string"
+            enum: ["pass", "fail"]
+          desktop:
+            type: "string"
+            enum: ["pass", "fail"]
+      network:
+        type: "object"
+        properties:
+          slow_3g:
+            type: "string"
+            enum: ["pass", "fail"]
+          offline:
+            type: "string"
+            enum: ["pass", "fail"]
+
+# ── Example: Phase 2 Gate Card ──
+example: |
+  gate_card:
+    phase: 2
+    enters_from: 1
+    checks:
+      - id: "G2-01"
+        description: "Product brief frontmatter status is verified or locked"
+        type: "artifact_metadata"
+        source: "{product_brief_output}"
+        field: "frontmatter.status"
+        operator: "in"
+        expected: ["verified", "locked"]
+        status: "pending"
+
+      - id: "G2-02"
+        description: "PRD contains all mandatory sections"
+        type: "artifact_metadata"
+        source: "{prd_output}"
+        field: "frontmatter.sections_complete"
+        operator: "contains_all"
+        expected:
+          - executive_summary
+          - problem_statement
+          - functional_requirements
+          - personas
+
+      - id: "G2-03"
+        description: "User has reviewed the planning phase outputs"
+        type: "user_confirmation"
+        status: "pending"
+
+    all_pass: false
+
+# ── Example: Code Acceptance Gate Card (Phase 4.6) ──
+  code_acceptance_example: |
+    gate_card:
+      phase: 4
+      sub_phase: "4.6"
+      enters_from: 3
+      checks:
+        - id: "G4.6-01"
+          description: "All backend stories pass code review"
+          type: "code_acceptance"
+        - id: "G4.6-02"
+          description: "Test coverage meets minimum threshold"
+          type: "quality_threshold"
+          expected: 80
+      all_pass: false
+      code_acceptance:
+        review_passed: false
+        test_coverage: 0
+        acceptance_checks_all_pass: false
+
+# ── Example: UI Acceptance Gate Card (Phase 4.12) ──
+  ui_acceptance_example: |
+    gate_card:
+      phase: 4
+      sub_phase: "4.12"
+      enters_from: 3
+      checks:
+        - id: "G4.12-01"
+          description: "All frontend pages pass UI acceptance"
+          type: "ui_acceptance"
+      all_pass: false
+      ui_acceptance:
+        visual_parity: "fail"
+        a11y_critical_issues: 0
+        a11y_serious_issues: 0
+        lighthouse_performance: 90
+        lighthouse_accessibility: 90
+        lighthouse_best_practices: 90
+        bundle_size_kb: 500

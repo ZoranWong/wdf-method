@@ -1,0 +1,342 @@
+# Per-Story Status Schema — web-dev-flow V3
+#
+# Each story gets its own status file: _bmad-output/web-dev-flow/stories/{story_id}-status.yaml
+# Pattern inspired by StoryRail's per-run files: one agent writes, no parallel conflicts.
+# Track/Phase status is DERIVED by reading all story files, not centrally stored.
+#
+# Version: 1.0.0
+
+schema: "story_status"
+version: "3.6.0"
+
+story_status:
+  artifact_type:
+    type: "string"
+    description: "Always 'story_status'"
+    const: "story_status"
+
+  story_id:
+    type: "string"
+    description: "Unique story identifier (e.g. 'S-3.2')"
+    required: true
+
+  title:
+    type: "string"
+    description: "Short story title for display"
+    required: true
+
+  track:
+    type: "string"
+    description: "Which track this story belongs to"
+    enum: ["backend", "frontend", "full-stack"]
+    required: true
+
+  order:
+    type: "integer"
+    description: "Global sequence number from development_order"
+    minimum: 1
+    required: true
+
+  effort:
+    type: "string"
+    description: "Story effort estimate"
+    enum: ["S", "M", "L", "XL"]
+    required: false
+
+  updated_at:
+    type: "string"
+    description: "ISO 8601 timestamp of last modification to this file"
+    required: true
+
+  # ── Core FSM State ──
+
+  status:
+    type: "string"
+    description: "Current web-dev-flow story state"
+    enum:
+      - "NOT_STARTED"
+      - "IN_PROGRESS"
+      - "IMPLEMENTED"
+      - "TESTED"
+      - "SPEC_COMPLIANT"
+      - "A11Y_CHECKED"
+      - "SUBMITTED"
+      - "APPROVED"
+      - "BLOCKED_BY_DEPENDENCY"
+      - "CODE_ACCEPTED"
+      - "UI_ACCEPTED"
+      - "FEATURE_ACCEPTED"
+      - "E2E_BROWSER_ACCEPTED"
+    default: "NOT_STARTED"
+
+  bmad_story_state:
+    type: "string"
+    description: "BMAD story development state"
+    enum: ["backlog", "ready-for-dev", "in-progress", "review", "done"]
+
+  bmad_review_passed:
+    type: "boolean"
+    required: false
+
+  # ── Timing ──
+
+  started_at:
+    type: "string"
+    description: "ISO 8601 when story entered IN_PROGRESS"
+    required: false
+
+  completed_at:
+    type: "string"
+    description: "ISO 8601 when story reached CODE_ACCEPTED"
+    required: false
+
+  # ── Recovery ──
+
+  last_completed_substep:
+    type: "string"
+    description: "ID of last completed sub-step (e.g. '4c', '4f2'). Used for session recovery."
+    required: false
+
+  # ── Dependencies (read from development_order, cached here) ──
+
+  depends_on:
+    type: "array"
+    description: "Stories that must be CODE_ACCEPTED before this one can start"
+    required: false
+    items:
+      type: "object"
+      properties:
+        story_id:
+          type: "string"
+        track:
+          type: "string"
+          enum: ["backend", "frontend", "full-stack"]
+
+  # ── Scope ──
+
+  scope_write:
+    type: "array"
+    description: "Files/directories this story is allowed to modify"
+    items:
+      type: "string"
+    required: true
+
+  acceptance_check:
+    type: "array"
+    description: "Executable commands that verify story completion"
+    items:
+      type: "string"
+    required: true
+
+  # ── Step History (v2.0 simplified: only started + completed) ──
+
+  step_history:
+    type: "array"
+    description: "Key step transitions. Only written at story start and story complete."
+    required: false
+    items:
+      type: "object"
+      properties:
+        step:
+          type: "string"
+          enum: ["started", "completed"]
+        at:
+          type: "string"
+          description: "ISO 8601 timestamp"
+        substep:
+          type: "string"
+          description: "Sub-step ID (null for started)"
+        summary:
+          type: "string"
+          description: "1-2 sentence summary of what was completed"
+        status:
+          type: "string"
+          enum: ["PASS", "FAIL", "WARNING"]
+
+  # ── Scope Audit (embedded, no separate log file) ──
+
+  scope_audit:
+    type: "object"
+    description: "Scope compliance summary for this story"
+    required: false
+    properties:
+      gate_passed:
+        type: "boolean"
+      exit_verified:
+        type: "boolean"
+      exit_violations:
+        type: "integer"
+      ca05_passed:
+        type: "boolean"
+
+  # ── Slices (optional, for L/XL stories) ──
+
+  slices:
+    type: "array"
+    description: "Story slices — split a large story into independently implementable units"
+    required: false
+    items:
+      type: "object"
+      properties:
+        slice_id:
+          type: "string"
+          description: "Unique slice identifier (e.g. 'S-3.2-P0')"
+        title:
+          type: "string"
+        depends_on_slices:
+          type: "array"
+          description: "Other slices in this story that must be CODE_ACCEPTED first"
+          items:
+            type: "string"
+        scope_write:
+          type: "array"
+          items:
+            type: "string"
+        acceptance_check:
+          type: "array"
+          items:
+            type: "string"
+        status:
+          type: "string"
+          enum: ["NOT_STARTED", "IN_PROGRESS", "CODE_ACCEPTED", "BLOCKED_BY_DEPENDENCY"]
+          default: "NOT_STARTED"
+        started_at:
+          type: "string"
+        completed_at:
+          type: "string"
+
+  # ── Acceptance Results ──
+
+  code_acceptance:
+    type: "object"
+    description: "CODE ACCEPTANCE results"
+    required: false
+    properties:
+      review_passed:
+        type: "boolean"
+      test_coverage:
+        type: "number"
+      acceptance_checks_all_pass:
+        type: "boolean"
+      reviewer_session:
+        type: "string"
+
+  feature_acceptance:
+    type: "object"
+    required: false
+    properties:
+      all_stories_code_accepted:
+        type: "boolean"
+      contract_verified:
+        type: "boolean"
+
+  ui_acceptance:
+    type: "object"
+    required: false
+    properties:
+      visual_parity:
+        type: "string"
+        enum: ["pass", "fail"]
+      a11y_critical_issues:
+        type: "integer"
+      a11y_serious_issues:
+        type: "integer"
+      lighthouse_performance:
+        type: "number"
+      lighthouse_accessibility:
+        type: "number"
+      lighthouse_best_practices:
+        type: "number"
+
+  e2e_browser_acceptance:
+    type: "object"
+    required: false
+    properties:
+      browser_tests_pass:
+        type: "boolean"
+      visual_regression_pct_diff:
+        type: "number"
+      cross_browser:
+        type: "object"
+        properties:
+          chrome:
+            type: "string"
+            enum: ["pass", "fail"]
+          firefox:
+            type: "string"
+            enum: ["pass", "fail"]
+          safari:
+            type: "string"
+            enum: ["pass", "fail"]
+
+  # ── Handoff ──
+
+  handoff:
+    type: "object"
+    required: false
+    properties:
+      self_check:
+        type: "string"
+        description: "Path to self-check.md"
+      handoff:
+        type: "string"
+        description: "Path to handoff.md"
+
+  # ── State History ──
+
+  state_history:
+    type: "array"
+    description: "Ordered list of state transitions"
+    required: false
+    items:
+      type: "object"
+      properties:
+        state:
+          type: "string"
+        at:
+          type: "string"
+
+# ─────────────────────────────────────────
+# Derivation Rules (not stored, computed on read)
+# ─────────────────────────────────────────
+
+derivation:
+  description: |
+    Track and Phase status is NOT stored in sprint-status.yaml.
+    It is DERIVED by reading all stories/{story_id}-status.yaml files.
+
+  story_status:
+    description: |
+      If story has slices:
+        story.status = CODE_ACCEPTED when all slices are CODE_ACCEPTED
+        story.status = IN_PROGRESS when any slice is IN_PROGRESS
+        Otherwise: most advanced slice status
+      If story has no slices:
+        story.status is read directly from the file.
+
+  track_status:
+    description: |
+      Read all story files for the track. Aggregate:
+
+      stories_total:          count of all story files for this track
+      stories_code_accepted:  count where status == CODE_ACCEPTED (or better)
+      stories_in_progress:    count where status == IN_PROGRESS
+      stories_blocked:        count where status == BLOCKED_BY_DEPENDENCY
+      stories_not_started:    count where status == NOT_STARTED
+
+      track.status:
+        NOT_STARTED     → all stories NOT_STARTED
+        IN_PROGRESS     → at least one story IN_PROGRESS or not all complete
+        COMPLETED       → all stories CODE_ACCEPTED (or better)
+        PARTIALLY_BLOCKED → some blocked, some complete, none in progress
+
+      track.mvp_ready:  all stories have at least P0 slice CODE_ACCEPTED
+      track.full_ready: all stories have all slices CODE_ACCEPTED
+
+  phase_status:
+    description: |
+      phase_4.status:
+        IN_PROGRESS           → at least one track IN_PROGRESS
+        BE_TRACK_COMPLETE     → backend track COMPLETED
+        FE_TRACK_COMPLETE     → frontend track COMPLETED
+        FULL_STACK_INTEGRATED → both tracks COMPLETED + integration done

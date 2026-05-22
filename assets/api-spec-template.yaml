@@ -1,0 +1,273 @@
+openapi: "3.0.3"
+info:
+  title: "{PROJECT_NAME} API"
+  description: "REST API for {PROJECT_NAME} web application."
+  version: "3.6.0"
+  contact:
+    name: "{TEAM_NAME}"
+    email: "{TEAM_EMAIL}"
+
+servers:
+  - url: "http://localhost:{PORT}/api/v1"
+    description: "Local development"
+  - url: "https://api.{DOMAIN}/v1"
+    description: "Production"
+
+tags:
+  - name: "Health"
+    description: "Health check and status endpoints"
+  - name: "Auth"
+    description: "Authentication and authorization"
+
+paths:
+  # ── Health ──
+  /health:
+    get:
+      tags: ["Health"]
+      summary: "Health check"
+      operationId: healthCheck
+      responses:
+        "200":
+          description: "Service is healthy"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  uptime:
+                    type: number
+                    example: 12345.67
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+  # ── Auth ──
+  /auth/login:
+    post:
+      tags: ["Auth"]
+      summary: "Authenticate user"
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["email", "password"]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+                password:
+                  type: string
+                  format: password
+                  example: "••••••••"
+      responses:
+        "200":
+          description: "Login successful"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: "JWT access token"
+                  refreshToken:
+                    type: string
+                    description: "JWT refresh token"
+                  expiresIn:
+                    type: integer
+                    example: 3600
+                  user:
+                    $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/refresh:
+    post:
+      tags: ["Auth"]
+      summary: "Refresh access token"
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["refreshToken"]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: "Token refreshed"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresIn:
+                    type: integer
+
+  /auth/logout:
+    post:
+      tags: ["Auth"]
+      summary: "Logout user (invalidate tokens)"
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: "Logged out"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              example: "Invalid request parameters"
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: ["admin", "user", "viewer"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            limit:
+              type: integer
+            total:
+              type: integer
+            totalPages:
+              type: integer
+            hasNext:
+              type: boolean
+            hasPrev:
+              type: boolean
+
+  responses:
+    Unauthorized:
+      description: "Authentication required"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Invalid or expired token"
+
+    Forbidden:
+      description: "Insufficient permissions"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: "FORBIDDEN"
+              message: "Insufficient permissions"
+
+    NotFound:
+      description: "Resource not found"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+
+    ValidationError:
+      description: "Validation failed"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Invalid request parameters"
+              details:
+                - field: "email"
+                  message: "Must be a valid email address"
+
+    InternalError:
+      description: "Internal server error"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"

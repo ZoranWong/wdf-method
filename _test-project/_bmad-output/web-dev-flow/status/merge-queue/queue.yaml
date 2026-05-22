@@ -1,0 +1,6 @@
+# Merge Queue Metadata
+merge_queue:
+  next_merge_order: 10
+  total_enqueued: 0
+  total_merged: 0
+  total_failed: 0

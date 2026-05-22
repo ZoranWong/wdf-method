@@ -1,0 +1,35 @@
+{
+  "name": "@web-dev-flow/orchestrator",
+  "version": "3.2.0",
+  "description": "web-dev-flow V3.2 execution engine — drives phase progression, story agent dispatch, merge queue processing, and continuous self-validation",
+  "type": "module",
+  "main": "dist/orchestrator/index.js",
+  "bin": {
+    "web-dev-flow": "dist/orchestrator/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/orchestrator/index.js",
+    "dev": "tsx src/orchestrator/index.ts",
+    "status": "tsx src/orchestrator/index.ts status",
+    "run": "tsx src/orchestrator/index.ts run",
+    "merge-queue": "tsx src/orchestrator/index.ts merge-queue",
+    "validate-state": "tsx src/orchestrator/index.ts validate-state",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "simple-git": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,322 @@
+# ─────────────────────────────────────────
+# Artifact Frontmatter Schema — web-dev-flow V3
+# Every output artifact produced by the workflow MUST include this
+# YAML frontmatter. This enables automated artifact tracking,
+# gate card validation, and sprint status reconciliation.
+# ─────────────────────────────────────────
+
+schema: "artifact-frontmatter"
+version: "3.6.0"
+
+artifact_type:
+  type: "string"
+  description: "The type of artifact this file represents"
+  enum:
+    # Analysis Phase (Phase 1)
+    - "impact_map"
+    - "event_storming"
+    - "jtbd_cards"
+    - "brainstorm_doc"
+    - "domain_research"
+    - "product_brief"
+    # Planning Phase (Phase 2)
+    - "prd"
+    - "story_map"
+    - "prioritization"
+    - "user_flows"
+    - "sitemap"
+    - "wireframes"
+    - "design_tokens"
+    - "design_acceptance"
+    - "component_specs"
+    - "interaction_spec"
+    # Solutioning Phase (Phase 3)
+    - "architecture"
+    - "system_context"
+    - "architecture_style"
+    - "container_design"
+    - "quality_attributes"
+    - "component_design"
+    - "epics"
+    - "sprint_plan"
+    - "story"
+    - "api_spec"
+    - "db_schema"
+    - "readiness_check"
+    # Implementation Phase (Phase 4)
+    - "scaffold_report"
+    - "migration_report"
+    - "api_client_report"
+    - "dev_log"
+    - "test_report"
+    - "completion_review"
+    - "design_system_report"
+    - "component_specs"
+    - "integration_report"
+    - "retrospective"
+    - "audit_report"
+    # Acceptance Reports (Phase 4)
+    - "acceptance_report"
+    - "feature_acceptance_report"
+    - "ui_acceptance_report"
+    - "e2e_browser_report"
+    - "code_acceptance_report"
+
+phase:
+  type: "integer"
+  description: "The phase that produced this artifact (1-4)"
+  minimum: 1
+  maximum: 4
+
+sub_phase:
+  type: "string"
+  description: "Sub-phase identifier if applicable (e.g. '2.7', '4.4')"
+  required: false
+  pattern: "^[1-4]\\.\\d+$"
+
+status:
+  type: "string"
+  description: "Current state of this artifact"
+  enum:
+    - "draft"
+    - "reviewed"
+    - "approved"
+    - "locked"
+    - "code_accepted"
+    - "feature_accepted"
+    - "ui_accepted"
+    - "e2e_browser_accepted"
+
+checksum:
+  type: "string"
+  description: "SHA-256 hash of the artifact body (everything after the frontmatter --- delimiter)"
+  pattern: "^[a-f0-9]{64}$"
+
+created_at:
+  type: "string"
+  description: "ISO 8601 timestamp when this artifact was first created"
+  pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+
+updated_at:
+  type: "string"
+  description: "ISO 8601 timestamp of the last modification"
+  pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+
+version:
+  type: "string"
+  description: "Semantic version of this specific artifact"
+  pattern: "^\\d+\\.\\d+\\.\\d+$"
+
+# ── BMAD State Tracking (V3) ──
+bmad_state:
+  type: "string"
+  description: "BMAD skill execution state for this artifact"
+  enum:
+    - "RESEARCHING"
+    - "ANALYZING"
+    - "DOCUMENTED"
+    - "VERIFIED"
+    - "DRAFTING"
+    - "ELABORATING"
+    - "REVIEWING"
+    - "FINAL"
+    - "DESIGNING"
+    - "VALIDATING"
+
+bmad_review_passed:
+  type: "boolean"
+  description: "Whether the BMAD review process passed for this artifact"
+  required: false
+
+# ── Acceptance Fields (V3) ──
+
+# Present when status = "code_accepted"
+code_acceptance:
+  type: "object"
+  description: "Code acceptance results (for code-acceptance reports)"
+  required: false
+  properties:
+    review_passed:
+      type: "boolean"
+    test_coverage:
+      type: "number"
+    acceptance_checks_all_pass:
+      type: "boolean"
+    reviewer_session:
+      type: "string"
+
+# Present when status = "feature_accepted"
+feature_acceptance:
+  type: "object"
+  description: "Feature acceptance results (for feature-acceptance reports)"
+  required: false
+  properties:
+    all_stories_code_accepted:
+      type: "boolean"
+    contract_verified:
+      type: "boolean"
+    e2e_critical_paths_pass:
+      type: "boolean"
+
+# Present when status = "ui_accepted"
+ui_acceptance:
+  type: "object"
+  description: "UI acceptance results (for ui-acceptance reports)"
+  required: false
+  properties:
+    visual_parity:
+      type: "string"
+      enum: ["pass", "fail"]
+    a11y_critical_issues:
+      type: "integer"
+    a11y_serious_issues:
+      type: "integer"
+    lighthouse_performance:
+      type: "number"
+    lighthouse_accessibility:
+      type: "number"
+    lighthouse_best_practices:
+      type: "number"
+    bundle_size_kb:
+      type: "number"
+
+# Present when status = "e2e_browser_accepted"
+e2e_browser_acceptance:
+  type: "object"
+  description: "E2E browser acceptance results (for e2e-browser reports)"
+  required: false
+  properties:
+    browser_tests_pass:
+      type: "boolean"
+    visual_regression_pct_diff:
+      type: "number"
+    cross_browser:
+      type: "object"
+      properties:
+        chrome:
+          type: "string"
+          enum: ["pass", "fail"]
+        firefox:
+          type: "string"
+          enum: ["pass", "fail"]
+        safari:
+          type: "string"
+          enum: ["pass", "fail"]
+    responsive:
+      type: "object"
+      properties:
+        mobile:
+          type: "string"
+          enum: ["pass", "fail"]
+        tablet:
+          type: "string"
+          enum: ["pass", "fail"]
+        desktop:
+          type: "string"
+          enum: ["pass", "fail"]
+    network:
+      type: "object"
+      properties:
+        slow_3g:
+          type: "string"
+          enum: ["pass", "fail"]
+        offline:
+          type: "string"
+          enum: ["pass", "fail"]
+
+# ── Parent Phase Context ──
+parent_phase:
+  type: "object"
+  description: "Context from the parent workflow phase"
+  required: false
+  properties:
+    prd:
+      type: "string"
+      description: "Reference to the PRD artifact"
+      required: false
+    requirements_frozen:
+      type: "boolean"
+      description: "Whether requirements were frozen when this artifact was created"
+    development_order_ref:
+      type: "string"
+      description: "Reference to the development order this artifact is part of"
+      required: false
+
+# ─────────────────────────────────────────
+# Example Frontmatter
+# ─────────────────────────────────────────
+
+example: |
+  ---
+  artifact_type: prd
+  phase: 2
+  sub_phase: "2.7"
+  status: approved
+  checksum: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0ab1
+  created_at: "2026-05-17T11:00:00Z"
+  updated_at: "2026-05-17T11:30:00Z"
+  version: "3.6.0"
+  bmad_state: FINAL
+  bmad_review_passed: true
+  parent_phase:
+    prd: null
+    requirements_frozen: true
+    development_order_ref: null
+  ---
+
+# ─────────────────────────────────────────
+# Example: Code Acceptance Report Frontmatter
+# ─────────────────────────────────────────
+
+code_acceptance_example: |
+  ---
+  artifact_type: code_acceptance_report
+  phase: 4
+  sub_phase: "4.6"
+  status: code_accepted
+  checksum: b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0ab1c2
+  created_at: "2026-05-17T14:00:00Z"
+  updated_at: "2026-05-17T14:15:00Z"
+  version: "3.6.0"
+  bmad_state: VERIFIED
+  bmad_review_passed: true
+  code_acceptance:
+    review_passed: true
+    test_coverage: 85
+    acceptance_checks_all_pass: true
+    reviewer_session: "cr-session-123"
+  parent_phase:
+    prd: "wx-agent-prd"
+    requirements_frozen: true
+    development_order_ref: "wx-agent-dev-order"
+  ---
+
+# ─────────────────────────────────────────
+# Example: UI Acceptance Report Frontmatter
+# ─────────────────────────────────────────
+
+ui_acceptance_example: |
+  ---
+  artifact_type: ui_acceptance_report
+  phase: 4
+  sub_phase: "4.12"
+  status: ui_accepted
+  checksum: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0ab1c2d3
+  created_at: "2026-05-17T15:00:00Z"
+  updated_at: "2026-05-17T15:20:00Z"
+  version: "3.6.0"
+  bmad_state: VERIFIED
+  bmad_review_passed: true
+  ui_acceptance:
+    visual_parity: "pass"
+    a11y_critical_issues: 0
+    a11y_serious_issues: 0
+    lighthouse_performance: 95
+    lighthouse_accessibility: 92
+    lighthouse_best_practices: 90
+    bundle_size_kb: 320
+  parent_phase:
+    prd: "wx-agent-prd"
+    requirements_frozen: true
+    development_order_ref: "wx-agent-dev-order"
+  ---

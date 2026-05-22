@@ -1,0 +1,9 @@
+phase_4_fe:
+  status: "NOT_STARTED"
+  substates:
+    phase_4_7: { status: "NOT_STARTED" }
+    phase_4_8: { status: "NOT_STARTED" }
+    phase_4_9: { status: "NOT_STARTED" }
+    phase_4_10: { status: "NOT_STARTED", stories: [] }
+    phase_4_11: { status: "NOT_STARTED" }
+    phase_4_12: { status: "NOT_STARTED" }

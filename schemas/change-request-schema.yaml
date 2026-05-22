@@ -1,0 +1,154 @@
+# ─────────────────────────────────────────
+# Change Request Schema — web-dev-flow V3
+# Defines the structure of a change request (CR) opened when a
+# downstream phase discovers a defect in an upstream artifact.
+# ─────────────────────────────────────────
+
+schema: "change-request"
+version: "3.6.0"
+
+id:
+  type: "string"
+  description: "Unique identifier for the CR"
+  pattern: "^CR-\\d{3}$"
+  example: "CR-001"
+
+severity:
+  type: "string"
+  description: "Severity level of the CR"
+  enum:
+    - "blocking"
+    - "non_blocking"
+
+title:
+  type: "string"
+  description: "Brief title summarizing the issue"
+  max_length: 100
+
+description:
+  type: "string"
+  description: "Detailed explanation of the problem, including impact on current phase"
+
+proposed_fix:
+  type: "string"
+  description: "Specific change that should be made to the source artifact"
+
+source_phase:
+  type: "integer"
+  description: "Phase where the fix must be applied (the phase that produced the artifact)"
+  minimum: 1
+  maximum: 4
+
+target_phase:
+  type: "integer"
+  description: "Phase where the issue was discovered (the downstream phase)"
+  minimum: 1
+  maximum: 4
+
+target_artifact:
+  type: "string"
+  description: "File path of the artifact that contains the defect"
+
+discovered_in_phase:
+  type: "integer"
+  description: "Phase number where the issue was discovered (1-4)"
+  minimum: 1
+  maximum: 4
+
+status:
+  type: "string"
+  description: "Current state of the CR"
+  enum:
+    - "open"
+    - "in_progress"
+    - "resolved"
+    - "rejected"
+
+created_at:
+  type: "string"
+  description: "ISO 8601 timestamp when the CR was created"
+  pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+
+created_by:
+  type: "string"
+  description: "Identifier of the user or agent that created the CR (e.g. 'web-dev-flow')"
+
+resolved_at:
+  type: "string"
+  description: "ISO 8601 timestamp when the CR was resolved"
+  required: false
+  pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+
+resolved_by:
+  type: "string"
+  description: "Identifier of the user or agent that resolved the CR"
+  required: false
+
+resolution_details:
+  type: "string"
+  description: "Description of how the CR was resolved"
+  required: false
+
+# ─────────────────────────────────────────
+# Example CR 1: Blocking — discovered in Phase 4
+# ─────────────────────────────────────────
+
+example_blocking: |
+  id: "CR-001"
+  severity: "blocking"
+  title: "API spec missing user avatar upload endpoint"
+  description: |
+    Story S-4.1 requires user avatar upload functionality, but the
+    OpenAPI spec generated in Phase 3 does not include a
+    POST /users/:id/avatar endpoint with multipart/form-data support.
+    This blocks implementation of S-4.1 in Phase 4.
+  proposed_fix: |
+    Add POST /users/:id/avatar endpoint to the OpenAPI spec with:
+    - multipart/form-data content type
+    - Required: Authorization header (Bearer token)
+    - Path param: id (UUID)
+    - Request body: file (binary, max 5MB)
+    - Response 201: { avatar_url: string }
+    - Response 400: { error: string }
+  source_phase: 3
+  target_phase: 4
+  target_artifact: "{api_spec_output}"
+  discovered_in_phase: 4
+  status: "open"
+  created_at: "2026-05-17T14:00:00Z"
+  created_by: "web-dev-flow"
+  resolved_at: null
+  resolved_by: null
+  resolution_details: null
+
+# ─────────────────────────────────────────
+# Example CR 2: Non-Blocking — discovered in Phase 4
+# ─────────────────────────────────────────
+
+example_non_blocking: |
+  id: "CR-002"
+  severity: "non_blocking"
+  title: "PRD mentions 'dark mode' but no design tokens defined for it"
+  description: |
+    The PRD lists dark mode support as a desired feature, but the design
+    tokens document from Phase 2.9 does not include dark mode tokens.
+    This is not blocking current FE story work (which targets light mode first).
+  proposed_fix: |
+    Add a dark_mode section to the design tokens document with:
+    - Color palette overrides for dark theme
+    - Shadow and elevation adjustments
+  source_phase: 2
+  target_phase: 4
+  target_artifact: "{design_tokens_output}"
+  discovered_in_phase: 4
+  status: "open"
+  created_at: "2026-05-17T14:30:00Z"
+  created_by: "web-dev-flow"
+  resolved_at: null
+  resolved_by: null
+  resolution_details: null
+
+# ─────────────────────────────────────────
+# Non-Blocking CR Deferral Rule (V3)
+# ─────────────────────────────────────────
+non_blocking_deferred_to: "phase_4"

@@ -1,0 +1,32 @@
+phase_2:
+  status: "LOCKED"
+  state_history:
+    - { state: "NOT_STARTED", at: "2026-05-21T09:01:00Z" }
+    - { state: "IN_PROGRESS", at: "2026-05-21T09:05:00Z" }
+    - { state: "ALL_SUB_PHASES_APPROVED", at: "2026-05-21T17:30:00Z" }
+    - { state: "APPROVED", at: "2026-05-21T17:32:00Z" }
+    - { state: "LOCKED", at: "2026-05-21T17:35:00Z", by: "phase_3_start" }
+  gate_card:
+    phase: 2
+    checks:
+      - { id: "G2-01", status: "pass" }
+      - { id: "G2-02", status: "pass" }
+    all_pass: true
+  artifacts:
+    - { type: "prd", path: "prd.md", status: "locked" }
+    - { type: "impact_map", path: "_output/planning/impact-map.md", status: "locked" }
+    - { type: "story_map", path: "_output/planning/story-map.md", status: "locked" }
+    - { type: "user_flows", path: "_output/planning/user-flows.md", status: "locked" }
+    - { type: "wireframes", path: "_output/planning/wireframes.md", status: "locked" }
+    - { type: "design_acceptance", path: "_output/planning/design-acceptance.md", status: "locked" }
+  substates:
+    phase_2_1: { status: "LOCKED" }
+    phase_2_2: { status: "SKIPPED" }
+    phase_2_3: { status: "SKIPPED" }
+    phase_2_4: { status: "LOCKED" }
+    phase_2_5: { status: "LOCKED" }
+    phase_2_6: { status: "LOCKED" }
+    phase_2_7: { status: "LOCKED" }
+    phase_2_8: { status: "SKIPPED" }
+    phase_2_9: { status: "SKIPPED" }
+    phase_2_10: { status: "LOCKED" }

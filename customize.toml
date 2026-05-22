@@ -1,0 +1,862 @@
+# ─────────────────────────────────────────
+# web-dev-flow V3 — Customizable configuration
+# Override: _bmad/custom/web-dev-flow.toml (team)
+# Override: _bmad/custom/web-dev-flow.user.toml (personal)
+# ─────────────────────────────────────────
+
+[workflow]
+version = "3.6.0"
+
+# ── Development mode ──
+# "separated"  — Frontend and backend are separate projects, Phase 4 BE and FE tracks run in parallel
+# "full_stack" — Single unified codebase (Next.js, Nuxt, Remix, etc.), merged development phase, stories contain BE+FE tasks
+dev_mode = "separated"
+
+# ── Tech stack defaults (overrideable per project) ──
+default_frontend_framework = "react"
+default_backend_framework = "express"
+default_database = "postgresql"
+default_api_style = "rest"
+default_auth_method = "jwt"
+default_deployment_target = "docker"
+
+# ── Output paths ──
+output_dir = "{project-root}/_bmad-output/web-dev-flow"
+prd_output = "{project-root}/_bmad-output/web-dev-flow/prd.md"
+research_output = "{project-root}/_bmad-output/web-dev-flow/research"
+impact_map_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/impact-map.md"
+event_storming_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/event-storm.md"
+jtbd_cards_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/jtbd-cards.md"
+story_map_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/story-map.md"
+prioritization_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/prioritization.md"
+architecture_output = "{project-root}/_bmad-output/web-dev-flow/architecture.md"
+architecture_system_context_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/system-context.md"
+architecture_style_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/architecture-style.md"
+architecture_container_design_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/container-design.md"
+architecture_quality_attributes_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/quality-attributes.md"
+architecture_component_design_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/component-design.md"
+epics_output = "{project-root}/_bmad-output/web-dev-flow/epics.md"
+stories_output = "{project-root}/_bmad-output/web-dev-flow/stories"
+
+# ── Phase 2: Planning outputs ──
+product_brief_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/product-brief.md"
+domain_research_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/domain-research.md"
+user_flows_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/user-flows.md"
+sitemap_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/sitemap.md"
+wireframes_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/wireframes.md"
+design_tokens_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/design-tokens.md"
+design_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/design-acceptance.md"
+
+# ── Phase 3: Solutioning outputs ──
+readiness_check_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/readiness-check.md"
+api_spec_output = "{project-root}/_bmad-output/web-dev-flow/api-spec.yaml"
+db_schema_output = "{project-root}/_bmad-output/web-dev-flow/db-schema.md"
+integration_output = "{project-root}/_bmad-output/web-dev-flow/integration-report.md"
+sprint_tracking = "{project-root}/_bmad-output/web-dev-flow/sprint-status.yaml"
+
+# ── V3.6 Split-File Status Directory ──
+# sprint-status.yaml is DERIVED from status/ files — never directly written.
+# Each file has exactly ONE writer. See specs/status-directory.md.
+status_dir = "{project-root}/_bmad-output/web-dev-flow/status"
+status_global_file = "{project-root}/_bmad-output/web-dev-flow/status/global.yaml"
+status_phase_01_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-01.yaml"
+status_phase_02_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-02.yaml"
+status_phase_03_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-03.yaml"
+status_phase_04_be_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-04-be.yaml"
+status_phase_04_fe_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-04-fe.yaml"
+status_change_requests_file = "{project-root}/_bmad-output/web-dev-flow/status/change-requests.yaml"
+status_stories_dir = "{project-root}/_bmad-output/web-dev-flow/status/stories"
+status_merge_queue_dir = "{project-root}/_bmad-output/web-dev-flow/status/merge-queue"
+
+# ── Phase 4: Backend sub-phase outputs ──
+be_scaffold_report_output = "{project-root}/_bmad-output/web-dev-flow/be-scaffold-report.md"
+be_migration_report_output = "{project-root}/_bmad-output/web-dev-flow/be-migration-report.md"
+be_api_client_report_output = "{project-root}/_bmad-output/web-dev-flow/be-api-client-report.md"
+be_dev_log_output = "{project-root}/_bmad-output/web-dev-flow/be-dev-log.md"
+be_test_report_output = "{project-root}/_bmad-output/web-dev-flow/be-test-report.md"
+be_code_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/be-code-acceptance-report.md"
+
+# ── Phase 4: Frontend sub-phase outputs ──
+fe_scaffold_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-scaffold-report.md"
+fe_design_system_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-design-system-report.md"
+fe_api_client_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-api-client-report.md"
+fe_component_specs_output = "{project-root}/_bmad-output/web-dev-flow/fe-component-specs.md"
+fe_dev_log_output = "{project-root}/_bmad-output/web-dev-flow/fe-dev-log.md"
+fe_ui_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/fe-ui-acceptance-report.md"
+
+# ── Phase 4: Acceptance report outputs ──
+feature_acceptance_report_output = "{project-root}/_bmad-output/web-dev-flow/_output/acceptance/feature-acceptance-report.md"
+e2e_browser_report_output = "{project-root}/_bmad-output/web-dev-flow/_output/acceptance/e2e-browser-report.md"
+
+# ── Phase 4: Scope Lock audit output ──
+scope_audit_log_output = "{project-root}/_bmad-output/web-dev-flow/scope-audit-log.yaml"
+
+# ── Phase 4: Step Audit (task tracking + session recovery) ──
+step_audit_log_output = "{project-root}/_bmad-output/web-dev-flow/step-audit-log.yaml"
+
+# ── Phase 4: Sprint Planning output ──
+sprint_plan_output = "{project-root}/_bmad-output/web-dev-flow/sprint-plan.md"
+
+# ── Hooks ──
+activation_steps_prepend = []
+activation_steps_append = []
+persistent_facts = []
+
+# ─────────────────────────────────────────
+# Phase 1: Analysis (Optional Pre-Research, 3 Sub-Phases — ALL SKIPPABLE)
+# ─────────────────────────────────────────
+
+[workflow.phase_01]
+produces = ["brainstorming.md", "domain-research.md", "product-brief.md"]
+requires_input = []
+description = "Optional pre-research using structured methodologies: Brainstorming → Domain Research → Product Brief. Entire phase is skippable for well-understood projects."
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "ALL_SUB_PHASES_APPROVED", "ANALYSIS_COMPLETE", "APPROVED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_01.sub_phase_1_1]
+name = "Brainstorming"
+produces = "brainstorming.md"
+requires_input = []
+gate = []
+skip_allowed = true
+skip_hint = "This sub-phase and entire Phase 1 are optional. Skip for projects with well-understood requirements."
+dod = "Ideas explored, key decisions documented, creative directions evaluated"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "IDEAS_EXPLORED", "SYNTHESIZED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_01.sub_phase_1_2]
+name = "Domain Research"
+produces = "domain-research.md"
+requires_input = ["brainstorming.md"]
+gate = []
+skip_allowed = true
+skip_hint = "This sub-phase is recommended for unfamiliar domains. For well-known problem spaces, you may skip."
+dod = "Sources analyzed, existing solutions surveyed, domain patterns documented, knowledge gaps identified"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "SOURCES_ANALYZED", "DOCUMENTED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_01.sub_phase_1_3]
+name = "Product Brief"
+produces = "product-brief.md"
+requires_input = ["brainstorming.md"]
+gate = []
+skip_allowed = true
+skip_hint = "This sub-phase is recommended when synthesizing research into a coherent product vision. For well-defined products, you may skip."
+dod = "Vision defined, users identified, problems articulated, solution hypotheses documented"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "VISION_DEFINED", "USERS_IDENTIFIED", "PROBLEMS_DEFINED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+# ─────────────────────────────────────────
+# Phase 2: Planning (10 Sub-Phases — PRD + UX Design)
+# ─────────────────────────────────────────
+
+[workflow.phase_02]
+produces = ["prd.md", "user-flows.md", "wireframes.md", "design-acceptance.md"]
+requires_input = []
+description = "Planning phase: Impact Mapping → Event Storming → JTBD → Story Mapping → Kano+RICE+PRD → User Flows → Wireframes → Design System → Interaction Design → Design Acceptance"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "ALL_SUB_PHASES_APPROVED", "PLANNING_COMPLETE", "APPROVED", "LOCKED", "UNLOCK_RESOLVE"]
+web_focus_hint = "Focus on: user personas, user flows, information architecture, wireframes, design tokens, component specifications, accessibility requirements"
+
+[workflow.phase_02.sub_phase_2_1]
+name = "Impact Mapping"
+produces = "impact-map.md"
+requires_input = []
+gate = []
+skip_allowed = false
+dod = "SMART business goal defined, all actors identified, impacts analyzed, deliverables mapped"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "MAP_DRAFTED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_02.sub_phase_2_2]
+name = "Event Storming"
+produces = "event-storm.md"
+requires_input = ["impact-map.md"]
+gate = []
+skip_allowed = true
+skip_hint = "Skip for simple CRUD applications or when domain events are already well-understood."
+dod = "Domain events identified and organized by timeline, commands/aggregates/bounded contexts mapped, hotspots flagged"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "EVENTS_IDENTIFIED", "CONTEXTS_MAPPED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_02.sub_phase_2_3]
+name = "Jobs to Be Done"
+produces = "jtbd-cards.md"
+requires_input = ["impact-map.md"]
+gate = []
+skip_allowed = true
+skip_hint = "Skip for internal tools or when user motivations are already well-understood."
+dod = "Per-persona JTBD cards created with situation/motivation/outcome, functional/emotional/social dimensions mapped"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "JOBS_IDENTIFIED", "DIMENSIONS_MAPPED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_02.sub_phase_2_4]
+name = "Story Mapping"
+produces = "story-map.md"
+requires_input = ["impact-map.md", "event-storm.md", "jtbd-cards.md"]
+gate = ["phase_2_1.status == locked"]
+skip_allowed = false
+dod = "User activity backbone constructed, tasks decomposed into story seeds, release slices defined (Walking Skeleton → MVP → v1.1 → v2)"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "BACKBONE_BUILT", "STORIES_MAPPED", "RELEASES_SLICED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_02.sub_phase_2_5]
+name = "Kano + RICE + PRD"
+produces = ["prioritization.md", "prd.md"]
+requires_input = ["story-map.md", "impact-map.md"]
+gate = ["phase_2_4.status == locked"]
+skip_allowed = false
+description = "Kano classification of features, RICE scoring, prioritized backlog, final PRD compilation via bmad-create-prd"
+dod = "All features Kano-classified, RICE scores calculated, backlog prioritized, PRD compiled and verified"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "FEATURES_CLASSIFIED", "PRIORITIZED", "PRD_DRAFTED", "VERIFIED", "LOCKED"]
+# NOTE: Requirements Freeze point — when sub_phase_2_5 reaches VERIFIED, set global_state.requirements_frozen_at
+
+[workflow.phase_02.sub_phase_2_6]
+name = "User Flows & Information Architecture"
+produces = ["user-flows.md", "sitemap.md"]
+requires_input = ["prd.md", "story-map.md"]
+gate = ["phase_2_5.status == locked"]
+skip_allowed = false
+dod = "All user flows documented (primary + secondary + error paths), information architecture defined (screen inventory + navigation + sitemap)"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "FLOWS_MAPPED", "IA_DEFINED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_02.sub_phase_2_7]
+name = "Wireframes"
+produces = "wireframes.md"
+requires_input = ["user-flows.md"]
+gate = ["phase_2_6.status == locked"]
+skip_allowed = false
+dod = "All key pages wireframed with layout structure and component inventory, all UI states covered (loading/empty/error/edge cases)"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "WIREFRAMES_CREATED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_02.sub_phase_2_8]
+name = "Design System"
+produces = ["design-tokens.md"]
+requires_input = ["wireframes.md"]
+gate = ["phase_2_7.status == locked"]
+skip_allowed = true
+skip_hint = "Skip if using an existing design system (MUI, shadcn, Tailwind UI)."
+dod = "Design tokens defined (colors/typography/spacing/shadows/breakpoints), component specifications documented"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "TOKENS_DEFINED", "COMPONENTS_SPECIFIED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_02.sub_phase_2_9]
+name = "Interaction Design"
+produces = "interaction-spec.md"
+requires_input = ["wireframes.md"]
+gate = ["phase_2_7.status == locked"]
+skip_allowed = true
+skip_hint = "Skip for standard CRUD patterns and simple forms."
+dod = "Interaction patterns defined, state transition matrix documented, animation/feedback specifications"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "INTERACTIONS_DEFINED", "STATE_MATRIX", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_02.sub_phase_2_10]
+name = "Design Acceptance"
+produces = "design-acceptance.md"
+requires_input = ["wireframes.md", "prd.md"]
+gate = ["phase_2_7.status == locked"]
+skip_allowed = false
+dod = "Design acceptance criteria compiled, visual parity checklist defined, accessibility standards documented, interaction acceptance benchmarks set"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "DESIGN_REVIEWED", "APPROVED", "LOCKED"]
+
+# ─────────────────────────────────────────
+# Phase 3: Solutioning (9 Sub-Phases — Architecture + Epics + Stories + API)
+# ─────────────────────────────────────────
+
+[workflow.phase_03]
+produces = ["architecture.md", "epics.md", "stories", "api-spec.yaml", "db-schema.md"]
+requires_input = ["prd.md"]
+description = "Solutioning phase: C4 System Context → Architecture Style → Container Design → Quality Attributes → Component Design → Epics → Stories → API & Data Design → Readiness Check"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "ALL_SUB_PHASES_APPROVED", "SOLUTIONING_COMPLETE", "APPROVED", "LOCKED", "UNLOCK_RESOLVE"]
+web_focus_hint = "Focus on: web framework selection (React/Vue/Svelte vs Express/Nest/Fastify), deployment architecture (Vercel/Docker/AWS), component tree design, client-side routing, state management approach"
+
+[workflow.phase_03.sub_phase_3_1]
+name = "System Context (C4 Level 1)"
+produces = "system-context.md"
+requires_input = ["prd.md"]
+gate = []
+skip_allowed = false
+dod = "System boundary defined, all actors identified, external integrations mapped, system context diagram documented"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "CONTEXT_MAPPED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_2]
+name = "Architecture Style Decision"
+produces = "architecture-style.md"
+requires_input = ["system-context.md"]
+gate = ["phase_3_1.status == locked"]
+skip_allowed = false
+dod = "Constraints analyzed, architecture style options evaluated (weighted matrix), style selected with ADR-001"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "STYLE_SELECTED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_3]
+name = "Container Design (C4 Level 2)"
+produces = "container-design.md"
+requires_input = ["architecture-style.md"]
+gate = ["phase_3_2.status == locked"]
+skip_allowed = false
+dod = "Containers identified, tech stack selected for each, ADR-002~007 drafted"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "CONTAINERS_DESIGNED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_4]
+name = "Quality Attributes (ATAM-lite)"
+produces = "quality-attributes.md"
+requires_input = ["container-design.md"]
+gate = ["phase_3_3.status == locked"]
+skip_allowed = true
+skip_hint = "This sub-phase is recommended for production-critical or complex systems. For simple proof-of-concepts or internal tools, you may skip."
+dod = "Quality attribute scenarios generated, utility tree built, architecture analyzed for risks/sensitivities/trade-offs"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "ATTRIBUTES_IDENTIFIED", "VERIFIED", "LOCKED", "SKIPPED"]
+
+[workflow.phase_03.sub_phase_3_5]
+name = "Component Design (C4 Level 3)"
+produces = "component-design.md"
+requires_input = ["container-design.md"]
+gate = ["phase_3_3.status == locked"]
+skip_allowed = false
+dod = "Components designed (C4 Level 3), 4+1 views validated, architecture.md compiled"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "COMPONENTS_MAPPED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_6]
+name = "Epics & Feature Plan"
+skill = "bmad-create-epics-and-stories"
+produces = "epics.md"
+requires_input = ["prd.md", "architecture.md"]
+gate = ["phase_3_5.status == locked"]
+skip_allowed = false
+dod = "Epics hierarchy defined, feature plan documented, story outline created"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "EPICS_DEFINED", "FEATURES_PLANNED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_7]
+name = "Story Design"
+skill = "bmad-create-story"
+produces = "stories/*.md"
+requires_input = ["epics.md"]
+gate = ["phase_3_6.status == locked"]
+iterate = true
+skip_allowed = false
+dod = "All stories drafted with acceptance criteria, story map validated, development order frozen"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "STORIES_DESIGNED", "ACCEPTANCE_CHECKS_REVIEWED", "DEVELOPMENT_ORDER_FROZEN", "LOCKED"]
+# NOTE: Development Order Freeze point — when sub_phase_3_7 reaches VERIFIED, set global_state.development_order_frozen_at
+
+[workflow.phase_03.sub_phase_3_8]
+name = "API & Data Design"
+produces = ["api-spec.yaml", "db-schema.md"]
+requires_input = ["architecture.md", "stories"]
+gate = ["phase_3_7.status == locked"]
+description = "REST API definition (OpenAPI 3.0) + data model design (DB schema)"
+skip_allowed = false
+dod = "API spec complete with all endpoints documented, DB schema designed with migrations plan"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "API_SPEC_DRAFTED", "DB_SCHEMA_DRAFTED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_03.sub_phase_3_9]
+name = "Readiness Check"
+produces = "readiness-check.md"
+requires_input = ["api-spec.yaml", "db-schema.md", "stories", "architecture.md"]
+gate = ["phase_3_8.status == locked"]
+skip_allowed = false
+dod = "All pre-implementation checks verified: architecture validated, API contract complete, stories ready, tech stack provisioned"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "CHECKS_VERIFIED", "APPROVED", "LOCKED"]
+
+# ─────────────────────────────────────────
+# Phase 4: Implementation (14 Sub-Phases — BE + FE Tracks + Integration + 4 Acceptance Gates)
+# ─────────────────────────────────────────
+
+[workflow.phase_04]
+produces = "working-application"
+requires_input = ["api-spec.yaml", "stories", "architecture.md"]
+description = "Implementation phase: Sprint Planning (4.1) → BE track (4.2-4.6) + FE track (4.7-4.12) run in parallel → Integration (4.13) → Retrospective (4.14)"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "BE_TRACK_COMPLETE", "FE_TRACK_COMPLETE", "MERGE_QUEUED", "FULL_STACK_INTEGRATED", "APPROVED", "LOCKED"]
+
+# ── Phase 4: Sprint Planning (4.1) ──
+
+[workflow.phase_04.sub_phase_4_1]
+name = "Sprint Planning"
+track = "shared"
+produces = "sprint-plan.md"
+requires_input = ["architecture.md", "api-spec.yaml", "db-schema.md", "stories"]
+gate = ["phase_3.status == LOCKED", "requirements_frozen_at != null", "development_order_frozen_at != null"]
+dod = "Sprint plan locked, stories assigned to tracks, capacity assessed, scope freeze git tag created, parallel groups mapped"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "SPRINT_PLANNED", "LOCKED"]
+
+# ── Phase 4: Backend Track (4.2 - 4.6) ──
+
+[workflow.phase_04.sub_phase_4_2]
+name = "BE Scaffolding"
+track = "backend"
+produces = "be-scaffold-report.md"
+requires_input = ["architecture.md", "api-spec.yaml", "db-schema.md"]
+gate = ["phase_4_1.status == locked"]
+dod = "Project starts, health check returns 200, lint passes, tsconfig strict"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "SCAFFOLDED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_3]
+name = "BE Database & API Client Setup"
+track = "backend"
+produces = ["be-migration-report.md", "be-api-client-report.md"]
+requires_input = ["architecture.md", "api-spec.yaml", "db-schema.md", "be-scaffold-report.md"]
+gate = ["phase_4_2.status == locked"]
+dod = "All migrations runnable/rollbackable, seed data available, routing framework configured, middleware chain set up, request validation layer ready"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "MIGRATIONS_WRITTEN", "MIGRATIONS_RUN", "CLIENT_GENERATED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_4]
+name = "BE Endpoint Implementation"
+track = "backend"
+produces = "be-dev-log.md"
+requires_input = ["api-spec.yaml", "stories"]
+gate = ["phase_4_3.status == locked"]
+dod = "Endpoint implemented, request validation, service layer logic, unit tests, integration tests, spec compliant"
+iterate = true
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "IMPLEMENTED", "TESTED", "SPEC_COMPLIANT", "SUBMITTED", "APPROVED", "CODE_ACCEPTED", "BLOCKED_BY_DEPENDENCY"]
+
+[workflow.phase_04.sub_phase_4_5]
+name = "BE Testing Suite"
+track = "backend"
+produces = "be-test-report.md"
+requires_input = ["all-implemented-endpoints"]
+gate = ["all_4_4_stories.approved"]
+dod = "Unit test coverage >= min_threshold, integration tests cover all endpoints, CI runnable"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "TESTS_WRITTEN", "ALL_PASSING", "COVERAGE_MET", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_6]
+name = "BE Completion Review"
+track = "backend"
+produces = "be-code-acceptance-report.md"
+requires_input = ["all-backend-artifacts"]
+gate = ["phase_4_5.status == locked"]
+dod = "Code review passed, test coverage >= threshold, type check + lint pass, all acceptance checks green"
+acceptance_type = "code_acceptance"
+fsm_states = ["NOT_STARTED", "CODE_ACCEPTANCE", "CODE_ACCEPTED", "LOCKED"]
+
+# ── Phase 4: Frontend Track (4.7 - 4.12) ──
+
+[workflow.phase_04.sub_phase_4_7]
+name = "FE Scaffolding"
+track = "frontend"
+produces = "fe-scaffold-report.md"
+requires_input = ["architecture.md", "api-spec.yaml"]
+gate = ["phase_4_1.status == locked"]
+dod = "Project starts, routing works, layout framework in place, lint/type-check pass"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "SCAFFOLDED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_8]
+name = "FE Design System & Shared Components"
+track = "frontend"
+produces = "fe-design-system-report.md"
+requires_input = ["architecture.md", "design-tokens.md"]
+gate = ["phase_4_7.status == locked"]
+dod = "Button/Input/Modal/Table/Loading/Error/Empty base components ready, storybook/docs available"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "COMPONENTS_BUILT", "DOCUMENTED", "REVIEWED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_9]
+name = "FE API Client & State Management"
+track = "frontend"
+produces = "fe-api-client-report.md"
+requires_input = ["api-spec.yaml"]
+gate = ["phase_4_7.status == locked"]
+dod = "API client ready (token/refresh/error interceptors), types generated from spec, mock server available"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "CLIENT_GENERATED", "MOCKS_READY", "VERIFIED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_10]
+name = "FE Page Implementation"
+track = "frontend"
+produces = "fe-dev-log.md"
+requires_input = ["api-spec.yaml", "stories", "design-tokens.md"]
+gate = ["phase_4_8.status == locked", "phase_4_9.status == locked"]
+dod = "Page implemented, all UI states handled, a11y check, component tests, integration tests"
+iterate = true
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "IMPLEMENTED", "TESTED", "A11Y_CHECKED", "SUBMITTED", "APPROVED", "CODE_ACCEPTED", "BLOCKED_BY_DEPENDENCY"]
+
+[workflow.phase_04.sub_phase_4_11]
+name = "FE A11y & Perf Audit"
+track = "frontend"
+produces = "fe-audit-report.md"
+requires_input = ["all-implemented-pages"]
+gate = ["all_4_10_stories.approved"]
+dod = "Lighthouse all >= 90, axe no critical issues, bundle size < max, visual parity check passed"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "A11Y_PASSED", "PERF_PASSED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_12]
+name = "FE Completion Review"
+track = "frontend"
+produces = "fe-completion-review-report.md"
+requires_input = ["all-implemented-pages", "fe-audit-report.md"]
+gate = ["phase_4_11.status == locked"]
+dod = "Code review passed, all story AC satisfied, integration tests pass, scope audit clean, UI_ACCEPTANCE verified"
+acceptance_type = "ui_acceptance"
+fsm_states = ["NOT_STARTED", "UI_ACCEPTANCE", "UI_ACCEPTED", "LOCKED"]
+
+# ── Phase 4: Integration & Retrospective (4.13 - 4.14) ──
+
+[workflow.phase_04.sub_phase_4_13]
+name = "Integration"
+track = "integration"
+produces = ["integration-report.md", "feature-acceptance-report.md"]
+requires_input = ["all-be-artifacts", "all-fe-artifacts"]
+gate = ["phase_4_6.status == CODE_ACCEPTED", "phase_4_12.status == UI_ACCEPTED"]
+description = "Integration verification, dependency-ordered merge queue processing, contract testing, feature + E2E browser acceptance"
+acceptance_type = "feature_acceptance"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "MERGE_QUEUE_PROCESSED", "CONTRACT_VERIFIED", "INTEGRATED", "FEATURE_ACCEPTANCE", "FEATURE_ACCEPTED", "E2E_BROWSER_ACCEPTANCE", "E2E_BROWSER_ACCEPTED", "APPROVED", "LOCKED"]
+
+[workflow.phase_04.sub_phase_4_14]
+name = "Retrospective"
+track = "integration"
+produces = "retrospective.md"
+requires_input = ["all-artifacts", "feature-acceptance-report.md"]
+gate = ["phase_4_13.status == FEATURE_ACCEPTED"]
+description = "Project retrospective: lessons learned, action items, metrics, and improvement plan"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "RETRO_COMPLETED", "APPROVED", "LOCKED"]
+
+[workflow.phase_dev]
+enabled = false  # Set to true in project override when dev_mode = "full_stack"
+produces = "full-stack-implementation"
+requires_input = ["api-spec.yaml", "stories"]
+description = "Unified development phase for full-stack frameworks (Next.js, Nuxt, Remix, SvelteKit). Stories contain both backend and frontend tasks."
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "DRAFT_COMPLETE", "IN_REVIEW", "APPROVED", "LOCKED"]
+
+[workflow.phase_dev.sub_phase_dev_1]
+name = "Project Scaffolding"
+produces = "dev-scaffold-report.md"
+requires_input = ["architecture.md", "api-spec.yaml", "db-schema.md"]
+gate = ["architecture.md.locked", "api-spec.yaml.approved"]
+dod = "Project starts, health check returns 200, lint passes, DB migrations runnable, routing framework in place"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "SCAFFOLDED", "VERIFIED", "LOCKED"]
+
+[workflow.phase_dev.sub_phase_dev_2]
+name = "Design System & API Client"
+produces = "dev-foundation-report.md"
+requires_input = ["architecture.md", "api-spec.yaml"]
+gate = ["dev_1.status == locked"]
+dod = "Base components (Button/Input/Modal/etc.) ready, API client with interceptors generated, mock server available, auth hooks ready"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "COMPONENTS_BUILT", "CLIENT_READY", "LOCKED"]
+
+[workflow.phase_dev.sub_phase_dev_3]
+name = "Story Implementation (Full-Stack)"
+produces = "dev-implementation-log.md"
+requires_input = ["api-spec.yaml", "stories"]
+gate = ["dev_2.status == locked"]
+dod = "Each story: backend task → frontend task → tests → a11y → acceptance checks → handoff docs"
+iterate = true
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "IMPLEMENTED", "TESTED", "A11Y_CHECKED", "SUBMITTED", "APPROVED"]
+
+[workflow.phase_dev.sub_phase_dev_4]
+name = "Testing & Audit"
+produces = "dev-qa-report.md"
+requires_input = ["all-implemented-stories"]
+gate = ["all_dev_3_stories.approved"]
+dod = "Unit + integration test coverage >= 80%, Lighthouse >= 90, axe audit clean, bundle < 500KB"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "TESTS_PASSED", "A11Y_PASSED", "PERF_PASSED", "LOCKED"]
+
+[workflow.phase_dev.sub_phase_dev_5]
+name = "Completion Review"
+produces = "dev-completion-review.md"
+requires_input = ["all-artifacts"]
+gate = ["dev_4.status == locked"]
+dod = "Code review passed, all story AC satisfied, security audit, documentation complete"
+fsm_states = ["NOT_STARTED", "IN_PROGRESS", "REVIEWED", "APPROVED", "LOCKED"]
+
+# ─────────────────────────────────────────
+# Acceptance Quality Gates (V3)
+# ─────────────────────────────────────────
+
+[acceptance_gates]
+
+# ── Code Acceptance (Phase 4.6) ──
+code_acceptance_min_coverage = 80
+code_acceptance_require_lint = true
+code_acceptance_require_type_check = true
+
+# ── UI Acceptance (Phase 4.12) ──
+ui_acceptance_min_lighthouse_performance = 90
+ui_acceptance_min_lighthouse_accessibility = 90
+ui_acceptance_min_lighthouse_best_practices = 90
+ui_acceptance_max_bundle_size_kb = 500
+ui_acceptance_require_axe_audit = true
+
+# ── Feature Acceptance (Phase 4.13) ──
+feature_acceptance_require_contract_compliance = true
+feature_acceptance_require_e2e_tests = true
+feature_acceptance_require_security_audit = true
+
+# ── E2E Browser Acceptance (Phase 4.14) ──
+e2e_browser_acceptance_browsers = ["chrome", "firefox", "safari"]
+e2e_browser_acceptance_visual_diff_threshold_pct = 0.5
+
+[scope_lock]
+enabled = true
+enforcement_mode = "strict"                    # "strict" | "permissive" | "warning_only"
+srg_05_severity = "blocking"                   # scope overlap between parallel stories
+scope_expansion_requires = "user_approval"     # "user_approval" | "auto_approve"
+forbidden_paths = [                            # paths that can NEVER be modified in Phase 4
+    "/etc/",                                   # system config — never writeable
+    "~/.ssh/",                                 # SSH keys — never writeable
+    "~/.aws/",                                 # cloud credentials
+    ".env.production",                         # production secrets
+    ".env.local",                              # local secrets
+    ".env.development",                        # development secrets
+    ".env.staging",                            # staging secrets
+    ".git/",                                   # git internals
+    "node_modules/",                           # dependencies (managed by package manager)
+]
+
+# Protected paths — stories whose scope_write intersects these must execute as serial_only.
+# These are shared/high-risk surfaces that must not be modified by parallel agents.
+protected_paths = [
+    "shared/contract",
+    "shared/types",
+    "schema/migration",
+    "root/config",
+    "api/contract",
+    "route/entry",
+    "permission/model",
+    "build/ci",
+    "env/template",
+    "shared/ui/shell",
+    "route/registry",
+    "global/design/tokens",
+]
+
+# ─────────────────────────────────────────
+# Defaults (V3.1)
+# ─────────────────────────────────────────
+
+[defaults]
+default_code_standards_source = ["AGENTS.md"]
+default_acceptance_checks_require_executable = true
+task_triage_mode = "auto"  # "auto" (auto-detect) | "light" (skip Phase 1-3) | "serial" (full phases, serial Phase 4) | "parallel" (full workflow)
+
+# ── Acceptance Check Command Safety (V3.6) ──
+# Prevents command injection through story-defined acceptance_check values.
+# Applied at Story Contract Freeze Gate (Phase 3.7 CFG-06) and Story Ready Gate (Phase 4 SRG-08).
+
+[acceptance_check_safety]
+enabled = true
+enforcement = "blocking"               # "blocking" | "warning"
+
+# Allowed command prefixes — only these binaries may start an acceptance_check command
+allowed_prefixes = [
+    "npm run", "npm test", "npm exec",
+        "npx --no-install ", "npx --no ",
+    "node ",
+    "pnpm run", "pnpm test", "pnpm exec",
+    "yarn run", "yarn test",
+    "jest ", "vitest ", "mocha ", "pytest ",
+    "playwright test", "cypress run",
+    "tsc ", "eslint ", "prettier --check",
+    "axe ", "lighthouse ",
+]
+
+# Forbidden patterns — commands containing these are rejected regardless of prefix
+forbidden_patterns = [
+    "|",           # shell pipe
+    ";",           # command chaining
+    "&&", "||",    # logical chaining
+    "$(",          # command substitution
+    "`",           # backtick command substitution
+    ">", ">>",     # output redirection
+    "<", "<<<",    # input redirection
+    "curl ",       # network requests
+    "wget ",       # network requests
+    "rm -rf", "rm -r",  # destructive
+    "chmod ", "chown ", # permission changes
+    "/etc/",       # system paths
+    "sudo ",       # privilege escalation
+    "eval ",       # dynamic evaluation
+    "exec ",       # process replacement
+]
+
+# Per-project allowlist — commands that bypass forbidden_patterns (use with caution)
+allowed_exceptions = []
+
+# ─────────────────────────────────────────
+# Merge Queue (V3.1)
+# ─────────────────────────────────────────
+
+[merge_queue]
+enabled = true
+auto_promote_on_deps_met = true
+integration_check_on_merge = true
+default_integration_checks = ["npm run test", "npm run build"]
+merge_order_increment = 10              # Sequential numbering gap (10, 20, 30...)
+lock_timeout_seconds = 5               # Max wait for .lock acquisition
+stale_lock_cleanup_seconds = 60        # Auto-remove .lock if older than this
+
+# V3.6 File-Based Design:
+# - Each queued story is a file: merge-queue/items/{merge_order:04d}-{story_id_slug}-{track}.yaml
+# - queue.yaml tracks next_merge_order and counts
+# - .lock is held ONLY during file creation (~100ms) for sequential numbering
+# - Writing item content and updating queue metadata uses NO LOCK
+# - See: specs/merge-queue.md
+
+# ─────────────────────────────────────────
+# Change Request Configuration (V3)
+# ─────────────────────────────────────────
+
+[change_request]
+enabled = true
+blocking_stops_phase = true
+non_blocking_deferred_to = "phase_4"
+max_open_blocking_crs = 5
+
+# ─────────────────────────────────────────
+# BMAD Skill Fallback Configuration (V3.6)
+# ─────────────────────────────────────────
+# When a BMAD skill is unavailable, the orchestrator dispatches an inline
+# sub-agent with equivalent instructions instead of blocking the phase.
+# Each skill maps to a fallback prompt template key.
+
+[bmad_skill_fallbacks]
+enabled = true
+# Fallback behavior:
+#   "bmad_first"      — 优先 BMAD skill，不可用/失败时回退到原生 agent（推荐）
+#   "native_only"     — 始终使用原生 agent，忽略 BMAD skills
+#   "bmad_only"       — 仅使用 BMAD skills，不可用时 halt（不推荐，除非环境确定有 BMAD）
+fallback_mode = "bmad_first"
+
+# BMAD Skill → Native Agent 映射
+# 每个 BMAD skill 对应 web-dev-flow 自带的原生 agent 定义文件
+# 原生 agent 定义在: references/agents/{agent_file}.md
+
+[bmad_skill_fallbacks.bmad_brainstorming]
+description = "Brainstorming — explore problem space and generate ideas"
+agent_file = "analyst"
+agent_mode = "1.1"
+
+[bmad_skill_fallbacks.bmad_domain_research]
+description = "Domain research — analyze existing solutions and competitors"
+agent_file = "analyst"
+agent_mode = "1.2"
+
+[bmad_skill_fallbacks.bmad_product_brief]
+description = "Product brief — synthesize research into product vision"
+agent_file = "analyst"
+agent_mode = "1.3"
+
+[bmad_skill_fallbacks.bmad_create_prd]
+description = "PRD creation — compile requirements into product specification"
+agent_file = "product-manager"
+
+[bmad_skill_fallbacks.bmad_create_ux_design]
+description = "UX design — user flows, wireframes, information architecture"
+agent_file = "ux-designer"
+
+[bmad_skill_fallbacks.bmad_create_architecture]
+description = "Architecture design — C4 system design and ADRs"
+agent_file = "architect"
+
+[bmad_skill_fallbacks.bmad_create_epics_and_stories]
+description = "Epics and stories — feature breakdown from PRD"
+agent_file = "story-planner"
+agent_mode = "3.6"
+
+[bmad_skill_fallbacks.bmad_create_story]
+description = "Individual story creation — detailed story with acceptance criteria"
+agent_file = "story-planner"
+agent_mode = "3.7"
+
+[bmad_skill_fallbacks.bmad_dev_story]
+description = "Story implementation — TDD cycle with code generation"
+agent_file = "backend-developer"  # or frontend-developer based on track
+
+[bmad_skill_fallbacks.bmad_code_review]
+description = "Code review — adversarial review with security/quality focus"
+agent_file = "code-reviewer"
+
+[bmad_skill_fallbacks.bmad_sprint_planning]
+description = "Sprint planning — capacity assessment and story assignment"
+agent_file = "sprint-planner"
+
+[bmad_skill_fallbacks.bmad_retrospective]
+description = "Retrospective — lessons learned and action items"
+agent_file = "retrospective-host"
+
+[bmad_skill_fallbacks.bmad_check_implementation_readiness]
+description = "Implementation readiness check — pre-flight validation"
+agent_file = "readiness-auditor"
+
+[bmad_skill_fallbacks.bmad_feature_verify]
+description = "Feature verification — end-to-end feature completeness check"
+agent_file = "qa-verifier"
+agent_mode = "feature"
+
+[bmad_skill_fallbacks.bmad_ui_verify]
+description = "UI verification — visual design compliance against wireframes"
+agent_file = "qa-verifier"
+agent_mode = "ui"
+
+[bmad_skill_fallbacks.bmad_e2e_browser_test]
+description = "E2E browser test — cross-browser critical path testing"
+agent_file = "qa-verifier"
+agent_mode = "e2e"
+
+[bmad_skill_fallbacks.bmad_contract_verify]
+description = "Contract verification — API spec compliance check"
+agent_file = "qa-verifier"
+agent_mode = "contract"
+
+[bmad_skill_fallbacks.bmad_a11y_verify]
+description = "Accessibility verification — WCAG 2.1 AA compliance audit"
+agent_file = "qa-verifier"
+agent_mode = "a11y"
+
+[bmad_skill_fallbacks.bmad_perf_verify]
+description = "Performance verification — Lighthouse and bundle size audit"
+agent_file = "qa-verifier"
+agent_mode = "perf"
+
+[bmad_skill_fallbacks.bmad_visual_regression]
+description = "Visual regression testing — screenshot comparison"
+agent_file = "qa-verifier"
+agent_mode = "visual"
+
+[bmad_skill_fallbacks.bmad_cross_browser_verify]
+description = "Cross-browser verification — Chrome, Firefox, Safari testing"
+agent_file = "qa-verifier"
+agent_mode = "cross-browser"
+blocking_stops_phase = true
+non_blocking_deferred_to = "phase_4"
+max_open_blocking_crs = 5
+
+# ─────────────────────────────────────────
+# Auto-Run Configuration (V3.2)
+# ─────────────────────────────────────────
+
+[auto_run]
+enabled = true
+auto_progress_phases = true          # Auto-advance through phases without menus
+auto_skip_optional_sub_phases = true # Skip sub-phases marked skip_allowed unless context indicates value
+halt_on_gate_failure = true          # Stop auto-run on any gate check failure
+halt_on_acceptance_failure = true    # Stop auto-run if acceptance checks fail
+max_story_retries = 2                # Max retry attempts for failed stories before halting
+continuous_scope_validation = true   # Verify scope_write lock after each commit
+cross_story_validation = true        # Run test/type-check/lint after each merge
+
+# Auto-skip presets for skippable sub-phases (V3.4)
+# In auto-run mode, these determine skip behavior without user prompts.
+# "auto" = skip unless project context suggests otherwise
+# "skip" = always skip in auto-run
+# "run" = always run in auto-run
+[auto_run.auto_skip]
+phase_1_1 = "auto"    # Impact Mapping (Phase 1)
+phase_1_2 = "auto"    # Event Storming (Phase 1)
+phase_1_3 = "auto"    # Jobs to Be Done (Phase 1)
+phase_2_2 = "skip"    # Event Storming (Phase 2)
+phase_2_3 = "auto"    # Jobs to Be Done (Phase 2) — auto: run if Phase 1 skipped
+phase_2_8 = "skip"    # Design System (skip if using existing library)
+phase_2_9 = "skip"    # Interaction Design (skip for standard patterns)
+phase_3_4 = "skip"    # Quality Attributes (ATAM-lite)
+
+[auto_run.merge_queue]
+auto_process = true                  # Auto-process merge queue in dependency order
+auto_retry_failed_merges = 1         # Max retries for failed merges
+pre_merge_integration_check = true   # Run integration checks before each merge
+integration_checks = ["npm run test", "npm run build", "npm run type-check"]
+
+[auto_run.concurrency]
+max_concurrent_stories = 5           # Max parallel story agents
+story_agent_timeout_minutes = 30     # Max time per story agent before halt
+dependency_wait_timeout_minutes = 15 # Max wait for blocked dependencies before reporting
+
+# ─────────────────────────────────────────
+# Agent Communication (V3.6)
+# ─────────────────────────────────────────
+# Cross-worktree communication via shared signal directory.
+# All worktrees (main + story/*) access the same /tmp directory.
+# See: specs/agent-communication.md
+
+[agent_communication]
+enabled = true
+signal_dir = "/tmp/web-dev-flow/signals"
+heartbeat_interval_seconds = 30          # Agent heartbeat frequency
+pause_timeout_seconds = 300              # Max wait for agent to pause
+heartbeat_timeout_seconds = 120          # Agent considered dead after this
+cleanup_on_complete = true               # Remove signal files on agent completion
