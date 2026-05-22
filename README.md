@@ -11,6 +11,8 @@ PRD through parallel BE/FE implementation with dual-layer FSM, Gate Cards, accep
 
 ## What is wdf-method?
 
+> **Naming:** The project is `wdf-method` (npm package, repo name). In Claude Code, use `/web-dev-flow` to invoke. `wdf` is the BMAD module code. These all refer to the same system.
+
 wdf-method is a **Claude Code skill** that orchestrates the complete web development lifecycle. You describe your project in one sentence — it produces:
 
 - **PRD** — Kano + RICE prioritized product requirements
