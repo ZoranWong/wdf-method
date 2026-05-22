@@ -2,7 +2,7 @@ import { PhaseOrchestrator } from './orchestrator.js';
 import { SprintStatusValidator } from './state-validator.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -82,7 +82,7 @@ async function main() {
           results.push(['Status files', files.length > 0, `${files.length} files: ${files.join(', ')}`]);
         } else { results.push(['Status files', false, 'status/ directory not found']); }
         // BMAD skills
-        try { const { BmadHealthChecker } = await import('./bmad-health-check.js'); const chk = new BmadHealthChecker(projectRoot); const r = await chk.check(); results.push(['BMAD skills', r.overall !== 'blocked', `${r.available.filter((s: any) => s.available).length}/${r.available.length} available (${r.overall})`]); } catch { results.push(['BMAD skills', false, 'Health checker error']); }
+        try { const { BmadHealthChecker } = await import('./bmad-health-check.js'); const chk = new BmadHealthChecker(projectRoot); const r: any = await chk.check(); results.push(['BMAD skills', r.overall !== 'blocked', `${r.available.filter((s: any) => s.available).length}/${r.available.length} available (${r.overall})`]); } catch { results.push(['BMAD skills', false, 'Health checker error']); }
         // Agent count
         const agentDir = join(projectRoot, '.claude', 'skills', 'wdf-method', 'skills');
         if (existsSync(agentDir)) { const c = require('fs').readdirSync(agentDir).filter((d: string) => existsSync(join(agentDir, d, 'SKILL.md'))).length; results.push(['Agent skills', c > 0, `${c} agents installed`]); } else { results.push(['Agent skills', false, 'Not installed']); }
