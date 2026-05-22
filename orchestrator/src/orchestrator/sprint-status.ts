@@ -181,17 +181,6 @@ export class SprintStatusManager {
     return this.status;
   }
 
-  async save(): Promise<void> {
-    this.status.updated_at = new Date().toISOString();
-    const yaml = YAML.dump(this.status, {
-      indent: 2,
-      lineWidth: -1,
-      noRefs: true,
-      sortKeys: false,
-    });
-    atomicWrite(this.filePath, yaml);
-  }
-
   // ── Phase state ──
 
   getPhase(phaseNum: number) {
