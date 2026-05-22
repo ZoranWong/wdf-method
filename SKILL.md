@@ -1349,11 +1349,47 @@ To resolve a CR:
 
 > "web-dev-flow init" or "start a new web project" or "initialize workflow"
 
-Bootstraps the complete `status/` directory structure from a project description, eliminating manual setup.
+Bootstraps the complete `status/` directory structure from a project description.
+
+**Step 0: Quick-Start Classification (V3.6)**
+
+Before bootstrapping, the orchestrator classifies the project complexity based on the user's description:
+
+| Level | Triggers | Recommended Path |
+|-------|----------|-----------------|
+| **simple** | CRUD app, <5 API endpoints, <3 pages, single user role | Skip Phase 1, minimal Phase 2 (2.1→2.4→2.5), skip UX (2.6-2.10), skip Phase 3 QA, serial Phase 4 |
+| **standard** | Auth + CRUD + some UI, 5-15 endpoints, 3-10 pages | Full Phase 2 (skip 2.2/2.3/2.8/2.9), minimal Phase 3 (skip 3.4), parallel Phase 4 |
+| **complex** | Multi-tenant, real-time, microservices, >15 endpoints, >10 pages | Full 36 sub-phases, all gates active, parallel Phase 4 |
+
+Classification prompt:
+
+```
+Based on your project description, I classify this as:
+
+╔═══════════════════════════════════════════╗
+║  Complexity: {simple|standard|complex}     ║
+║  Phases:     {skip Phase 1?}               ║
+║  Sub-phases: {N} of 36 recommended         ║
+║  Mode:       {serial|parallel}             ║
+║  Est. time:  ~{hours}h with human review   ║
+╚═══════════════════════════════════════════╝
+
+Recommended path: {summary}
+
+[Y] Accept recommendation  [C] Customize  [F] Full (all 36 sub-phases)
+```
+
+Auto-configured on accept:
+- `complexity_tier` → `{simple|standard|complex}` in global.yaml
+- Skippable sub-phases auto-marked SKIPPED
+- `task_triage_mode` → appropriate mode
+- User can override any setting with [C]ustomize
 
 **Flow:**
 1. Orchestrator asks: "Describe your project in one sentence."
-2. Orchestrator dispatches a **bootstrap sub-agent** with the description
+2. Orchestrator classifies complexity and presents the recommendation
+3. User accepts or customizes
+4. Orchestrator dispatches a **bootstrap sub-agent** with the description + tier config
 3. Bootstrap sub-agent generates the full `status/` directory skeleton:
    - `status/global.yaml` — global_state with defaults from customize.toml
    - `status/phase-01.yaml` through `status/phase-03.yaml` — phase files (NOT_STARTED)

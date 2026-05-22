@@ -100,7 +100,13 @@ export class PhaseOrchestrator {
    */
   async initialize(): Promise<void> {
     const trackingPath = this.resolveConfigPath('sprint_tracking');
-    this.state = await SprintStatusManager.load(trackingPath);
+    // V3.6: Try split-file status directory first, fall back to unified
+    const statusDir = join(this.projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+    if (existsSync(statusDir)) {
+      this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
+    } else {
+      this.state = await SprintStatusManager.load(trackingPath);
+    }
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);

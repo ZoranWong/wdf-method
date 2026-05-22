@@ -16,18 +16,22 @@ function atomicWrite(filePath: string, content: string): void {
 }
 
 /**
- * SprintStatusManager handles all read/write operations on sprint-status.yaml.
- * Every write is atomic to prevent concurrent-write corruption.
+ * SprintStatusManager handles all read/write operations.
+ * V3.6: Supports split-file mode — reads/writes status/ directory files.
+ * Falls back to unified sprint-status.yaml for backward compatibility.
  */
 export class SprintStatusManager {
   private status: SprintStatus;
   private filePath: string;
+  private statusDir: string | null;
 
-  private constructor(filePath: string, status: SprintStatus) {
+  private constructor(filePath: string, status: SprintStatus, statusDir?: string) {
     this.filePath = filePath;
     this.status = status;
+    this.statusDir = statusDir ?? null;
   }
 
+  /** Load from unified sprint-status.yaml */
   static async load(filePath: string): Promise<SprintStatusManager> {
     if (!existsSync(filePath)) {
       return new SprintStatusManager(filePath, SprintStatusManager.defaultStatus(filePath));
@@ -35,6 +39,117 @@ export class SprintStatusManager {
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = YAML.load(raw) as SprintStatus;
     return new SprintStatusManager(filePath, parsed);
+  }
+
+  /** V3.6: Load from split status/ directory */
+  static async loadFromStatusDir(statusDir: string, fallbackPath: string): Promise<SprintStatusManager> {
+    if (!existsSync(statusDir)) {
+      return SprintStatusManager.load(fallbackPath);
+    }
+
+    // Try to load global first
+    const globalFile = join(statusDir, 'global.yaml');
+    let global: any = {};
+    if (existsSync(globalFile)) {
+      global = YAML.load(readFileSync(globalFile, 'utf-8')) as any;
+    }
+
+    // Merge all phase files
+    const phases: Record<string, any> = {};
+    for (const phaseNum of [1, 2, 3, 4]) {
+      const phaseFile = join(statusDir, `phase-0${phaseNum}.yaml`);
+      const beFile = join(statusDir, `phase-04-be.yaml`);
+      const feFile = join(statusDir, `phase-04-fe.yaml`);
+
+      if (existsSync(phaseFile)) {
+        const data = YAML.load(readFileSync(phaseFile, 'utf-8')) as any;
+        Object.assign(phases, data);
+      }
+      if (phaseNum === 4 && existsSync(beFile)) {
+        const be = YAML.load(readFileSync(beFile, 'utf-8')) as any;
+        Object.assign(phases, be);
+      }
+      if (phaseNum === 4 && existsSync(feFile)) {
+        const fe = YAML.load(readFileSync(feFile, 'utf-8')) as any;
+        Object.assign(phases, fe);
+      }
+    }
+
+    // CRs
+    const crFile = join(statusDir, 'change-requests.yaml');
+    let changeRequests: any[] = [];
+    if (existsSync(crFile)) {
+      const crData = YAML.load(readFileSync(crFile, 'utf-8')) as any;
+      changeRequests = crData?.change_requests ?? [];
+    }
+
+    const status: SprintStatus = {
+      project: global?.global_state?.project ?? 'unknown',
+      workflow_version: global?.global_state?.workflow_version ?? '3.6.0',
+      created_at: global?.global_state?.created_at ?? new Date().toISOString(),
+      updated_at: global?.global_state?.updated_at ?? new Date().toISOString(),
+      global_state: {
+        dev_mode: global?.global_state?.dev_mode ?? 'separated',
+        task_triage_mode: global?.global_state?.task_triage_mode ?? 'serial',
+        code_standards_source: global?.global_state?.code_standards_source ?? ['AGENTS.md'],
+        overall_status: global?.global_state?.overall_status ?? 'not_started',
+        current_phase: global?.global_state?.current_phase ?? 1,
+        requirements_frozen_at: global?.global_state?.requirements_frozen_at,
+        development_order: global?.global_state?.development_order ?? [],
+        development_order_frozen_at: global?.global_state?.development_order_frozen_at,
+        implementation_boundary: global?.global_state?.implementation_boundary,
+      } as any,
+      phases: phases as any,
+      change_requests: changeRequests,
+    };
+
+    return new SprintStatusManager(fallbackPath, status, statusDir);
+  }
+
+  /** V3.6: Save to split files when statusDir is configured */
+  async save(): Promise<void> {
+    this.status.updated_at = new Date().toISOString();
+
+    if (this.statusDir && existsSync(this.statusDir)) {
+      // Write global.yaml
+      const globalData = {
+        global_state: {
+          ...this.status.global_state,
+          project: this.status.project,
+          workflow_version: this.status.workflow_version,
+          created_at: this.status.created_at,
+          updated_at: this.status.updated_at,
+        },
+      };
+      atomicWrite(join(this.statusDir, 'global.yaml'), YAML.dump(globalData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+
+      // Write per-phase files
+      const phaseMap: Record<number, string[]> = {
+        1: ['phase_1'],
+        2: ['phase_2'],
+        3: ['phase_3'],
+        4: ['phase_4', 'phase_4_be', 'phase_4_fe'],
+      };
+      for (const [phaseNum, keys] of Object.entries(phaseMap)) {
+        const phaseData: Record<string, any> = {};
+        for (const key of keys) {
+          if (this.status.phases[key]) {
+            phaseData[key] = this.status.phases[key];
+          }
+        }
+        if (Object.keys(phaseData).length > 0) {
+          const fileName = Number(phaseNum) === 4 && keys.length > 1 ? `phase-0${phaseNum}-be.yaml` : `phase-0${phaseNum}.yaml`;
+          atomicWrite(join(this.statusDir, fileName), YAML.dump(phaseData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+        }
+      }
+
+      // Write CRs
+      atomicWrite(join(this.statusDir, 'change-requests.yaml'), YAML.dump({ change_requests: this.status.change_requests }, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+    }
+
+    // Always write unified as fallback
+    const yaml = YAML.dump(this.status, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false });
+    atomicWrite(this.filePath, yaml);
   }
 
   private static defaultStatus(filePath: string): SprintStatus {
