@@ -101,13 +101,15 @@ export class PhaseOrchestrator {
    */
   async initialize(): Promise<void> {
     const trackingPath = this.resolveConfigPath('sprint_tracking');
-    // V3.6: Try split-file status directory first, fall back to unified
+    // V3.6: Try split-file status directory first
     const statusDir = join(this.projectRoot, '_bmad-output', 'web-dev-flow', 'status');
     if (existsSync(statusDir)) {
       this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
     } else {
       this.state = await SprintStatusManager.load(trackingPath);
     }
+    // V3.6: Initialize signals in project directory (survives reboots, protected by FS perms)
+    SignalManager.init(this.projectRoot);
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);
@@ -565,17 +567,19 @@ export class PhaseOrchestrator {
     console.log(`  Merge queue: ${ready.length} items ready`);
     for (const item of ready) {
       console.log(`    → Merging ${item.story_id} (order ${item.merge_order})...`);
+      await this.state.appendAudit('merge_attempt', { story_id: item.story_id, decision: 'approve' });
       await this.mergeQueue.markMerging(item.story_id);
 
       try {
-        // Merge happens in the story-runner after CODE_ACCEPTED
-        // Here we just verify the merge completed successfully
         const git = this.worktree['git'];
         const log = await git.raw('log', '--oneline', '-1');
-        await this.mergeQueue.markMerged(item.story_id, log.split(' ')[0]);
+        const commitHash = log.split(' ')[0];
+        await this.mergeQueue.markMerged(item.story_id, commitHash);
+        await this.state.appendAudit('merge_success', { story_id: item.story_id, decision: 'approve', data: { commit: commitHash } });
         console.log(`    ✓ ${item.story_id} merged`);
       } catch (err: any) {
         await this.mergeQueue.markFailed(item.story_id, err.message ?? String(err));
+        await this.state.appendAudit('merge_failed', { story_id: item.story_id, decision: 'reject', reason: err.message });
         console.log(`    ✗ ${item.story_id} merge failed: ${err.message}`);
       }
     }

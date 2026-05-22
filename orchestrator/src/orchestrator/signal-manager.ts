@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 
-const SIGNAL_DIR = '/tmp/web-dev-flow/signals';
+// V3.6: Signals live in the project's .claude/ directory, not /tmp.
+// Survives reboots, protected by project filesystem permissions.
+let SIGNAL_DIR = '/tmp/web-dev-flow/signals'; // legacy default, overridden in init()
 
 interface PauseCommand {
   type: 'pause' | 'abort' | 'none';
@@ -23,6 +25,12 @@ interface AgentStatus {
  * All agents (main orchestrator + story agents) share this directory.
  */
 export class SignalManager {
+  /** Initialize signal directory. Call once at orchestrator startup. */
+  static init(projectRoot: string): void {
+    SIGNAL_DIR = join(projectRoot, '.claude', 'signals');
+    if (!existsSync(SIGNAL_DIR)) mkdirSync(SIGNAL_DIR, { recursive: true });
+  }
+
   /** Write global pause signal */
   static pauseAll(reason?: string): void {
     if (!existsSync(SIGNAL_DIR)) mkdirSync(SIGNAL_DIR, { recursive: true });

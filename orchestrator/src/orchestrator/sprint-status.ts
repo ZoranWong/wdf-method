@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import YAML from 'js-yaml';
 import { SprintStatus, PhaseStatus, StoryStatus, StoryEntry } from './types.js';
@@ -156,7 +156,7 @@ export class SprintStatusManager {
     const now = new Date().toISOString();
     return {
       project: 'unknown',
-      workflow_version: '3.1.0',
+      workflow_version: '3.6.0',
       created_at: now,
       updated_at: now,
       global_state: {
@@ -179,6 +179,22 @@ export class SprintStatusManager {
 
   get data(): SprintStatus {
     return this.status;
+  }
+
+  // ── V3.6 Audit log (append-only JSONL) ──
+
+  async appendAudit(event: string, data: Record<string, any> = {}): Promise<void> {
+    const auditDir = join(dirname(this.filePath), 'audit');
+    const auditFile = join(auditDir, 'orchestrator-audit.jsonl');
+    if (!existsSync(auditDir)) mkdirSync(auditDir, { recursive: true });
+
+    const entry = {
+      ts: new Date().toISOString(),
+      event,
+      decision: data.decision ?? 'info',
+      ...data,
+    };
+    appendFileSync(auditFile, JSON.stringify(entry) + '\n');
   }
 
   // ── Phase state ──

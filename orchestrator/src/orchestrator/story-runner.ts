@@ -84,12 +84,14 @@ export class StoryRunner {
 
     if (existing?.status === 'IN_PROGRESS') {
       // Resume from interruption
+      await this.state.appendAudit('story_resume', { story_id: story.story_id, decision: 'approve' });
       return this.resumeStory(story, existing, subKey);
     }
 
     // Check cross-track dependencies
     const canStart = await this.checkDependencies(story);
     if (!canStart) {
+      await this.state.appendAudit('story_blocked', { story_id: story.story_id, decision: 'block', reason: 'dependency' });
       await this.state.updateStoryStatus(4, subKey, {
         id: story.story_id,
         status: 'BLOCKED_BY_DEPENDENCY' as PhaseStatus,
