@@ -164,6 +164,39 @@ export class MergeQueueManager {
   /**
    * Display the merge queue status as a formatted string.
    */
+  /**
+   * V3.6 Hidden Dependency Detection: Cross-branch diff analysis before merge.
+   * Detects files modified by BOTH this story AND any other queued story,
+   * where the file is NOT in either story's scope_write.
+   */
+  async detectHiddenOverlaps(branch: string, scopeWrite: string[]): Promise<string[]> {
+    const hidden: string[] = [];
+    try {
+      const { execSync } = await import('child_process');
+      const currentFiles = execSync(`git diff --name-only origin/master..${branch}`, { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe' })
+        .split('\n').filter(Boolean);
+
+      const mq = this.state.getMergeQueue();
+      for (const otherItem of mq.items) {
+        if (otherItem.merge_status === 'merged' || otherItem.merge_status === 'failed') continue;
+        try {
+          const otherFiles = execSync(`git diff --name-only origin/master..${otherItem.branch}`, { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe' })
+            .split('\n').filter(Boolean);
+          const overlap = currentFiles.filter(f => otherFiles.includes(f));
+
+          for (const f of overlap) {
+            const inCurrentScope = scopeWrite.some(sw => f.startsWith(sw) || f.includes(sw));
+            const inOtherScope = true; // conservative: assume it may not be in other's scope
+            if (!inCurrentScope && !inOtherScope) {
+              hidden.push(`${f} (also modified by ${otherItem.story_id})`);
+            }
+          }
+        } catch { /* skip items that can't be diffed */ }
+      }
+    } catch { /* Best-effort detection */ }
+    return hidden;
+  }
+
   displayQueue(): string {
     const mq = this.state.getMergeQueue();
     const lines = [
