@@ -1,12 +1,13 @@
 #!/bin/bash
-# web-dev-flow — One-Command Setup
+# wdf-method — One-Command Setup
 # Installs skill, configures permissions, and initializes project.
 #
 # Usage:
-#   bash scripts/setup.sh              # Interactive setup
-#   bash scripts/setup.sh --init       # Also initialize status/ directory
-#   bash scripts/setup.sh --dry-run    # Preview what would happen
-#   bash scripts/setup.sh --uninstall  # Remove all installed files
+#   bash scripts/setup.sh                          # Global install (~/.claude/skills/)
+#   bash scripts/setup.sh --project /path/to/app   # Project-local install
+#   bash scripts/setup.sh --project . --init       # Install + init in current dir
+#   bash scripts/setup.sh --dry-run                # Preview what would happen
+#   bash scripts/setup.sh --uninstall              # Remove skill
 
 set -e
 
@@ -21,42 +22,62 @@ NC='\033[0m'
 UNINSTALL=false
 INIT=false
 DRY_RUN=false
+PROJECT_DIR=""
 
 for arg in "$@"; do
   case $arg in
     --init)         INIT=true ;;
     --dry-run)      DRY_RUN=true ;;
     --uninstall)    UNINSTALL=true ;;
+    --project)      PROJECT_DIR="${2:-}"; shift ;;
+    --project=*)    PROJECT_DIR="${arg#*=}" ;;
     -h|--help)
-      echo "Usage: bash scripts/setup.sh [options]"
-      echo ""
-      echo "Options:"
-      echo "  --init         Also initialize project structure"
-      echo "  --dry-run      Preview steps without making changes"
-      echo "  --uninstall    Remove all installed files"
-      echo "  -h, --help     Show this help"
+  case $arg in
+    --init)         INIT=true ;;
+    --dry-run)      DRY_RUN=true ;;
+    --uninstall)    UNINSTALL=true ;;
+    -h|--help)
+      echo "  --project <path>   Install into a specific project directory"
+      echo "  --init             Also create output directory structure"
+      echo "  --dry-run          Preview steps without making changes"
+      echo "  --uninstall        Remove skill symlink"
+      echo "  -h, --help         Show this help"
       exit 0
       ;;
   esac
 done
 
-# ── Resolve skill directory ──────────────────────────────────────────────────
+# ── Resolve paths ─────────────────────────────────────────────────────────────
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+
+if [ -n "$PROJECT_DIR" ]; then
+  # Project-local install
+  PROJECT_DIR="$(cd "$PROJECT_DIR" 2>/dev/null && pwd || echo "$PROJECT_DIR")"
+  CLAUDE_SKILLS_DIR="$PROJECT_DIR/.claude/skills"
+  SETTINGS_DIR="$PROJECT_DIR/.claude"
+  OUTPUT_ROOT="$PROJECT_DIR"
+  MODE_TEXT="Project-local install → $PROJECT_DIR"
+else
+  # Global install
+  CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+  SETTINGS_DIR="$SKILL_DIR/.claude"
+  OUTPUT_ROOT="$SKILL_DIR"
+  MODE_TEXT="Global install → ~/.claude/skills/"
+fi
 
 # ── Uninstall ─────────────────────────────────────────────────────────────────
 if [ "$UNINSTALL" = true ]; then
   echo -e "${RED}${BOLD}╔══════════════════════════════════════════════╗${NC}"
-  echo -e "${RED}${BOLD}║   web-dev-flow — Uninstall                   ║${NC}"
+  echo -e "${RED}${BOLD}║   wdf-method — Uninstall                   ║${NC}"
   echo -e "${RED}${BOLD}╚══════════════════════════════════════════════╝${NC}"
   echo ""
 
   # Remove symlink
-  if [ -L "$CLAUDE_SKILLS_DIR/web-dev-flow" ]; then
+  if [ -L "$CLAUDE_SKILLS_DIR/wdf-method" ]; then
     if [ "$DRY_RUN" = true ]; then
-      echo -e "  ${GRAY}[DRY RUN] Would remove symlink: $CLAUDE_SKILLS_DIR/web-dev-flow${NC}"
+      echo -e "  ${GRAY}[DRY RUN] Would remove symlink: $CLAUDE_SKILLS_DIR/wdf-method${NC}"
     else
-      rm "$CLAUDE_SKILLS_DIR/web-dev-flow"
+      rm "$CLAUDE_SKILLS_DIR/wdf-method"
       echo -e "  ${GREEN}✓${NC} Removed Claude Code skill symlink"
     fi
   else
@@ -72,7 +93,7 @@ fi
 # ── Header ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}${BOLD}║   web-dev-flow V3.6 — Setup                  ║${NC}"
+echo -e "${BLUE}${BOLD}║   wdf-method V3.6 — Setup                  ║${NC}"
 echo -e "${BLUE}${BOLD}║   AI-Assisted Web Development Workflow        ║${NC}"
 echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════╝${NC}"
 echo ""
@@ -86,18 +107,18 @@ fi
 echo -e "${BOLD}Step 1: Install Claude Code Skill${NC}"
 echo ""
 
-if [ -L "$CLAUDE_SKILLS_DIR/web-dev-flow" ]; then
-  TARGET=$(readlink -f "$CLAUDE_SKILLS_DIR/web-dev-flow" 2>/dev/null || echo "unknown")
+if [ -L "$CLAUDE_SKILLS_DIR/wdf-method" ]; then
+  TARGET=$(readlink -f "$CLAUDE_SKILLS_DIR/wdf-method" 2>/dev/null || echo "unknown")
   echo -e "  ${GREEN}✓${NC} Skill already installed"
   echo -e "  ${GRAY}  Symlink → $TARGET${NC}"
 else
   if [ "$DRY_RUN" = true ]; then
     echo -e "  ${GRAY}[DRY RUN] Would create symlink:${NC}"
-    echo -e "  ${GRAY}  $CLAUDE_SKILLS_DIR/web-dev-flow → $SKILL_DIR${NC}"
+    echo -e "  ${GRAY}  $CLAUDE_SKILLS_DIR/wdf-method → $SKILL_DIR${NC}"
   else
-    ln -sf "$SKILL_DIR" "$CLAUDE_SKILLS_DIR/web-dev-flow"
+    ln -sf "$SKILL_DIR" "$CLAUDE_SKILLS_DIR/wdf-method"
     echo -e "  ${GREEN}✓${NC} Skill installed as Claude Code skill"
-    echo -e "  ${GRAY}  $CLAUDE_SKILLS_DIR/web-dev-flow → $SKILL_DIR${NC}"
+    echo -e "  ${GRAY}  $CLAUDE_SKILLS_DIR/wdf-method → $SKILL_DIR${NC}"
   fi
 fi
 
@@ -141,7 +162,7 @@ if [ "$INIT" = true ]; then
   echo -e "${BOLD}Step 4: Initialize Project Structure${NC}"
   echo ""
 
-  OUTPUT_DIR="$SKILL_DIR/_bmad-output/web-dev-flow"
+  OUTPUT_DIR="$SKILL_DIR/_bmad-output/wdf-method"
   if [ "$DRY_RUN" = true ]; then
     echo -e "  ${GRAY}[DRY RUN] Would create:${NC}"
     echo -e "  ${GRAY}  $OUTPUT_DIR/_output/{planning,solutioning,acceptance}${NC}"
@@ -166,7 +187,7 @@ echo -e "${GREEN}${BOLD}  Setup complete!${NC}"
 echo ""
 
 echo -e "${BOLD}What's configured:${NC}"
-echo -e "  ${GREEN}✓${NC} Claude Code skill — use /web-dev-flow to start"
+echo -e "  ${GREEN}✓${NC} Claude Code skill — use /wdf-method to start"
 echo -e "  ${GREEN}✓${NC} Agent communication — /tmp/web-dev-flow/signals/"
 if [ -f "$SETTINGS_FILE" ]; then
   echo -e "  ${GREEN}✓${NC} Sub-agent permissions — Read Write Bash Grep Glob Edit Agent Task"
@@ -175,15 +196,15 @@ echo ""
 
 echo -e "${BOLD}Available commands:${NC}"
 echo ""
-echo -e "  ${YELLOW}/web-dev-flow init${NC}              — Initialize a new project"
-echo -e "  ${YELLOW}/web-dev-flow status${NC}            — Show progress dashboard"
-echo -e "  ${YELLOW}/web-dev-flow start${NC}             — Start/resume current phase"
-echo -e "  ${YELLOW}/web-dev-flow pause${NC}             — Pause and save state"
-echo -e "  ${YELLOW}/web-dev-flow resume${NC}            — Resume from pause"
-echo -e "  ${YELLOW}/web-dev-flow freeze requirements${NC} — Freeze requirements"
-echo -e "  ${YELLOW}/web-dev-flow accept code${NC}       — Run CODE ACCEPTANCE"
-echo -e "  ${YELLOW}/web-dev-flow queue show${NC}        — Show merge queue"
-echo -e "  ${YELLOW}/web-dev-flow rebuild-status${NC}    — Rebuild status index"
+echo -e "  ${YELLOW}/wdf-method init${NC}              — Initialize a new project"
+echo -e "  ${YELLOW}/wdf-method status${NC}            — Show progress dashboard"
+echo -e "  ${YELLOW}/wdf-method start${NC}             — Start/resume current phase"
+echo -e "  ${YELLOW}/wdf-method pause${NC}             — Pause and save state"
+echo -e "  ${YELLOW}/wdf-method resume${NC}            — Resume from pause"
+echo -e "  ${YELLOW}/wdf-method freeze requirements${NC} — Freeze requirements"
+echo -e "  ${YELLOW}/wdf-method accept code${NC}       — Run CODE ACCEPTANCE"
+echo -e "  ${YELLOW}/wdf-method queue show${NC}        — Show merge queue"
+echo -e "  ${YELLOW}/wdf-method rebuild-status${NC}    — Rebuild status index"
 echo ""
 
 echo -e "${GRAY}Full guide: cat SETUP.md${NC}"
