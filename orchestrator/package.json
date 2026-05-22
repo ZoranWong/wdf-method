@@ -1,11 +1,11 @@
 {
-  "name": "@web-dev-flow/orchestrator",
-  "version": "3.2.0",
-  "description": "web-dev-flow V3.2 execution engine — drives phase progression, story agent dispatch, merge queue processing, and continuous self-validation",
+  "name": "@wdf-method/orchestrator",
+  "version": "3.6.0",
+  "description": "wdf-method V3.6 execution engine — drives phase progression, story agent dispatch, merge queue processing, and continuous self-validation",
   "type": "module",
   "main": "dist/orchestrator/index.js",
   "bin": {
-    "web-dev-flow": "dist/orchestrator/index.js"
+    "wdf-orchestrator": "dist/orchestrator/index.js"
   },
   "scripts": {
     "build": "tsc",
