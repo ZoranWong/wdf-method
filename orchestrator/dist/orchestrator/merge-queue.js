@@ -65,7 +65,7 @@ export class MergeQueueManager {
     async getNextReady() {
         const { ready } = await this.reconcileDependencies();
         ready.sort((a, b) => a.merge_order - b.merge_order);
-        return ready.find(i => i.merge_status === 'queued');
+        return ready.find((i) => i.merge_status === 'queued');
     }
     /**
      * Mark an item as being merged.

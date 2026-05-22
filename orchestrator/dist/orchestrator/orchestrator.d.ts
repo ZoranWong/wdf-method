@@ -1,8 +1,8 @@
 import { TriageMode } from './types.js';
 /**
- * PhaseOrchestrator is the main entry point for the web-dev-flow V3.1 execution engine.
- * It reads sprint-status.yaml, evaluates gates, auto-advances phases, and drives
- * story implementation with worktree isolation.
+ * PhaseOrchestrator is the main entry point for the wdf-method V3.6 execution engine.
+ * It reads split-file status, evaluates gates, auto-advances phases, and drives
+ * story implementation with worktree isolation and signal-based agent communication.
  */
 export declare class PhaseOrchestrator {
     private projectRoot;
@@ -47,9 +47,9 @@ export declare class PhaseOrchestrator {
      */
     private runPhases1To3;
     /**
-     * Execute Phase 4: Implementation with V3.2 sub-phase progression.
+     * Execute Phase 4: Implementation with V3.6 sub-phase progression.
      *
-     * V3.2 sub-phase map:
+     * V3.6 sub-phase map:
      *   BE Track: 4.2 Scaffolding → 4.3 DB+API Client → 4.4 Endpoints (AUTO-CONTINUE) → 4.5 Testing → 4.6 Completion (CODE_ACCEPTANCE)
      *   FE Track: 4.7 Scaffolding → 4.8 Design System → 4.9 API Client → 4.10 Pages (AUTO-CONTINUE) → 4.11 A11y/Perf → 4.12 Completion (UI_ACCEPTANCE)
      *   Integration: 4.13 → 4.14 Retrospective

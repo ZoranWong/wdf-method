@@ -9,7 +9,7 @@
  */
 import { existsSync } from 'fs';
 import { resolve, join } from 'path';
-// The 14 BMAD skills + 4 acceptance commands required by web-dev-flow V3.1
+// The 14 BMAD skills + 4 acceptance commands referenced by wdf-method V3.6. BMAD skills are optional accelerators — native agents handle all functionality when BMAD is unavailable.
 const REQUIRED_SKILLS = [
     { name: 'bmad-product-brief', skillInvocation: '/bmad-product-brief', usedIn: 'Phase 2.1', critical: true },
     { name: 'bmad-domain-research', skillInvocation: '/bmad-domain-research', usedIn: 'Phase 2.2', critical: false },

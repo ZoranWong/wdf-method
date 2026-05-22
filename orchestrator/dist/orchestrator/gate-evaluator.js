@@ -143,12 +143,12 @@ export class GateEvaluator {
         if (targetSubKey && substates[targetSubKey]?.stories) {
             const stories = substates[targetSubKey].stories;
             const terminalStates = ['CODE_ACCEPTED', 'FEATURE_ACCEPTED', 'UI_ACCEPTED', 'E2E_BROWSER_ACCEPTED', 'MERGED'];
-            const nonBlocked = stories.filter(s => s.status !== 'BLOCKED_BY_DEPENDENCY');
-            const allDone = nonBlocked.every(s => terminalStates.includes(s.status));
+            const nonBlocked = stories.filter((s) => s.status !== 'BLOCKED_BY_DEPENDENCY');
+            const allDone = nonBlocked.every((s) => terminalStates.includes(s.status));
             return {
                 id: 'ALL_STORIES',
                 status: allDone ? 'pass' : 'fail',
-                reason: allDone ? undefined : `${nonBlocked.length - nonBlocked.filter(s => terminalStates.includes(s.status)).length} stories not yet accepted`,
+                reason: allDone ? undefined : `${nonBlocked.length - nonBlocked.filter((s) => terminalStates.includes(s.status)).length} stories not yet accepted`,
             };
         }
         return { id: 'ALL_STORIES', status: 'pass' };

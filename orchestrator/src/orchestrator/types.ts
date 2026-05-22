@@ -1,4 +1,4 @@
-// Type definitions for web-dev-flow V3.1 Orchestrator
+// Type definitions for wdf-method V3.6 Orchestrator
 
 export type PhaseStatus =
   | 'NOT_STARTED'

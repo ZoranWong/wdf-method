@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, createHash } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import { resolve } from 'path';
 /**
  * SprintStatusValidator checks sprint-status.yaml for structural consistency,

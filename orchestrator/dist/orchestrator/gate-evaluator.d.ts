@@ -1,4 +1,5 @@
-import { GateCard, SprintStatusManager, Track } from './types.js';
+import { GateCard, Track } from './types.js';
+import { SprintStatusManager } from './sprint-status.js';
 /**
  * Evaluates Gate Cards to determine if a phase/sub-phase can be entered.
  * Supports: artifact_exists, artifact_metadata, dependency_status, user_confirmation,

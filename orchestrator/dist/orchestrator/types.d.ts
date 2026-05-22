@@ -1,4 +1,4 @@
-export type PhaseStatus = 'NOT_STARTED' | 'SKIPPED' | 'IN_PROGRESS' | 'DRAFT_COMPLETE' | 'IN_REVIEW' | 'APPROVED' | 'LOCKED' | 'BLOCKED' | 'UNLOCK_RESOLVE' | 'ALL_SUB_PHASES_APPROVED' | 'ANALYSIS_COMPLETE' | 'PLANNING_COMPLETE' | 'SOLUTIONING_COMPLETE' | 'CODE_ACCEPTANCE' | 'CODE_ACCEPTED' | 'FEATURE_ACCEPTANCE' | 'FEATURE_ACCEPTED' | 'UI_ACCEPTANCE' | 'UI_ACCEPTED' | 'E2E_BROWSER_ACCEPTANCE' | 'E2E_BROWSER_ACCEPTED' | 'BE_CODE_ACCEPTED' | 'FE_UI_ACCEPTED' | 'BE_TRACK_COMPLETE' | 'FE_TRACK_COMPLETE' | 'FULL_STACK_INTEGRATED' | 'MERGE_QUEUED' | 'MERGED';
+export type PhaseStatus = 'NOT_STARTED' | 'SKIPPED' | 'IN_PROGRESS' | 'DRAFT_COMPLETE' | 'IN_REVIEW' | 'APPROVED' | 'LOCKED' | 'BLOCKED' | 'UNLOCK_RESOLVE' | 'ALL_SUB_PHASES_APPROVED' | 'ANALYSIS_COMPLETE' | 'PLANNING_COMPLETE' | 'SOLUTIONING_COMPLETE' | 'CODE_ACCEPTANCE' | 'CODE_ACCEPTED' | 'FEATURE_ACCEPTANCE' | 'FEATURE_ACCEPTED' | 'UI_ACCEPTANCE' | 'UI_ACCEPTED' | 'E2E_BROWSER_ACCEPTANCE' | 'E2E_BROWSER_ACCEPTED' | 'BE_CODE_ACCEPTED' | 'FE_UI_ACCEPTED' | 'BE_TRACK_COMPLETE' | 'FE_TRACK_COMPLETE' | 'FULL_STACK_INTEGRATED' | 'MERGE_QUEUED' | 'MERGED' | 'BLOCKED_BY_DEPENDENCY';
 export type DevMode = 'separated' | 'full_stack';
 export type TriageMode = 'light' | 'serial' | 'parallel';
 export type Track = 'backend' | 'frontend' | 'full-stack';
@@ -40,7 +40,7 @@ export interface StoryStatus {
     bmad_review_passed?: boolean;
     started_at?: string;
     completed_at?: string;
-    last_completed_substep?: string;
+    last_completed_substep?: string | null;
     step_history?: StepHistoryEntry[];
     scope_audit?: ScopeAudit;
     code_acceptance?: CodeAcceptance;
@@ -50,11 +50,11 @@ export interface StoryStatus {
     units?: Record<string, UnitStatus>;
 }
 export interface StepHistoryEntry {
-    step: 'started' | 'completed';
+    step: string;
     at: string;
     substep: string | null;
     summary: string | null;
-    status: 'PASS' | 'FAIL' | 'WARNING' | null;
+    status: string | null;
 }
 export interface ScopeAudit {
     gate_passed: boolean;
@@ -101,6 +101,9 @@ export interface GateCheck {
     type: string;
     description: string;
     target?: string;
+    source?: string;
+    field?: string;
+    operator?: string;
     expected?: unknown;
     severity?: 'blocking' | 'warning';
     status?: 'pending' | 'pass' | 'fail' | 'skipped';

@@ -1,5 +1,5 @@
 import { SprintStatusManager } from './sprint-status.js';
-import { Track } from './types.js';
+import { Track, MergeQueueItem } from './types.js';
 /**
  * Dependency-ordered merge queue for Phase 4.
  * Stories enter queue after CODE_ACCEPTED/UI_ACCEPTED, merge in dependency order during Phase 4.13.
@@ -16,13 +16,13 @@ export declare class MergeQueueManager {
      * Re-evaluate dependency statuses and update merge item states.
      */
     reconcileDependencies(): Promise<{
-        ready: typeof this.state.data.global_state.merge_queue.items;
-        waiting: typeof this.state.data.global_state.merge_queue.items;
+        ready: MergeQueueItem[];
+        waiting: MergeQueueItem[];
     }>;
     /**
      * Get the next ready item from the merge queue (by merge_order).
      */
-    getNextReady(): Promise<typeof this.state.data.global_state.merge_queue.items[0] | undefined>;
+    getNextReady(): Promise<MergeQueueItem | undefined>;
     /**
      * Mark an item as being merged.
      */

@@ -71,9 +71,9 @@ function parseSimpleToml(content) {
     return result;
 }
 /**
- * PhaseOrchestrator is the main entry point for the web-dev-flow V3.1 execution engine.
- * It reads sprint-status.yaml, evaluates gates, auto-advances phases, and drives
- * story implementation with worktree isolation.
+ * PhaseOrchestrator is the main entry point for the wdf-method V3.6 execution engine.
+ * It reads split-file status, evaluates gates, auto-advances phases, and drives
+ * story implementation with worktree isolation and signal-based agent communication.
  */
 export class PhaseOrchestrator {
     projectRoot;
@@ -112,10 +112,11 @@ export class PhaseOrchestrator {
         const lines = [
             '═══════════════════════════════════════════',
             `Project: ${this.state.data.project}`,
-            `Workflow: web-dev-flow v${this.state.data.workflow_version}`,
+            `Workflow: wdf-method v${this.state.data.workflow_version}`,
             `Overall: ${gs.overall_status}`,
             `Dev Mode: ${gs.dev_mode}`,
             `Triage Mode: ${gs.task_triage_mode}`,
+            `Complexity: ${gs.complexity_tier ?? 'standard'}`,
             `Requirements: ${gs.requirements_frozen_at ? 'frozen' : 'not frozen'}`,
             `Dev Order: ${gs.development_order_frozen_at ? 'frozen' : 'not frozen'}`,
             `Code Standards: ${(gs.code_standards_source ?? []).join(', ')}`,
@@ -167,6 +168,7 @@ export class PhaseOrchestrator {
         const states = {
             'NOT_STARTED': 0, 'IN_PROGRESS': 2, 'DRAFT_COMPLETE': 3,
             'IN_REVIEW': 3, 'APPROVED': 4, 'LOCKED': 4, 'SKIPPED': 4,
+            'PAUSED': 2,
             'CODE_ACCEPTED': 4, 'FEATURE_ACCEPTED': 4, 'UI_ACCEPTED': 4,
             'E2E_BROWSER_ACCEPTED': 4, 'MERGED': 4, 'BE_CODE_ACCEPTED': 3,
             'FE_UI_ACCEPTED': 3, 'FULL_STACK_INTEGRATED': 4,
@@ -191,10 +193,10 @@ export class PhaseOrchestrator {
     }
     subPhaseName(phase, sub) {
         const names = {
-            1: { '1.1': 'Impact Mapping', '1.2': 'Event Storming', '1.3': 'Jobs to Be Done' },
-            2: { '2.1': 'Product Brief', '2.2': 'Domain Research', '2.3': 'Impact Mapping', '2.4': 'Event Storming', '2.5': 'JTBD Cards', '2.6': 'Story Mapping', '2.7': 'Prioritization & PRD', '2.8': 'User Flows & Sitemap', '2.9': 'Wireframes & Design Tokens', '2.10': 'Design Acceptance' },
+            1: { '1.1': 'Brainstorming', '1.2': 'Domain Research', '1.3': 'Product Brief' },
+            2: { '2.1': 'Impact Mapping', '2.2': 'Event Storming', '2.3': 'JTBD Cards', '2.4': 'Story Mapping', '2.5': 'Kano+RICE+PRD', '2.6': 'User Flows & IA', '2.7': 'Wireframes', '2.8': 'Design System', '2.9': 'Interaction Design', '2.10': 'Design Acceptance' },
             3: { '3.1': 'System Context (C4 L1)', '3.2': 'Architecture Style', '3.3': 'Container Design (C4 L2)', '3.4': 'Quality Attributes', '3.5': 'Component Design (C4 L3)', '3.6': 'Epics & Feature Plan', '3.7': 'Story Design', '3.8': 'API & Data Design', '3.9': 'Readiness Check' },
-            4: { '4.1': 'Sprint Planning', '4.2': 'BE Scaffolding', '4.3': 'BE Database & API Client', '4.4': 'BE Endpoints', '4.5': 'BE Testing Suite', '4.6': 'BE Completion Review', '4.7': 'FE Scaffolding', '4.8': 'FE Design System', '4.9': 'FE API Client', '4.10': 'FE Pages', '4.11': 'FE A11y & Perf Audit', '4.12': 'FE Completion Review', '4.13': 'Integration', '4.14': 'Retrospective' },
+            4: { '4.1': 'Sprint Planning', '4.2': 'BE Scaffolding', '4.3': 'BE Database & API Client', '4.4': 'BE Endpoints', '4.5': 'BE Testing Suite', '4.6': 'BE CODE ACCEPTANCE', '4.7': 'FE Scaffolding', '4.8': 'FE Design System', '4.9': 'FE API Client', '4.10': 'FE Pages', '4.11': 'FE A11y & Perf Audit', '4.12': 'FE UI ACCEPTANCE', '4.13': 'Integration & Acceptance', '4.14': 'Retrospective' },
         };
         return names[phase]?.[sub] ?? sub;
     }
@@ -283,9 +285,9 @@ export class PhaseOrchestrator {
         }
     }
     /**
-     * Execute Phase 4: Implementation with V3.2 sub-phase progression.
+     * Execute Phase 4: Implementation with V3.6 sub-phase progression.
      *
-     * V3.2 sub-phase map:
+     * V3.6 sub-phase map:
      *   BE Track: 4.2 Scaffolding → 4.3 DB+API Client → 4.4 Endpoints (AUTO-CONTINUE) → 4.5 Testing → 4.6 Completion (CODE_ACCEPTANCE)
      *   FE Track: 4.7 Scaffolding → 4.8 Design System → 4.9 API Client → 4.10 Pages (AUTO-CONTINUE) → 4.11 A11y/Perf → 4.12 Completion (UI_ACCEPTANCE)
      *   Integration: 4.13 → 4.14 Retrospective
@@ -536,7 +538,7 @@ export class PhaseOrchestrator {
             stories_output: '_bmad-output/web-dev-flow/stories',
             output_dir: '_bmad-output/web-dev-flow',
         };
-        // Check customize.toml first
+        // Check customize.toml first for overrides
         const cfg = this.config;
         const workflowVal = cfg?.workflow?.[key];
         if (workflowVal && typeof workflowVal === 'string') {

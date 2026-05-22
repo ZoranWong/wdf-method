@@ -56,7 +56,7 @@ async function main() {
         case 'help':
         default:
             console.log(`
-web-dev-flow orchestrator v3.2.0
+web-dev-flow orchestrator v3.6.0
 
 Usage:
   orchestrator status [project-root]     Show current status dashboard

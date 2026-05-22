@@ -254,11 +254,11 @@ export class SprintStatusManager {
 
   // ── Gate card ──
 
-  async setGateCard(phaseNum: number, checks: { id: string; status: 'pass' | 'fail' | 'skipped' }[]): Promise<void> {
+  async setGateCard(phaseNum: number, checks: { id: string; status: 'pass' | 'fail' | 'skipped'; type?: string; description?: string }[]): Promise<void> {
     const phase = this.getPhase(phaseNum);
     if (!phase) return;
-    phase.gate_card = {
-      checks: checks.map(c => ({ id: c.id, status: c.status })),
+    phase.gate_card = { phase: phaseNum,
+      checks: checks.map(c => ({ id: c.id, status: c.status, type: c.type ?? 'custom_check', description: c.description ?? 'Gate check' })),
       all_pass: checks.every(c => c.status === 'pass'),
     };
     await this.save();
