@@ -234,7 +234,7 @@ export class StoryRunner {
    * are added by this method. SRG-02/03/05/06/07 are handled by the existing implementation.
    */
   private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
-    const results = await this.runBaseSRGChecks(story);
+    const { results } = await this.runBaseSRGChecks(story);
     // V3.6 additions
     this.addSRG04_PathSafety(story, results);
     this.addSRG08_ProtectedPaths(story, results);
@@ -243,8 +243,8 @@ export class StoryRunner {
   }
 
   /** SRG-01~03,05~07: Base checks from V3.1 */
-  private async runBaseSRGChecks(story: StoryEntry): Promise<any[]> {
-
+  private async runBaseSRGChecks(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
+    const results: { id: string; status: 'pass' | 'fail'; reason?: string }[] = [];
     // SRG-02: scope_write non-empty
     if (!story.scope_write || story.scope_write.length === 0) {
       results.push({ id: 'SRG-02', status: 'fail', reason: 'scope_write is empty' });
