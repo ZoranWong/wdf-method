@@ -1,54 +1,7 @@
 import { spawnSync } from 'child_process';
 import { SprintStatusManager } from './sprint-status.js';
 import { Track, MergeQueueItem } from './types.js';
-import { assertSafeIdentifier, validateCommand } from './command-safety.js';
-
-/**
- * Validate a merge queue item before it enters the queue.
- * Checks branch name, story_id, queue_item_id, and integration_checks are all safe.
- * @throws Error if any field contains unsafe characters or commands
- */
-export function validateMergeQueueItem(item: MergeQueueItem): void {
-  assertSafeIdentifier(item.branch, 'branch');
-  assertSafeIdentifier(item.story_id, 'story_id');
-  assertSafeIdentifier(item.queue_item_id, 'queue_item_id');
-  for (const check of item.integration_checks ?? []) {
-    const result = validateCommand(check);
-    if (!result.ok) {
-      throw new Error(`Unsafe integration check: ${result.reason}`);
-    }
-  }
-}
-
-/**
- * Pure helper to detect hidden overlaps between two branches.
- * An overlap is "hidden" when both branches modify the same file,
- * but that file is NOT explicitly declared in either story's scope_write.
- *
- * @param currentFiles Files modified by the current branch
- * @param otherFiles Files modified by the other branch
- * @param currentScope Declared scope_write of the current story
- * @param otherScope Declared scope_write of the other story
- * @returns Array of files that overlap outside both scopes
- */
-export function detectHiddenOverlapsFromFileLists(
-  currentFiles: string[],
-  otherFiles: string[],
-  currentScope: string[],
-  otherScope: string[]
-): string[] {
-  const overlaps = currentFiles.filter(file => otherFiles.includes(file));
-  return overlaps.filter(file => !inScope(file, currentScope) && !inScope(file, otherScope));
-}
-
-/**
- * Check if a file path falls within any declared scope path.
- * A file is considered "in scope" if its path starts with any scope entry,
- * or if any scope entry starts with the file path (parent/child relation).
- */
-function inScope(file: string, scope: string[]): boolean {
-  return scope.some(s => file.startsWith(s) || s.startsWith(file));
-}
+import { runAcceptanceChecks } from './acceptance-runner.js';
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -157,32 +110,31 @@ export class MergeQueueManager {
         }
       }
 
-      // Step 1: Merge without committing (use spawnSync with arg array for safety)
-      const mergeResult = spawnSync('git', ['merge', item.branch, '--no-commit', '--no-ff'], {
+      // Step 2: Run integration checks via the safe acceptance runner.
+      // Each declared command is validated against the allowlist +
+      // denylist before launch and executed without a shell. If any
+      // command fails (including validation rejection), abort the
+      // merge so main never sees a partial state.
+      const checks =
+        item.integration_checks.length > 0
+          ? item.integration_checks
+          : ['npm test', 'npm run build'];
+      const report = await runAcceptanceChecks(checks, {
         cwd: this.projectRoot,
-        encoding: 'utf8',
-        timeout: 60_000,
+        timeout_ms: 5 * 60_000,
       });
-      if (mergeResult.status !== 0) {
-        return { merged: false, error: `Git merge failed: ${mergeResult.stderr || mergeResult.stdout}` };
-      }
-
-      // Step 2: Run integration checks (already validated above)
-      const checks = item.integration_checks.length > 0 ? item.integration_checks : ['npm run test', 'npm run build'];
-      for (const check of checks) {
-        // npm commands use spawn with shell=true for PATH resolution, but only after validateCommand passes
-        const checkResult = spawnSync(check, {
-          cwd: this.projectRoot,
-          encoding: 'utf8',
-          timeout: 120_000,
-          shell: true,
+      if (!report.all_passed) {
+        const failed = report.results.find((r) => !r.passed);
+        const reason = failed
+          ? `${failed.command} (${failed.error ?? `exit ${failed.exit_code}`})`
+          : 'unknown failure';
+        // Step 3a: Abort — no partial merge
+        execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
+        await this.state.updateMergeItem(item.story_id, {
+          merge_status: 'failed',
+          merge_failed_reason: `Integration check failed: ${reason}`,
         });
-        if (checkResult.status !== 0) {
-          // Step 3a: Abort — no partial merge
-          spawnSync('git', ['merge', '--abort'], { cwd: this.projectRoot, encoding: 'utf8' });
-          await this.state.updateMergeItem(item.story_id, { merge_status: 'failed', merge_failed_reason: `Integration check failed: ${check}` });
-          return { merged: false, error: `Integration check failed: ${check}` };
-        }
+        return { merged: false, error: `Integration check failed: ${reason}` };
       }
 
       // Step 3b: All checks passed — commit
