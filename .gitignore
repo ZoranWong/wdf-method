@@ -1,4 +1,28 @@
+# Project output
 _test-project/
 _bmad-output/
 _wdf_output/
 _review/
+.wdf/
+
+# Orchestrator subpackage
+orchestrator/dist/
+orchestrator/node_modules/
+orchestrator/coverage/
+
+# Dependencies
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Claude
+.claude-plugin/
