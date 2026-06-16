@@ -6,6 +6,7 @@ import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
+import { resolveStatusDir, resolveWorkflowPath } from './status-paths.js';
 import { WorkflowConfig, AcceptanceGateConfig, ScopeLockConfig, Track, DevMode, TriageMode } from './types.js';
 
 // Dynamic import for TOML parser since it may not be in deps
@@ -97,12 +98,20 @@ export class PhaseOrchestrator {
   }
 
   /**
-   * Initialize the orchestrator: load state, config, create managers.
+   * Initialize the orchestrator: load config first (so path resolution honours
+   * customize.toml overrides), then load state from the configured status
+   * directory, then create managers. The legacy hardcoded
+   * `_bmad-output/web-dev-flow/status` path has been removed — the location is
+   * now driven by `workflow.status_dir` in customize.toml (with a default of
+   * `_bmad-output/wdf-method/status`).
    */
   async initialize(): Promise<void> {
+    // Load customize.toml before any path resolution.
+    this.loadConfig();
+
     const trackingPath = this.resolveConfigPath('sprint_tracking');
-    // V3.6: Try split-file status directory first
-    const statusDir = join(this.projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+    const statusDir = resolveStatusDir(this.projectRoot, this.config as Record<string, any>);
+
     if (existsSync(statusDir)) {
       this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
     } else {
@@ -120,9 +129,6 @@ export class PhaseOrchestrator {
       this.projectRoot, storiesDir, outputDir
     );
     this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot);
-
-    // Load customize.toml
-    this.loadConfig();
   }
 
   /**
@@ -633,20 +639,21 @@ export class PhaseOrchestrator {
   }
 
   private resolveConfigPath(key: string): string {
-    const paths: Record<string, string> = {
-      sprint_tracking: '_bmad-output/web-dev-flow/sprint-status.yaml',
-      stories_output: '_bmad-output/web-dev-flow/stories',
-      output_dir: '_bmad-output/web-dev-flow',
+    // Defaults match the documented `wdf-method` workflow layout. The legacy
+    // `web-dev-flow` paths were the original engine location and have been
+    // removed; customize.toml [workflow] keys remain the source of truth for
+    // any project-specific override.
+    const defaults: Record<string, string> = {
+      sprint_tracking: join('{project-root}', '_bmad-output', 'wdf-method', 'sprint-status.yaml'),
+      stories_output: join('{project-root}', '_bmad-output', 'wdf-method', 'stories'),
+      output_dir: join('{project-root}', '_bmad-output', 'wdf-method'),
     };
 
-    // Check customize.toml first for overrides
     const cfg = this.config as Record<string, any>;
     const workflowVal = cfg?.workflow?.[key];
-    if (workflowVal && typeof workflowVal === 'string') {
-      return resolve(this.projectRoot, workflowVal.replace('{project-root}', this.projectRoot));
-    }
+    const configured = typeof workflowVal === 'string' && workflowVal.trim().length > 0 ? workflowVal : undefined;
 
-    return resolve(this.projectRoot, paths[key] ?? '');
+    return resolveWorkflowPath(this.projectRoot, configured, defaults[key]);
   }
 
   private getScopeLockConfig(): { forbidden_paths?: string[]; protected_paths?: string[] } {

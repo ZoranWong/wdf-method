@@ -1,29 +1,45 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, appendFileSync } from 'fs';
+import { join, dirname } from 'path';
 import YAML from 'js-yaml';
+import { backupFileBeforeWrite } from './status-backup.js';
 /**
  * Atomic file write: write to temp file, then rename (filesystem-level atomic).
  * Prevents YAML corruption from concurrent writes or interrupted writes.
+ *
+ * If `statusDir` is provided and the destination file already exists, a
+ * timestamped backup copy is placed under `<statusDir>/backup/` before the
+ * write. Backup failures do not block the write.
  */
-function atomicWrite(filePath, content) {
+function atomicWrite(filePath, content, statusDir) {
     const dir = dirname(filePath);
     if (!existsSync(dir))
         mkdirSync(dir, { recursive: true });
+    const backupDir = statusDir ?? dir;
+    try {
+        backupFileBeforeWrite(filePath, backupDir);
+    }
+    catch {
+        // Backup is best-effort — never block the primary write.
+    }
     const tmpPath = `${filePath}.tmp.${process.pid}`;
     writeFileSync(tmpPath, content, 'utf-8');
     renameSync(tmpPath, filePath);
 }
 /**
- * SprintStatusManager handles all read/write operations on sprint-status.yaml.
- * Every write is atomic to prevent concurrent-write corruption.
+ * SprintStatusManager handles all read/write operations.
+ * V3.6: Supports split-file mode — reads/writes status/ directory files.
+ * Falls back to unified sprint-status.yaml for backward compatibility.
  */
 export class SprintStatusManager {
     status;
     filePath;
-    constructor(filePath, status) {
+    statusDir;
+    constructor(filePath, status, statusDir) {
         this.filePath = filePath;
         this.status = status;
+        this.statusDir = statusDir ?? null;
     }
+    /** Load from unified sprint-status.yaml */
     static async load(filePath) {
         if (!existsSync(filePath)) {
             return new SprintStatusManager(filePath, SprintStatusManager.defaultStatus(filePath));
@@ -32,11 +48,111 @@ export class SprintStatusManager {
         const parsed = YAML.load(raw);
         return new SprintStatusManager(filePath, parsed);
     }
+    /** V3.6: Load from split status/ directory */
+    static async loadFromStatusDir(statusDir, fallbackPath) {
+        if (!existsSync(statusDir)) {
+            return SprintStatusManager.load(fallbackPath);
+        }
+        // Try to load global first
+        const globalFile = join(statusDir, 'global.yaml');
+        let global = {};
+        if (existsSync(globalFile)) {
+            global = YAML.load(readFileSync(globalFile, 'utf-8'));
+        }
+        // Merge all phase files
+        const phases = {};
+        for (const phaseNum of [1, 2, 3, 4]) {
+            const phaseFile = join(statusDir, `phase-0${phaseNum}.yaml`);
+            const beFile = join(statusDir, `phase-04-be.yaml`);
+            const feFile = join(statusDir, `phase-04-fe.yaml`);
+            if (existsSync(phaseFile)) {
+                const data = YAML.load(readFileSync(phaseFile, 'utf-8'));
+                Object.assign(phases, data);
+            }
+            if (phaseNum === 4 && existsSync(beFile)) {
+                const be = YAML.load(readFileSync(beFile, 'utf-8'));
+                Object.assign(phases, be);
+            }
+            if (phaseNum === 4 && existsSync(feFile)) {
+                const fe = YAML.load(readFileSync(feFile, 'utf-8'));
+                Object.assign(phases, fe);
+            }
+        }
+        // CRs
+        const crFile = join(statusDir, 'change-requests.yaml');
+        let changeRequests = [];
+        if (existsSync(crFile)) {
+            const crData = YAML.load(readFileSync(crFile, 'utf-8'));
+            changeRequests = crData?.change_requests ?? [];
+        }
+        const status = {
+            project: global?.global_state?.project ?? 'unknown',
+            workflow_version: global?.global_state?.workflow_version ?? '3.6.0',
+            created_at: global?.global_state?.created_at ?? new Date().toISOString(),
+            updated_at: global?.global_state?.updated_at ?? new Date().toISOString(),
+            global_state: {
+                dev_mode: global?.global_state?.dev_mode ?? 'separated',
+                task_triage_mode: global?.global_state?.task_triage_mode ?? 'serial',
+                code_standards_source: global?.global_state?.code_standards_source ?? ['AGENTS.md'],
+                overall_status: global?.global_state?.overall_status ?? 'not_started',
+                current_phase: global?.global_state?.current_phase ?? 1,
+                requirements_frozen_at: global?.global_state?.requirements_frozen_at,
+                development_order: global?.global_state?.development_order ?? [],
+                development_order_frozen_at: global?.global_state?.development_order_frozen_at,
+                implementation_boundary: global?.global_state?.implementation_boundary,
+            },
+            phases: phases,
+            change_requests: changeRequests,
+        };
+        return new SprintStatusManager(fallbackPath, status, statusDir);
+    }
+    /** V3.6: Save to split files when statusDir is configured */
+    async save() {
+        this.status.updated_at = new Date().toISOString();
+        if (this.statusDir && existsSync(this.statusDir)) {
+            const statusDir = this.statusDir;
+            // Write global.yaml
+            const globalData = {
+                global_state: {
+                    ...this.status.global_state,
+                    project: this.status.project,
+                    workflow_version: this.status.workflow_version,
+                    created_at: this.status.created_at,
+                    updated_at: this.status.updated_at,
+                },
+            };
+            atomicWrite(join(statusDir, 'global.yaml'), YAML.dump(globalData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
+            // Write per-phase files
+            const phaseMap = {
+                1: ['phase_1'],
+                2: ['phase_2'],
+                3: ['phase_3'],
+                4: ['phase_4', 'phase_4_be', 'phase_4_fe'],
+            };
+            for (const [phaseNum, keys] of Object.entries(phaseMap)) {
+                const phaseData = {};
+                for (const key of keys) {
+                    if (this.status.phases[key]) {
+                        phaseData[key] = this.status.phases[key];
+                    }
+                }
+                if (Object.keys(phaseData).length > 0) {
+                    const fileName = Number(phaseNum) === 4 && keys.length > 1 ? `phase-0${phaseNum}-be.yaml` : `phase-0${phaseNum}.yaml`;
+                    atomicWrite(join(statusDir, fileName), YAML.dump(phaseData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
+                }
+            }
+            // Write CRs
+            atomicWrite(join(statusDir, 'change-requests.yaml'), YAML.dump({ change_requests: this.status.change_requests }, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
+        }
+        // Always write unified as fallback
+        const yaml = YAML.dump(this.status, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false });
+        atomicWrite(this.filePath, yaml, this.statusDir ?? undefined);
+    }
     static defaultStatus(filePath) {
         const now = new Date().toISOString();
         return {
             project: 'unknown',
-            workflow_version: '3.1.0',
+            workflow_version: '3.6.0',
             created_at: now,
             updated_at: now,
             global_state: {
@@ -59,15 +175,19 @@ export class SprintStatusManager {
     get data() {
         return this.status;
     }
-    async save() {
-        this.status.updated_at = new Date().toISOString();
-        const yaml = YAML.dump(this.status, {
-            indent: 2,
-            lineWidth: -1,
-            noRefs: true,
-            sortKeys: false,
-        });
-        atomicWrite(this.filePath, yaml);
+    // ── V3.6 Audit log (append-only JSONL) ──
+    async appendAudit(event, data = {}) {
+        const auditDir = join(dirname(this.filePath), 'audit');
+        const auditFile = join(auditDir, 'orchestrator-audit.jsonl');
+        if (!existsSync(auditDir))
+            mkdirSync(auditDir, { recursive: true });
+        const entry = {
+            ts: new Date().toISOString(),
+            event,
+            decision: data.decision ?? 'info',
+            ...data,
+        };
+        appendFileSync(auditFile, JSON.stringify(entry) + '\n');
     }
     // ── Phase state ──
     getPhase(phaseNum) {
@@ -226,8 +346,8 @@ export class SprintStatusManager {
         const phase = this.getPhase(phaseNum);
         if (!phase)
             return;
-        phase.gate_card = {
-            checks: checks.map(c => ({ id: c.id, status: c.status })),
+        phase.gate_card = { phase: phaseNum,
+            checks: checks.map(c => ({ id: c.id, status: c.status, type: c.type ?? 'custom_check', description: c.description ?? 'Gate check' })),
             all_pass: checks.every(c => c.status === 'pass'),
         };
         await this.save();

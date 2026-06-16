@@ -5,6 +5,8 @@ import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
+import { SignalManager } from './signal-manager.js';
+import { resolveStatusDir, resolveWorkflowPath } from './status-paths.js';
 // Dynamic import for TOML parser since it may not be in deps
 function parseTOML(filePath) {
     const content = readFileSync(filePath, 'utf-8');
@@ -61,7 +63,7 @@ function parseSimpleToml(content) {
                 if (arrMatch) {
                     value = arrMatch[1]
                         .split(',')
-                        .map(s => s.trim().replace(/"/g, ''))
+                        .map((s) => s.trim().replace(/"/g, ''))
                         .filter(Boolean);
                 }
             }
@@ -90,19 +92,31 @@ export class PhaseOrchestrator {
         this.config = {};
     }
     /**
-     * Initialize the orchestrator: load state, config, create managers.
+     * Initialize the orchestrator: load config first (so path resolution honours
+     * customize.toml overrides), then load state from the configured status
+     * directory, then create managers. The legacy hardcoded
+     * `_bmad-output/web-dev-flow/status` path has been removed — the location is
+     * now driven by `workflow.status_dir` in customize.toml (with a default of
+     * `_bmad-output/wdf-method/status`).
      */
     async initialize() {
+        // Load customize.toml before any path resolution.
+        this.loadConfig();
         const trackingPath = this.resolveConfigPath('sprint_tracking');
-        this.state = await SprintStatusManager.load(trackingPath);
+        const statusDir = resolveStatusDir(this.projectRoot, this.config);
+        if (existsSync(statusDir)) {
+            this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
+        }
+        else {
+            this.state = await SprintStatusManager.load(trackingPath);
+        }
+        // V3.6: Signals at ~/.wdf-method/signals/ — outside all worktrees, auto-created on first use
         this.worktree = new WorktreeManager(this.projectRoot);
         this.gateEvaluator = new GateEvaluator(this.projectRoot);
         const storiesDir = this.resolveConfigPath('stories_output');
         const outputDir = this.resolveConfigPath('output_dir');
         this.storyRunner = new StoryRunner(this.state, this.worktree, this.gateEvaluator, this.projectRoot, storiesDir, outputDir);
         this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot);
-        // Load customize.toml
-        this.loadConfig();
     }
     /**
      * Display the current status dashboard.
@@ -370,7 +384,7 @@ export class PhaseOrchestrator {
      * Run BE Track sub-phases 4.2 → 4.3 → 4.4 (AUTO-CONTINUE) → 4.5 → 4.6 (CODE_ACCEPTANCE)
      */
     async runBETrack(stories) {
-        if (stories.length === 0) {
+        if (!stories || stories.length === 0) {
             console.log('  BE Track: No stories');
             return;
         }
@@ -403,7 +417,7 @@ export class PhaseOrchestrator {
      * Run FE Track sub-phases 4.7 → 4.8 → 4.9 → 4.10 (AUTO-CONTINUE) → 4.11 → 4.12 (UI_ACCEPTANCE)
      */
     async runFETrack(stories) {
-        if (stories.length === 0) {
+        if (!stories || stories.length === 0) {
             console.log('  FE Track: No stories');
             return;
         }
@@ -457,6 +471,11 @@ export class PhaseOrchestrator {
         let runs = 0;
         const maxIterations = 100;
         while (runs < maxIterations) {
+            // V3.6: Check pause signal before each dispatch
+            if (this.checkPauseSignal()) {
+                console.log('  ⏸  Pause signal detected — halting new dispatches');
+                break;
+            }
             const result = await this.storyRunner.runNextStory(track);
             if (!result)
                 break;
@@ -479,17 +498,19 @@ export class PhaseOrchestrator {
         console.log(`  Merge queue: ${ready.length} items ready`);
         for (const item of ready) {
             console.log(`    → Merging ${item.story_id} (order ${item.merge_order})...`);
+            await this.state.appendAudit('merge_attempt', { story_id: item.story_id, decision: 'approve' });
             await this.mergeQueue.markMerging(item.story_id);
             try {
-                // Merge happens in the story-runner after CODE_ACCEPTED
-                // Here we just verify the merge completed successfully
                 const git = this.worktree['git'];
                 const log = await git.raw('log', '--oneline', '-1');
-                await this.mergeQueue.markMerged(item.story_id, log.split(' ')[0]);
+                const commitHash = log.split(' ')[0];
+                await this.mergeQueue.markMerged(item.story_id, commitHash);
+                await this.state.appendAudit('merge_success', { story_id: item.story_id, decision: 'approve', data: { commit: commitHash } });
                 console.log(`    ✓ ${item.story_id} merged`);
             }
             catch (err) {
                 await this.mergeQueue.markFailed(item.story_id, err.message ?? String(err));
+                await this.state.appendAudit('merge_failed', { story_id: item.story_id, decision: 'reject', reason: err.message });
                 console.log(`    ✗ ${item.story_id} merge failed: ${err.message}`);
             }
         }
@@ -533,18 +554,19 @@ export class PhaseOrchestrator {
         }
     }
     resolveConfigPath(key) {
-        const paths = {
-            sprint_tracking: '_bmad-output/web-dev-flow/sprint-status.yaml',
-            stories_output: '_bmad-output/web-dev-flow/stories',
-            output_dir: '_bmad-output/web-dev-flow',
+        // Defaults match the documented `wdf-method` workflow layout. The legacy
+        // `web-dev-flow` paths were the original engine location and have been
+        // removed; customize.toml [workflow] keys remain the source of truth for
+        // any project-specific override.
+        const defaults = {
+            sprint_tracking: join('{project-root}', '_bmad-output', 'wdf-method', 'sprint-status.yaml'),
+            stories_output: join('{project-root}', '_bmad-output', 'wdf-method', 'stories'),
+            output_dir: join('{project-root}', '_bmad-output', 'wdf-method'),
         };
-        // Check customize.toml first for overrides
         const cfg = this.config;
         const workflowVal = cfg?.workflow?.[key];
-        if (workflowVal && typeof workflowVal === 'string') {
-            return resolve(this.projectRoot, workflowVal.replace('{project-root}', this.projectRoot));
-        }
-        return resolve(this.projectRoot, paths[key] ?? '');
+        const configured = typeof workflowVal === 'string' && workflowVal.trim().length > 0 ? workflowVal : undefined;
+        return resolveWorkflowPath(this.projectRoot, configured, defaults[key]);
     }
     getScopeLockConfig() {
         const cfg = this.config;
@@ -575,6 +597,31 @@ export class PhaseOrchestrator {
      */
     displayMergeQueue() {
         return this.mergeQueue.displayQueue();
+    }
+    // ── V3.6 Pause/Resume ──
+    /** Gracefully pause the workflow */
+    async pause(reason) {
+        SignalManager.pauseAll(reason);
+        const activeAgents = SignalManager.listActiveAgents();
+        for (const agentId of activeAgents) {
+            SignalManager.pauseAgent(agentId);
+        }
+        await this.state.setOverallStatus('paused');
+        return `Paused. ${activeAgents.length} agent(s) notified. Resume: /web-dev-flow resume`;
+    }
+    /** Resume from paused state */
+    async resume() {
+        SignalManager.resumeAll();
+        const activeAgents = SignalManager.listActiveAgents();
+        for (const agentId of activeAgents) {
+            SignalManager.clearAgentCommand(agentId);
+        }
+        await this.state.setOverallStatus('implementation');
+        return `Resumed. ${activeAgents.length} agent(s) will continue at next sub-step.`;
+    }
+    /** Check if pause signal is active (called before each story dispatch) */
+    checkPauseSignal() {
+        return SignalManager.isPaused();
     }
 }
 //# sourceMappingURL=orchestrator.js.map

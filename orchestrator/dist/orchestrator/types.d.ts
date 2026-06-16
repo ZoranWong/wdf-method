@@ -109,7 +109,7 @@ export interface GateCheck {
     status?: 'pending' | 'pass' | 'fail' | 'skipped';
 }
 export interface GateCard {
-    phase: number;
+    phase?: number;
     sub_phase?: string;
     checks: GateCheck[];
     all_pass: boolean;
@@ -157,6 +157,7 @@ export interface SubState {
         sha256?: string;
     }[];
     gate_card?: {
+        phase?: number;
         checks: GateCheck[];
         all_pass: boolean;
     };
@@ -176,6 +177,7 @@ export interface PhaseState {
         sha256?: string;
     }[];
     gate_card?: {
+        phase?: number;
         checks: GateCheck[];
         all_pass: boolean;
     };

@@ -19,5 +19,15 @@
     "specs/",
     "schemas/",
     "assets/"
-  ]
+  ],
+  "scripts": {
+    "test": "vitest run && npm --prefix orchestrator run build && npm --prefix orchestrator run test",
+    "test:cli": "vitest run",
+    "test:orchestrator": "npm --prefix orchestrator run build && npm --prefix orchestrator run test",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^1.2.0"
+  }
 }

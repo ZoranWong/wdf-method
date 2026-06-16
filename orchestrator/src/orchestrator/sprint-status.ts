@@ -2,14 +2,27 @@ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, appendF
 import { join, dirname } from 'path';
 import YAML from 'js-yaml';
 import { SprintStatus, PhaseStatus, StoryStatus, StoryEntry } from './types.js';
+import { backupFileBeforeWrite } from './status-backup.js';
 
 /**
  * Atomic file write: write to temp file, then rename (filesystem-level atomic).
  * Prevents YAML corruption from concurrent writes or interrupted writes.
+ *
+ * If `statusDir` is provided and the destination file already exists, a
+ * timestamped backup copy is placed under `<statusDir>/backup/` before the
+ * write. Backup failures do not block the write.
  */
-function atomicWrite(filePath: string, content: string): void {
+function atomicWrite(filePath: string, content: string, statusDir?: string): void {
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const backupDir = statusDir ?? dir;
+  try {
+    backupFileBeforeWrite(filePath, backupDir);
+  } catch {
+    // Backup is best-effort — never block the primary write.
+  }
+
   const tmpPath = `${filePath}.tmp.${process.pid}`;
   writeFileSync(tmpPath, content, 'utf-8');
   renameSync(tmpPath, filePath);
@@ -111,6 +124,7 @@ export class SprintStatusManager {
     this.status.updated_at = new Date().toISOString();
 
     if (this.statusDir && existsSync(this.statusDir)) {
+      const statusDir = this.statusDir;
       // Write global.yaml
       const globalData = {
         global_state: {
@@ -121,7 +135,7 @@ export class SprintStatusManager {
           updated_at: this.status.updated_at,
         },
       };
-      atomicWrite(join(this.statusDir, 'global.yaml'), YAML.dump(globalData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+      atomicWrite(join(statusDir, 'global.yaml'), YAML.dump(globalData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
 
       // Write per-phase files
       const phaseMap: Record<number, string[]> = {
@@ -139,17 +153,17 @@ export class SprintStatusManager {
         }
         if (Object.keys(phaseData).length > 0) {
           const fileName = Number(phaseNum) === 4 && keys.length > 1 ? `phase-0${phaseNum}-be.yaml` : `phase-0${phaseNum}.yaml`;
-          atomicWrite(join(this.statusDir, fileName), YAML.dump(phaseData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+          atomicWrite(join(statusDir, fileName), YAML.dump(phaseData, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
         }
       }
 
       // Write CRs
-      atomicWrite(join(this.statusDir, 'change-requests.yaml'), YAML.dump({ change_requests: this.status.change_requests }, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }));
+      atomicWrite(join(statusDir, 'change-requests.yaml'), YAML.dump({ change_requests: this.status.change_requests }, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false }), statusDir);
     }
 
     // Always write unified as fallback
     const yaml = YAML.dump(this.status, { indent: 2, lineWidth: -1, noRefs: true, sortKeys: false });
-    atomicWrite(this.filePath, yaml);
+    atomicWrite(this.filePath, yaml, this.statusDir ?? undefined);
   }
 
   private static defaultStatus(filePath: string): SprintStatus {

@@ -15,7 +15,12 @@ export declare class PhaseOrchestrator {
     private config;
     constructor(projectRoot: string, skillRoot?: string);
     /**
-     * Initialize the orchestrator: load state, config, create managers.
+     * Initialize the orchestrator: load config first (so path resolution honours
+     * customize.toml overrides), then load state from the configured status
+     * directory, then create managers. The legacy hardcoded
+     * `_bmad-output/web-dev-flow/status` path has been removed — the location is
+     * now driven by `workflow.status_dir` in customize.toml (with a default of
+     * `_bmad-output/wdf-method/status`).
      */
     initialize(): Promise<void>;
     /**
@@ -98,5 +103,11 @@ export declare class PhaseOrchestrator {
      * Display merge queue status.
      */
     displayMergeQueue(): string;
+    /** Gracefully pause the workflow */
+    pause(reason?: string): Promise<string>;
+    /** Resume from paused state */
+    resume(): Promise<string>;
+    /** Check if pause signal is active (called before each story dispatch) */
+    private checkPauseSignal;
 }
 //# sourceMappingURL=orchestrator.d.ts.map

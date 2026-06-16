@@ -1,10 +1,38 @@
 import { existsSync, readFileSync } from 'fs';
 import YAML from 'js-yaml';
 import { resolve } from 'path';
+const KNOWN_CHECK_TYPES = new Set([
+    'artifact_exists',
+    'artifact_metadata',
+    'dependency_status',
+    'user_confirmation',
+    'all_stories_complete',
+    'scope_boundary',
+    'field_exists',
+    'custom_check',
+]);
+const SUPPORTED_DEPENDENCY_FIELDS = [
+    'phase_3.status',
+    'development_order_frozen_at',
+    'requirements_frozen_at',
+    'phase_3_9',
+];
 /**
- * Evaluates Gate Cards to determine if a phase/sub-phase can be entered.
- * Supports: artifact_exists, artifact_metadata, dependency_status, user_confirmation,
- *           all_stories_complete, scope_boundary, custom_check.
+ * Helper used by exhaustive switch statements. If TypeScript ever sees a
+ * {@link KnownCheckType} that isn't handled by the switch, it will refuse to
+ * compile because the value is no longer narrowed to `never`.
+ */
+function assertNever(value) {
+    throw new Error(`Unhandled known check type: ${String(value)}`);
+}
+/**
+ * Evaluates Gate Cards to determine whether a phase or sub-phase may be
+ * entered. Behaviour is fail-closed: any check the evaluator does not
+ * explicitly handle becomes a `fail` result with a human-readable reason.
+ *
+ * Supported types: artifact_exists, artifact_metadata, dependency_status,
+ * user_confirmation, all_stories_complete, scope_boundary, field_exists,
+ * custom_check.
  */
 export class GateEvaluator {
     projectRoot;
@@ -12,7 +40,7 @@ export class GateEvaluator {
         this.projectRoot = projectRoot;
     }
     /**
-     * Evaluate a full Gate Card. Returns { all_pass, results }.
+     * Evaluate a full Gate Card. Returns `{ all_pass, results }`.
      */
     async evaluate(gateCard, state, options) {
         const results = await Promise.all(gateCard.checks.map(check => this.evaluateCheck(check, state, options)));
@@ -21,7 +49,16 @@ export class GateEvaluator {
     }
     async evaluateCheck(check, state, options) {
         try {
-            switch (check.type) {
+            // Reject unknown check types up-front. No silent pass.
+            if (!KNOWN_CHECK_TYPES.has(check.type)) {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `Unknown check type: ${check.type}`,
+                };
+            }
+            const knownType = check.type;
+            switch (knownType) {
                 case 'artifact_exists':
                     return this.checkArtifactExists(check);
                 case 'artifact_metadata':
@@ -29,26 +66,44 @@ export class GateEvaluator {
                 case 'dependency_status':
                     return this.checkDependencyStatus(check, state);
                 case 'user_confirmation':
-                    // Always pass — user confirmation handled in the menu layer
-                    return { id: check.id, status: 'pass' };
+                    // Fail-closed: an explicit user-confirmation gate cannot pass
+                    // automatically. Auto-mode degradation (where configured to do so)
+                    // must be wired in by the orchestrator before this branch is
+                    // reached. Until then, every user_confirmation check fails with
+                    // an explicit reason instead of silently passing.
+                    return {
+                        id: check.id,
+                        status: 'fail',
+                        reason: 'User confirmation required and no explicit authorization was provided',
+                    };
                 case 'all_stories_complete':
                     return this.checkAllStoriesComplete(state, options);
                 case 'scope_boundary':
                     return this.checkScopeBoundary(check, state, options);
                 case 'field_exists':
-                    return { id: check.id, status: 'pass' }; // Handled at story level
+                    return this.checkFieldExists(check);
                 case 'custom_check':
-                    return this.checkCustom(check, state, options);
+                    return this.checkCustom(check);
                 default:
-                    return { id: check.id, status: 'fail', reason: `Unknown check type: ${check.type}` };
+                    // Exhaustiveness guard — if KnownCheckType gains a new member and
+                    // this switch isn't updated, the project will fail to compile.
+                    return assertNever(knownType);
             }
         }
         catch (err) {
-            return { id: check.id, status: 'fail', reason: err?.message ?? String(err) };
+            const reason = err instanceof Error ? err.message : String(err);
+            return { id: check.id, status: 'fail', reason };
         }
     }
     checkArtifactExists(check) {
         const source = check.target ?? check.source ?? '';
+        if (!source) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: 'artifact_exists: no target/source specified',
+            };
+        }
         const path = resolve(this.projectRoot, source);
         const exists = existsSync(path);
         return {
@@ -59,6 +114,13 @@ export class GateEvaluator {
     }
     checkArtifactMetadata(check) {
         const source = check.target ?? check.source ?? '';
+        if (!source) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: 'artifact_metadata: no target/source specified',
+            };
+        }
         const path = resolve(this.projectRoot, source);
         if (!existsSync(path)) {
             return { id: check.id, status: 'fail', reason: `File not found: ${source}` };
@@ -74,8 +136,10 @@ export class GateEvaluator {
         const parts = field.split('.');
         let value = frontmatter;
         for (const part of parts) {
-            if (value == null)
+            if (value == null || typeof value !== 'object') {
+                value = undefined;
                 break;
+            }
             value = value[part];
         }
         const expected = check.expected;
@@ -83,20 +147,53 @@ export class GateEvaluator {
         return {
             id: check.id,
             status: pass ? 'pass' : 'fail',
-            reason: pass ? undefined : `${source} field ${field}="${value}", expected ${JSON.stringify(expected)}`,
+            reason: pass
+                ? undefined
+                : `${source} field ${field}="${String(value)}", expected ${JSON.stringify(expected)}`,
         };
     }
+    /**
+     * dependency_status checks read against {@link SprintStatusManager}. Only
+     * the four fields enumerated in {@link SUPPORTED_DEPENDENCY_FIELDS} are
+     * implemented. Anything else — including unsupported operators (`eq`,
+     * `neq`, etc.) — fails with an explicit reason. There is no catch-all
+     * "not yet implemented" pass any longer.
+     */
     checkDependencyStatus(check, state) {
         const gs = state.data.global_state;
-        if (check.field?.includes('phase_3.status') && check.expected === 'LOCKED') {
+        const field = check.field ?? '';
+        if (!field) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: 'dependency_status: missing field',
+            };
+        }
+        if (field.includes('phase_3.status')) {
+            if (check.expected !== 'LOCKED') {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `dependency_status phase_3.status: unsupported expected value ${JSON.stringify(check.expected)} (only "LOCKED" is implemented)`,
+                };
+            }
             const status = state.getPhase(3)?.status;
             return {
                 id: check.id,
                 status: status === 'LOCKED' ? 'pass' : 'fail',
-                reason: status === 'LOCKED' ? undefined : `Phase 3 status is "${status}", expected "LOCKED"`,
+                reason: status === 'LOCKED'
+                    ? undefined
+                    : `Phase 3 status is "${status}", expected "LOCKED"`,
             };
         }
-        if (check.field?.includes('development_order_frozen_at') && check.expected === null) {
+        if (field.includes('development_order_frozen_at')) {
+            if (check.expected !== null) {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `dependency_status development_order_frozen_at: unsupported expected value ${JSON.stringify(check.expected)} (only "null" — i.e. presence — is implemented)`,
+                };
+            }
             const pass = gs.development_order_frozen_at != null;
             return {
                 id: check.id,
@@ -104,7 +201,14 @@ export class GateEvaluator {
                 reason: pass ? undefined : 'Development order not frozen',
             };
         }
-        if (check.field?.includes('requirements_frozen_at') && check.expected === null) {
+        if (field.includes('requirements_frozen_at')) {
+            if (check.expected !== null) {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `dependency_status requirements_frozen_at: unsupported expected value ${JSON.stringify(check.expected)} (only "null" — i.e. presence — is implemented)`,
+                };
+            }
             const pass = gs.requirements_frozen_at != null;
             return {
                 id: check.id,
@@ -112,58 +216,187 @@ export class GateEvaluator {
                 reason: pass ? undefined : 'Requirements not frozen',
             };
         }
-        if (check.field?.includes('phase_3_9') && check.expected === 'LOCKED') {
+        if (field.includes('phase_3_9')) {
+            if (check.expected !== 'LOCKED') {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `dependency_status phase_3_9: unsupported expected value ${JSON.stringify(check.expected)} (only "LOCKED" is implemented)`,
+                };
+            }
             const status = state.getSubState(3, 'phase_3_9');
             return {
                 id: check.id,
                 status: status === 'LOCKED' ? 'pass' : 'fail',
-                reason: status === 'LOCKED' ? undefined : `Phase 3.9 status is "${status}", expected "LOCKED"`,
+                reason: status === 'LOCKED'
+                    ? undefined
+                    : `Phase 3.9 status is "${status}", expected "LOCKED"`,
             };
         }
-        if (check.operator === 'neq' && check.expected === null) {
-            return { id: check.id, status: 'pass' }; // Fallback pass for neq null checks
-        }
-        if (check.operator === 'eq') {
-            return { id: check.id, status: 'pass' }; // Default pass for eq checks not yet implemented
-        }
-        return { id: check.id, status: 'pass', reason: `Check not yet implemented: ${check.field}` };
+        // No supported field matched — fail-closed instead of falling through
+        // to an unsupported-operator branch. The eq/neq operators are handled by
+        // the field-specific branches above; if execution reaches here, neither
+        // the field nor the operator is implemented.
+        const op = check.operator ? ` (operator "${check.operator}")` : '';
+        return {
+            id: check.id,
+            status: 'fail',
+            reason: `dependency_status: field "${field}"${op} is not implemented. Supported fields: ${SUPPORTED_DEPENDENCY_FIELDS.join(', ')}`,
+        };
     }
     checkAllStoriesComplete(state, options) {
-        // Check all stories in the relevant phase/sub-phase are APPROVED or better
-        const gs = state.data.global_state;
-        const order = gs.development_order ?? [];
         const phase = state.getPhase(4);
         const substates = phase?.substates;
         if (!substates) {
             return { id: 'ALL_STORIES', status: 'fail', reason: 'No substates found' };
         }
-        // Find the relevant substate based on options
-        const targetSubKey = options?.track === 'backend' ? 'phase_4_4' :
-            options?.track === 'frontend' ? 'phase_4_10' : null;
+        const targetSubKey = options?.track === 'backend'
+            ? 'phase_4_4'
+            : options?.track === 'frontend'
+                ? 'phase_4_10'
+                : null;
         if (targetSubKey && substates[targetSubKey]?.stories) {
             const stories = substates[targetSubKey].stories;
-            const terminalStates = ['CODE_ACCEPTED', 'FEATURE_ACCEPTED', 'UI_ACCEPTED', 'E2E_BROWSER_ACCEPTED', 'MERGED'];
+            const terminalStates = [
+                'CODE_ACCEPTED',
+                'FEATURE_ACCEPTED',
+                'UI_ACCEPTED',
+                'E2E_BROWSER_ACCEPTED',
+                'MERGED',
+            ];
             const nonBlocked = stories.filter((s) => s.status !== 'BLOCKED_BY_DEPENDENCY');
             const allDone = nonBlocked.every((s) => terminalStates.includes(s.status));
+            const remaining = nonBlocked.length -
+                nonBlocked.filter((s) => terminalStates.includes(s.status)).length;
             return {
                 id: 'ALL_STORIES',
                 status: allDone ? 'pass' : 'fail',
-                reason: allDone ? undefined : `${nonBlocked.length - nonBlocked.filter((s) => terminalStates.includes(s.status)).length} stories not yet accepted`,
+                reason: allDone ? undefined : `${remaining} stories not yet accepted`,
             };
         }
-        return { id: 'ALL_STORIES', status: 'pass' };
+        // Track not specified or no stories registered for the relevant
+        // sub-phase: fail-closed rather than silently passing.
+        return {
+            id: 'ALL_STORIES',
+            status: 'fail',
+            reason: targetSubKey
+                ? `No stories registered for ${targetSubKey}`
+                : 'all_stories_complete: track option is required',
+        };
     }
-    checkScopeBoundary(check, state, options) {
+    checkScopeBoundary(check, state, _options) {
         const boundary = state.data.global_state.implementation_boundary;
         if (!boundary || !boundary.scope_frozen) {
-            return { id: check.id, status: 'fail', reason: 'Implementation boundary not frozen' };
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: 'Implementation boundary not frozen',
+            };
         }
         return { id: check.id, status: 'pass' };
     }
-    checkCustom(check, _state, options) {
-        // For SRG-05 (scope overlap): handled at the story runner level
-        // For SRG-07 (parent dirs exist): handled at the story runner level
-        return { id: check.id, status: 'pass', reason: `Custom check delegated: ${check.description}` };
+    /**
+     * field_exists fails when the named field is missing from the source
+     * artifact. The legacy implementation always passed; that silent pass is
+     * removed.
+     *
+     * The story runner is still responsible for resolving `source: story_file`
+     * placeholders when it knows the active story file. If the source cannot
+     * be resolved here (no file path / placeholder unresolved), the check
+     * fails-closed with a clear reason.
+     */
+    checkFieldExists(check) {
+        const source = check.source;
+        const field = check.field;
+        if (!field) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: 'field_exists: missing field',
+            };
+        }
+        if (!source || source === 'story_file') {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: source "${source ?? 'undefined'}" cannot be resolved at gate-evaluator level`,
+            };
+        }
+        const path = resolve(this.projectRoot, source);
+        if (!existsSync(path)) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: source not found: ${source}`,
+            };
+        }
+        const content = readFileSync(path, 'utf-8');
+        let parsed = null;
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        try {
+            if (frontmatterMatch) {
+                parsed = YAML.load(frontmatterMatch[1]);
+            }
+            else {
+                parsed = YAML.load(content);
+            }
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: failed to parse ${source}: ${msg}`,
+            };
+        }
+        if (parsed == null || typeof parsed !== 'object') {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: ${source} did not parse to an object`,
+            };
+        }
+        const parts = field.split('.');
+        let value = parsed;
+        for (const part of parts) {
+            if (value == null || typeof value !== 'object') {
+                return {
+                    id: check.id,
+                    status: 'fail',
+                    reason: `field_exists: ${field} missing in ${source}`,
+                };
+            }
+            value = value[part];
+        }
+        if (value === undefined) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: ${field} missing in ${source}`,
+            };
+        }
+        if (Array.isArray(value) && value.length === 0) {
+            return {
+                id: check.id,
+                status: 'fail',
+                reason: `field_exists: ${field} is empty in ${source}`,
+            };
+        }
+        return { id: check.id, status: 'pass' };
+    }
+    /**
+     * Custom checks (e.g. SRG-05 scope overlap, SRG-07 parent-dirs-exist) are
+     * verified at the story-runner level — the gate evaluator records them
+     * as `pass` with an explicit "delegated" reason so the audit trail makes
+     * it clear the gate did not perform the verification itself. This is an
+     * explicit, documented check type, not a catch-all default.
+     */
+    checkCustom(check) {
+        return {
+            id: check.id,
+            status: 'pass',
+            reason: `Custom check delegated to story runner: ${check.description}`,
+        };
     }
 }
 //# sourceMappingURL=gate-evaluator.js.map

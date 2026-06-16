@@ -1,0 +1,1 @@
+{"version":3,"file":"status-paths.d.ts","sourceRoot":"","sources":["../../src/orchestrator/status-paths.ts"],"names":[],"mappings":"AAEA;;;;;;GAMG;AACH,wBAAgB,mBAAmB,CACjC,WAAW,EAAE,MAAM,EACnB,KAAK,EAAE,MAAM,GAAG,SAAS,EACzB,QAAQ,CAAC,EAAE,MAAM,GAChB,MAAM,CAWR;AAED;;;GAGG;AACH,wBAAgB,gBAAgB,CAC9B,WAAW,EAAE,MAAM,EACnB,MAAM,EAAE,MAAM,CAAC,MAAM,EAAE,GAAG,CAAC,GAC1B,MAAM,CAKR"}

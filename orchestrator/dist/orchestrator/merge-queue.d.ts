@@ -20,6 +20,16 @@ export declare class MergeQueueManager {
         waiting: MergeQueueItem[];
     }>;
     /**
+     * V3.6 Atomic Merge Protocol:
+     * git merge --no-commit --no-ff → integration checks → commit OR abort.
+     * Zero partial merge state on main branch.
+     */
+    attemptAtomicMerge(item: MergeQueueItem): Promise<{
+        merged: boolean;
+        commitHash?: string;
+        error?: string;
+    }>;
+    /**
      * Get the next ready item from the merge queue (by merge_order).
      */
     getNextReady(): Promise<MergeQueueItem | undefined>;
@@ -42,6 +52,12 @@ export declare class MergeQueueManager {
     /**
      * Display the merge queue status as a formatted string.
      */
+    /**
+     * V3.6 Hidden Dependency Detection: Cross-branch diff analysis before merge.
+     * Detects files modified by BOTH this story AND any other queued story,
+     * where the file is NOT in either story's scope_write.
+     */
+    detectHiddenOverlaps(branch: string, scopeWrite: string[]): Promise<string[]>;
     displayQueue(): string;
 }
 //# sourceMappingURL=merge-queue.d.ts.map
