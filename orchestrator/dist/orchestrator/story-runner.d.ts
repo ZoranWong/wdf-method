@@ -30,20 +30,10 @@ export declare class StoryRunner {
     private checkDependencies;
     private isStoryMerged;
     /**
-     * Story Ready Gate V3.6: validates all 9 SRG gates.
-     * SRG-01: scope_write defined | SRG-04: path safety | SRG-08: protected paths | SRG-09: command safety
-     * are added by this method. SRG-02/03/05/06/07 are handled by the existing implementation.
+     * Story Ready Gate V3.6: validates all 9 SRG gates via the extracted
+     * story-ready-gate module. Returns { all_pass, serial_only, results }.
      */
     private runStoryReadyGate;
-    /** SRG-01~03,05~07: Base checks from V3.1 */
-    private runBaseSRGChecks;
-    /** V3.6 SRG-04: Path safety — relative, no traversal, not forbidden */
-    private addSRG04_PathSafety;
-    /** V3.6 SRG-08: Protected path intersection → serial_only enforcement */
-    private addSRG08_ProtectedPaths;
-    /** V3.6 SRG-09: Command safety — allowlist + forbidden patterns */
-    private addSRG09_CommandSafety;
-    private findScopeOverlap;
     /**
      * Execute story implementation by dispatching a Claude Code agent to the story worktree.
      * The agent performs all steps (4c → 4j/4k) autonomously and returns CODE_ACCEPTED or failure.

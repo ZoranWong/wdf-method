@@ -41,6 +41,7 @@ export interface StoryStatus {
     started_at?: string;
     completed_at?: string;
     last_completed_substep?: string | null;
+    serial_only?: boolean;
     step_history?: StepHistoryEntry[];
     scope_audit?: ScopeAudit;
     code_acceptance?: CodeAcceptance;

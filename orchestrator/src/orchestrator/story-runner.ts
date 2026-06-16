@@ -6,6 +6,7 @@ import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
 import { StoryEntry, Track, PhaseStatus, StoryStatus } from './types.js';
+import { evaluateStoryReadyGate } from './story-ready-gate.js';
 
 /**
  * Sub-step ID mapping for BE and FE stories.
@@ -108,11 +109,14 @@ export class StoryRunner {
       return null;
     }
 
+    // SRG-08 serial_only: enforce serial execution for protected paths
+    const serialOnlyFlag = gateResult.serial_only ? ' [SERIAL_ONLY]' : '';
+
     // Create worktree
     const { path: worktreePath, branch } = await this.worktree.createStoryWorktree(
       story.story_id, story.track as Track
     );
-    console.log(`  📂 ${story.story_id}: worktree at ${worktreePath}`);
+    console.log(`  📂 ${story.story_id}: worktree at ${worktreePath}${serialOnlyFlag}`);
 
     // Initialize story status
     const storyStatus: StoryStatus = {
@@ -121,6 +125,7 @@ export class StoryRunner {
       bmad_story_state: 'in-progress',
       started_at: new Date().toISOString(),
       last_completed_substep: null,
+      serial_only: gateResult.serial_only,
       step_history: [{ step: 'started', at: new Date().toISOString(), substep: null, summary: null, status: null }],
     };
     await this.state.updateStoryStatus(4, subKey, storyStatus);
@@ -231,122 +236,31 @@ export class StoryRunner {
   }
 
   /**
-   * Story Ready Gate V3.6: validates all 9 SRG gates.
-   * SRG-01: scope_write defined | SRG-04: path safety | SRG-08: protected paths | SRG-09: command safety
-   * are added by this method. SRG-02/03/05/06/07 are handled by the existing implementation.
+   * Story Ready Gate V3.6: validates all 9 SRG gates via the extracted
+   * story-ready-gate module. Returns { all_pass, serial_only, results }.
    */
-  private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
-    const { results } = await this.runBaseSRGChecks(story);
-    // V3.6 additions
-    this.addSRG04_PathSafety(story, results);
-    this.addSRG08_ProtectedPaths(story, results);
-    this.addSRG09_CommandSafety(story, results);
-    return { all_pass: results.every(r => r.status === 'pass'), results };
-  }
-
-  /** SRG-01~03,05~07: Base checks from V3.1 */
-  private async runBaseSRGChecks(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
-    const results: { id: string; status: 'pass' | 'fail'; reason?: string }[] = [];
-    // SRG-02: scope_write non-empty
-    if (!story.scope_write || story.scope_write.length === 0) {
-      results.push({ id: 'SRG-02', status: 'fail', reason: 'scope_write is empty' });
-    } else {
-      results.push({ id: 'SRG-02', status: 'pass' });
-    }
-
-    // SRG-05: No overlap with other IN_PROGRESS stories
+  private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; serial_only: boolean; results: any[] }> {
     const beStories = this.state.getStories(4, 'phase_4_4');
     const feStories = this.state.getStories(4, 'phase_4_10');
-    const inProgress = [...beStories, ...feStories].filter(s =>
-      s.status === 'IN_PROGRESS' && s.id !== story.story_id
-    );
-    const overlap = this.findScopeOverlap(story.scope_write, inProgress);
-    if (overlap.length > 0) {
-      results.push({ id: 'SRG-05', status: 'fail', reason: `Scope overlap with: ${overlap.join(', ')}` });
-    } else {
-      results.push({ id: 'SRG-05', status: 'pass' });
-    }
+    const activeStories = [...beStories, ...feStories];
 
-    // SRG-06: scope_write within implementation_boundary
-    const boundary = this.state.data.global_state.implementation_boundary;
-    if (boundary && boundary.scope_frozen) {
-      const allScopes = [...boundary.backend_scope, ...boundary.frontend_scope, ...boundary.shared_scope];
-      const outside = story.scope_write.filter(sw =>
-        !allScopes.some(bs => sw.startsWith(bs) || bs.startsWith(sw))
-      );
-      if (outside.length > 0) {
-        results.push({ id: 'SRG-06', status: 'fail', reason: `Outside boundary: ${outside.join(', ')}` });
-      } else {
-        results.push({ id: 'SRG-06', status: 'pass' });
-      }
-    } else {
-      results.push({ id: 'SRG-06', status: 'pass', reason: 'Boundary not frozen yet, skipping' });
-    }
+    const protectedPaths = [
+      'shared/types',
+      'schema/migration',
+      'root/config',
+      'shared/contract',
+      'api/contract',
+      'route/entry',
+      'build/ci',
+    ];
 
-    // SRG-07: Parent directories exist
-    const missingDirs = story.scope_write.filter(p => {
-      const full = resolve(this.worktree.baseDir || process.cwd(), p);
-      return !existsSync(full);
+    return evaluateStoryReadyGate(story, {
+      projectRoot: this.worktree.baseDir || process.cwd(),
+      storiesDir: this.storiesDir,
+      activeStories,
+      protectedPaths,
+      implementationBoundary: this.state.data.global_state.implementation_boundary,
     });
-    if (missingDirs.length > 0) {
-      results.push({ id: 'SRG-07', status: 'fail', reason: `Missing dirs: ${missingDirs.join(', ')}` });
-    } else {
-      results.push({ id: 'SRG-07', status: 'pass' });
-    }
-
-    return { all_pass: results.every(r => r.status === 'pass'), results };
-  }
-
-  /** V3.6 SRG-04: Path safety — relative, no traversal, not forbidden */
-  private addSRG04_PathSafety(story: StoryEntry, results: any[]): void {
-    if (!story.scope_write || story.scope_write.length === 0) return;
-    const unsafe: string[] = [];
-    const forbidden = ['.env.production', '.env.local', '/etc/', '~/.ssh/'];
-    for (const p of story.scope_write) {
-      if (p.startsWith('/') || p.includes('../') || forbidden.some(f => p.includes(f))) unsafe.push(p);
-    }
-    results.push(unsafe.length === 0
-      ? { id: 'SRG-04', status: 'pass' }
-      : { id: 'SRG-04', status: 'fail', reason: `Unsafe paths: ${unsafe.join(', ')}` });
-  }
-
-  /** V3.6 SRG-08: Protected path intersection → serial_only enforcement */
-  private addSRG08_ProtectedPaths(story: StoryEntry, results: any[]): void {
-    if (!story.scope_write || story.scope_write.length === 0) return;
-    const protectedPaths = ['shared/types', 'schema/migration', 'root/config', 'shared/contract', 'api/contract', 'route/entry', 'build/ci'];
-    const hits = story.scope_write.some(sw => protectedPaths.some(pp => sw.includes(pp)));
-    results.push(hits
-      ? { id: 'SRG-08', status: 'pass', reason: 'Protected path — serial_only enforced' }
-      : { id: 'SRG-08', status: 'pass' });
-  }
-
-  /** V3.6 SRG-09: Command safety — allowlist + forbidden patterns */
-  private addSRG09_CommandSafety(story: StoryEntry, results: any[]): void {
-    if (!story.acceptance_check || story.acceptance_check.length === 0) {
-      results.push({ id: 'SRG-09', status: 'pass', reason: 'No acceptance checks' });
-      return;
-    }
-    const allowed = ['npm run', 'npm test', 'npx --no-install', 'node ', 'jest ', 'vitest ', 'tsc ', 'eslint '];
-    const forbidden = ['|', ';', '&&', '||', '$(', '>', '<', 'curl ', 'rm -rf', 'sudo ', 'eval ', 'chmod '];
-    const unsafe = story.acceptance_check.filter(c => !allowed.some(a => c.startsWith(a)) || forbidden.some(f => c.includes(f)));
-    results.push(unsafe.length === 0
-      ? { id: 'SRG-09', status: 'pass' }
-      : { id: 'SRG-09', status: 'fail', reason: `Unsafe commands: ${unsafe.join('; ')}` });
-  }
-
-  private findScopeOverlap(scope: string[], otherStories: any[]): string[] {
-    const overlaps: string[] = [];
-    for (const story of otherStories) {
-      if (!story.scope_write) continue;
-      for (const s of scope) {
-        for (const o of story.scope_write) {
-          if (s.startsWith(o) || o.startsWith(s) || s === o) {
-            if (!overlaps.includes(story.id)) overlaps.push(story.id);
-          }
-        }
-      }
-    }
-    return overlaps;
   }
 
   /**
