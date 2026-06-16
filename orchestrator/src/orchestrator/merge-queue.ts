@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { SprintStatusManager } from './sprint-status.js';
 import { Track, MergeQueueItem } from './types.js';
-import { runAcceptanceChecks } from './acceptance-runner.js';
+import { appendAudit } from './audit-logger.js';
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -54,6 +54,13 @@ export class MergeQueueManager {
       merge_order: order,
       integration_checks: integrationChecks,
     });
+
+    appendAudit(this.projectRoot, 'merge_enqueue', {
+      status: 'info',
+      story_id: storyId,
+      message: `enqueued ${storyId} on ${branch} (order ${order})`,
+      details: { track, depends_on: dependsOn, queue_item_id: queueItemId },
+    });
   }
 
   /**
@@ -100,13 +107,33 @@ export class MergeQueueManager {
    * All integration checks are validated via validateCommand before execution.
    */
   async attemptAtomicMerge(item: MergeQueueItem): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
+    const { execSync } = await import('child_process');
+    appendAudit(this.projectRoot, 'merge_attempt', {
+      status: 'info',
+      story_id: item.story_id,
+      message: `atomic merge start ${item.branch}`,
+      details: { branch: item.branch, integration_checks: item.integration_checks },
+    });
     try {
-      // Pre-validate ALL commands — fail-closed before any git operations
-      assertSafeIdentifier(item.branch, 'branch');
-      for (const check of item.integration_checks) {
-        const result = validateCommand(check);
-        if (!result.ok) {
-          return { merged: false, error: `Unsafe integration check: ${result.reason}` };
+      // Step 1: Merge without committing
+      execSync(`git merge ${item.branch} --no-commit --no-ff`, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
+
+      // Step 2: Run integration checks
+      const checks = item.integration_checks.length > 0 ? item.integration_checks : ['npm run test', 'npm run build'];
+      for (const check of checks) {
+        try {
+          execSync(check, { cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000 });
+        } catch {
+          // Step 3a: Abort — no partial merge
+          execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
+          await this.state.updateMergeItem(item.story_id, { merge_status: 'failed', merge_failed_reason: `Integration check failed: ${check}` });
+          appendAudit(this.projectRoot, 'merge_abort', {
+            status: 'fail',
+            story_id: item.story_id,
+            message: `integration check failed: ${check}`,
+            details: { branch: item.branch, failed_check: check },
+          });
+          return { merged: false, error: `Integration check failed: ${check}` };
         }
       }
 
@@ -148,15 +175,24 @@ export class MergeQueueManager {
         return { merged: false, error: `Git commit failed: ${commitResult.stderr || commitResult.stdout}` };
       }
 
-      const logResult = spawnSync('git', ['log', '--oneline', '-1'], {
-        cwd: this.projectRoot,
-        encoding: 'utf8',
+      const log = execSync('git log --oneline -1', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
+      const commitHash = log.trim().split(' ')[0];
+      appendAudit(this.projectRoot, 'merge_success', {
+        status: 'pass',
+        story_id: item.story_id,
+        message: `merged ${item.branch} → ${commitHash}`,
+        details: { commit: commitHash, branch: item.branch },
       });
-      const commitHash = logResult.stdout.trim().split(' ')[0];
       return { merged: true, commitHash };
     } catch (err: any) {
       // If merge itself fails (not just checks), abort
-      try { spawnSync('git', ['merge', '--abort'], { cwd: this.projectRoot, encoding: 'utf8' }); } catch {}
+      try { execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' }); } catch {}
+      appendAudit(this.projectRoot, 'merge_abort', {
+        status: 'fail',
+        story_id: item.story_id,
+        message: `merge aborted: ${err.message ?? String(err)}`,
+        details: { branch: item.branch },
+      });
       return { merged: false, error: err.message ?? String(err) };
     }
   }

@@ -1,14 +1,8 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from 'fs';
-import { join } from 'path';
-import { spawn } from 'child_process';
-import { StoryEntry, Track, AgentDispatchResult } from './types.js';
-import {
-  AGENT_RESULT_RELPATH,
-  agentResultPath,
-  readResult,
-  validateAgentDispatchResult,
-} from '../agent/write-result.js';
-import { assertSafeIdentifier } from './command-safety.js';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { join, resolve } from 'path';
+import { spawn, execSync } from 'child_process';
+import { StoryEntry, Track } from './types.js';
+import { appendAudit } from './audit-logger.js';
 
 /**
  * Agent dispatch configuration.
@@ -501,7 +495,10 @@ export class AgentDispatcher {
     this.outputDir = outputDir;
     this.promptBuilder = new AgentPromptBuilder(projectRoot, storiesDir, outputDir);
   }
-
+  /**
+   * Dispatch a story agent synchronously via Claude Code CLI.
+   * Writes the prompt to a temp file and invokes `claude` in the worktree.
+   */
   async dispatchStoryAgent(
     story: StoryEntry,
     config: AgentDispatchConfig,
@@ -509,14 +506,135 @@ export class AgentDispatcher {
     console.log(`  🚀 Dispatching agent for ${story.story_id} (${config.track})...`);
     console.log(`     Worktree: ${config.worktreePath}`);
 
-    const result = await dispatchStoryAgent(story, {
-      worktreePath: config.worktreePath,
-      track: config.track,
-      timeoutMinutes: config.timeoutMinutes,
-      maxRetries: config.maxRetries,
-      projectRoot: this.projectRoot,
-      storiesDir: this.storiesDir,
-      outputDir: this.outputDir,
+    appendAudit(this.projectRoot, 'agent_dispatch_start', {
+      status: 'info',
+      story_id: story.story_id,
+      message: `dispatch ${story.story_id} (${config.track})`,
+      details: {
+        track: config.track,
+        worktree: config.worktreePath,
+        timeout_minutes: config.timeoutMinutes,
+      },
+    });
+
+    return new Promise((origResolve) => {
+      const projectRoot = this.projectRoot;
+      const resolve = (result: AgentResult) => {
+        appendAudit(projectRoot, 'agent_dispatch_complete', {
+          status: result.status === 'CODE_ACCEPTED' ? 'pass' : 'fail',
+          story_id: story.story_id,
+          message: `${result.status} (${(result.durationMs / 1000).toFixed(1)}s): ${result.summary || '-'}`,
+          details: {
+            track: config.track,
+            exit_code: result.exitCode,
+            duration_ms: result.durationMs,
+          },
+        });
+        origResolve(result);
+      };
+      const timeoutMs = config.timeoutMinutes * 60 * 1000;
+      let timedOut = false;
+      let lastOutput = '';
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        resolve({
+          storyId: story.story_id,
+          status: 'TIMEOUT',
+          summary: `Agent timed out after ${config.timeoutMinutes} minutes`,
+          exitCode: -1,
+          durationMs: Date.now() - startTime,
+        });
+      }, timeoutMs);
+
+      try {
+        // Spawn Claude Code in non-interactive print mode within the worktree
+        const child = spawn('claude', [
+          '--print',
+          '--output-format', 'json',
+          '--allowedTools', 'Read,Write,Edit,Bash(ls),Bash(git *),Bash(npm *),Bash(npx *)',
+          '-p', prompt,  // Use the prompt directly
+        ], {
+          cwd: config.worktreePath,
+          env: { ...process.env, CI: 'true' },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: timeoutMs,
+        });
+
+        child.stdout.on('data', (data: Buffer) => {
+          lastOutput += data.toString();
+        });
+
+        child.stderr.on('data', (data: Buffer) => {
+          const msg = data.toString();
+          if (!msg.includes('Warning') && !msg.includes('info')) {
+            console.error(`     [${story.story_id}] ${msg.trim()}`);
+          }
+        });
+
+        child.on('close', (code: number | null) => {
+          clearTimeout(timer);
+          if (timedOut) return;
+
+          const durationMs = Date.now() - startTime;
+
+          if (code === 0) {
+            // Try to parse the returned JSON
+            try {
+              const jsonMatch = lastOutput.match(/\{[^}]*"storyId"[^}]*"status"[^}]*\}/);
+              if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                resolve({
+                  storyId: result.storyId ?? story.story_id,
+                  status: result.status === 'CODE_ACCEPTED' ? 'CODE_ACCEPTED' : 'FAILED',
+                  summary: result.summary ?? '',
+                  exitCode: code,
+                  durationMs,
+                });
+                return;
+              }
+            } catch {}
+
+            // If no structured output, assume success if exit code 0 and output exists
+            resolve({
+              storyId: story.story_id,
+              status: lastOutput.includes('CODE_ACCEPTED') ? 'CODE_ACCEPTED' : 'FAILED',
+              summary: lastOutput.slice(-200).trim(),
+              exitCode: code,
+              durationMs,
+            });
+          } else {
+            resolve({
+              storyId: story.story_id,
+              status: code === 1 ? 'BLOCKED_BY_DEPENDENCY' : 'FAILED',
+              summary: `Agent exited with code ${code}: ${lastOutput.slice(-200).trim()}`,
+              exitCode: code ?? -1,
+              durationMs,
+            });
+          }
+        });
+
+        child.on('error', (err: Error) => {
+          clearTimeout(timer);
+          if (timedOut) return;
+          resolve({
+            storyId: story.story_id,
+            status: 'FAILED',
+            summary: `Failed to spawn agent: ${err.message}`,
+            exitCode: -1,
+            durationMs: Date.now() - startTime,
+          });
+        });
+      } catch (err: any) {
+        clearTimeout(timer);
+        resolve({
+          storyId: story.story_id,
+          status: 'FAILED',
+          summary: `Dispatch error: ${err.message}`,
+          exitCode: -1,
+          durationMs: Date.now() - startTime,
+        });
+      }
     });
 
     // Exit code is no longer the primary signal; keep a stable proxy value
