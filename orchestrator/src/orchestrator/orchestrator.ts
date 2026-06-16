@@ -118,13 +118,18 @@ export class PhaseOrchestrator {
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);
 
-    const storiesDir = getStoriesDir(this.config, this.projectRoot);
-    const outputDir = getOutputDir(this.config, this.projectRoot);
+    // Load customize.toml first so subsequent managers get scope-lock config.
+    this.loadConfig();
+    const scopeLockCfg = this.resolveScopeLockConfig();
+
+    const storiesDir = this.resolveConfigPath('stories_output');
+    const outputDir = this.resolveConfigPath('output_dir');
     this.storyRunner = new StoryRunner(
       this.state, this.worktree, this.gateEvaluator,
-      this.projectRoot, storiesDir, outputDir
+      this.projectRoot, storiesDir, outputDir,
+      scopeLockCfg,
     );
-    this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot);
+    this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot, scopeLockCfg);
   }
 
   /**
@@ -653,6 +658,27 @@ export class PhaseOrchestrator {
 
   private getScopeLockConfig(): { forbidden_paths?: string[]; protected_paths?: string[] } {
     return this.config.scope_lock ?? {} as any;
+  }
+
+  /**
+   * Build a fully-typed `ScopeLockConfig` from `customize.toml`, applying
+   * conservative defaults when fields are missing. Returns `null` only when
+   * the section is entirely absent so downstream callers can short-circuit.
+   */
+  private resolveScopeLockConfig(): ScopeLockConfig | null {
+    const cfg = this.config as Record<string, any>;
+    const raw = cfg?.scope_lock;
+    if (!raw) return null;
+
+    const enforcement = (raw.enforcement_mode as ScopeLockConfig['enforcement_mode']) ?? 'strict';
+    return {
+      enabled: raw.enabled !== false,
+      enforcement_mode: enforcement,
+      srg_05_severity: (raw.srg_05_severity as 'blocking' | 'warning') ?? 'blocking',
+      scope_expansion_requires: (raw.scope_expansion_requires as 'user_approval' | 'auto_approve') ?? 'user_approval',
+      forbidden_paths: Array.isArray(raw.forbidden_paths) ? raw.forbidden_paths : [],
+      protected_paths: Array.isArray(raw.protected_paths) ? raw.protected_paths : [],
+    };
   }
 
   /**

@@ -291,7 +291,7 @@ export interface AcceptanceGateConfig {
 
 export interface ScopeLockConfig {
   enabled: boolean;
-  enforcement_mode: 'strict' | 'permissive' | 'warning_only';
+  enforcement_mode: 'strict' | 'warning' | 'permissive' | 'warning_only';
   srg_05_severity: 'blocking' | 'warning';
   scope_expansion_requires: 'user_approval' | 'auto_approve';
   forbidden_paths: string[];
