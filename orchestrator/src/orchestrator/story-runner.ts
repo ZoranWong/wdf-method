@@ -7,7 +7,7 @@ import { GateEvaluator } from './gate-evaluator.js';
 import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
 import { StoryEntry, Track, PhaseStatus, StoryStatus, ScopeLockConfig } from './types.js';
 import { evaluateStoryReadyGate } from './story-ready-gate.js';
-import { runAcceptanceChecks } from './acceptance-runner.js';
+import { runAcceptanceChecks, AcceptanceReport } from './acceptance-runner.js';
 import {
   validateScopeLock,
   validateActualChangesAgainstScope,
@@ -36,6 +36,8 @@ function nextSubstep(current: string | null, isFE: boolean): string {
 export interface StoryRunnerOptions {
   /** Protected paths sourced from scope_lock.protected_paths in customize.toml. */
   protectedPaths?: string[];
+  /** Scope lock config from customize.toml. */
+  scopeLockConfig?: ScopeLockConfig | null;
 }
 
 export class StoryRunner {
@@ -46,6 +48,7 @@ export class StoryRunner {
   private storiesDir: string;
   private outputDir: string;
   private protectedPaths: string[];
+  private scopeLockConfig: ScopeLockConfig | null;
 
   constructor(
     state: SprintStatusManager,
@@ -62,6 +65,7 @@ export class StoryRunner {
     this.agentDispatcher = new AgentDispatcher(projectRoot, storiesDir, outputDir);
     this.storiesDir = storiesDir;
     this.outputDir = outputDir;
+    this.scopeLockConfig = options.scopeLockConfig ?? null;
     // Default protected paths (V3.6) — overridden by config when provided.
     this.protectedPaths = options.protectedPaths && options.protectedPaths.length > 0
       ? options.protectedPaths

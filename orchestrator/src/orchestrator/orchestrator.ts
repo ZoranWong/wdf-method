@@ -1,5 +1,6 @@
-import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { resolve, join } from 'path';
+import { homedir } from 'os';
 import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
@@ -7,6 +8,13 @@ import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
 import { appendAudit, readRecentAudit, formatAuditLines } from './audit-logger.js';
+import {
+  loadConfig,
+  getSignalDir,
+  getSprintTrackingPath,
+  getStatusDir,
+  resolvePath,
+} from './config.js';
 import { WorkflowConfig, AcceptanceGateConfig, ScopeLockConfig, Track, DevMode, TriageMode } from './types.js';
 
 // Dynamic import for TOML parser since it may not be in deps
@@ -127,7 +135,10 @@ export class PhaseOrchestrator {
     this.storyRunner = new StoryRunner(
       this.state, this.worktree, this.gateEvaluator,
       this.projectRoot, storiesDir, outputDir,
-      { protectedPaths: this.config.scope_lock?.protected_paths ?? [] }
+      {
+        protectedPaths: this.config.scope_lock?.protected_paths ?? [],
+        scopeLockConfig: scopeLockCfg,
+      }
     );
     this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot, scopeLockCfg);
   }
@@ -666,6 +677,36 @@ export class PhaseOrchestrator {
 
   private getScopeLockConfig(): { forbidden_paths?: string[]; protected_paths?: string[] } {
     return this.config.scope_lock ?? {} as any;
+  }
+
+  /**
+   * Load `customize.toml` from the skill root or project root, applying
+   * built-in defaults for any missing keys. Populates `this.config` with
+   * the fully-typed result.
+   */
+  private loadConfig(): void {
+    const { config } = loadConfig(this.projectRoot, {
+      skillRoot: this.skillRoot ?? this.projectRoot,
+      silent: true,
+    });
+    this.config = config;
+  }
+
+  /**
+   * Resolve a config key containing a path template (e.g. `{project-root}/`).
+   * Uses `resolvePath` from the config module; throws if the key is missing
+   * from `config.workflow`.
+   */
+  private resolveConfigPath(key: keyof WorkflowConfig['workflow']): string {
+    const template = this.config.workflow[key];
+    if (!template || typeof template !== 'string') {
+      throw new Error(`Workflow config missing expected path key: workflow.${String(key)}`);
+    }
+    return this.resolvePath(template);
+  }
+
+  private resolvePath(template: string): string {
+    return resolvePath(template, this.projectRoot);
   }
 
   /**

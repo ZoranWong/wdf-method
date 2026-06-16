@@ -8,6 +8,7 @@ import {
 } from './scope-lock.js';
 import { assertSafeIdentifier } from './command-safety.js';
 import { appendAudit } from './audit-logger.js';
+import { runAcceptanceChecks } from './acceptance-runner.js';
 
 /**
  * Validate a merge queue item before enqueuing.

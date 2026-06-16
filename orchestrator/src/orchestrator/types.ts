@@ -32,7 +32,7 @@ export type PhaseStatus =
   | 'BLOCKED_BY_DEPENDENCY';
 
 export type DevMode = 'separated' | 'full_stack';
-export type TriageMode = 'light' | 'serial' | 'parallel';
+export type TriageMode = 'light' | 'serial' | 'parallel' | 'auto';
 export type Track = 'backend' | 'frontend' | 'full-stack';
 
 export interface StoryEntry {
@@ -273,45 +273,9 @@ export interface AgentDispatchResult {
   error?: string;
 }
 
-export interface AcceptanceGateConfig {
-  code_acceptance_min_coverage: number;
-  code_acceptance_require_lint: boolean;
-  code_acceptance_require_type_check: boolean;
-  ui_acceptance_min_lighthouse_performance: number;
-  ui_acceptance_min_lighthouse_accessibility: number;
-  ui_acceptance_min_lighthouse_best_practices: number;
-  ui_acceptance_max_bundle_size_kb: number;
-  ui_acceptance_require_axe_audit: boolean;
-  feature_acceptance_require_contract_compliance: boolean;
-  feature_acceptance_require_e2e_tests: boolean;
-  feature_acceptance_require_security_audit: boolean;
-  e2e_browser_acceptance_browsers: string[];
-  e2e_browser_acceptance_visual_diff_threshold_pct: number;
-}
-
-export interface ScopeLockConfig {
-  enabled: boolean;
-  enforcement_mode: 'strict' | 'warning' | 'permissive' | 'warning_only';
-  srg_05_severity: 'blocking' | 'warning';
-  scope_expansion_requires: 'user_approval' | 'auto_approve';
-  forbidden_paths: string[];
-  protected_paths: string[];
-}
-
-export interface WorkflowConfig {
-  acceptance_gates: AcceptanceGateConfig;
-  scope_lock: ScopeLockConfig;
-  workflow: {
-    version: string;
-    dev_mode: DevMode;
-    output_dir: string;
-    sprint_tracking: string;
-    stories_output: string;
-  };
-  merge_queue: {
-    enabled: boolean;
-    auto_promote_on_deps_met: boolean;
-    integration_check_on_merge: boolean;
-    default_integration_checks: string[];
-  };
-}
+// Re-export config types for backward compatibility
+export {
+  WorkflowConfig,
+  AcceptanceGatesSection as AcceptanceGateConfig,
+  ScopeLockSection as ScopeLockConfig,
+} from './config.js';
