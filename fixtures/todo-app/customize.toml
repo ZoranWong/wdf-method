@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────
+# E2E test fixture — todo-app
+# Minimal customize.toml exercising paths the engine reads.
+# ─────────────────────────────────────────
+
+[workflow]
+version = "3.6.0"
+dev_mode = "separated"
+output_dir = "{project-root}/_bmad-output/web-dev-flow"
+sprint_tracking = "{project-root}/_bmad-output/web-dev-flow/sprint-status.yaml"
+stories_output = "{project-root}/_bmad-output/web-dev-flow/stories"
+
+# ── Tech stack defaults ──
+default_frontend_framework = "react"
+default_backend_framework = "express"
+default_database = "postgresql"
+default_api_style = "rest"
+
+[scope_lock]
+enabled = true
+enforcement_mode = "strict"
+forbidden_paths = [".env.production", ".env.local"]
+protected_paths = ["shared/types", "schema/migration"]
+
+[acceptance_gates]
+code_acceptance_min_coverage = 80
+code_acceptance_require_lint = true
+code_acceptance_require_type_check = true
+
+[merge_queue]
+enabled = true
+auto_promote_on_deps_met = true
+integration_check_on_merge = false
