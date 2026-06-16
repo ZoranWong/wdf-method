@@ -44,7 +44,50 @@ npm start recover               Non-destructive recovery of corrupted state
 # Development
 npm run dev                      Run with tsx (hot reload)
 npm run build                    TypeScript compile
-npm test                         Run test suite
+npm test                         Run vitest test suite (includes E2E)
+npm run test:watch               Re-run tests on file changes
+```
+
+## Tests
+
+The test suite runs via [vitest](https://vitest.dev) and is invoked with
+`npm test` from the `orchestrator/` directory. Configuration lives in
+`vitest.config.ts` — tests are picked up from `src/**/*.test.ts`.
+
+### Layout
+
+```
+orchestrator/src/orchestrator/*.test.ts   unit + integration tests
+fixtures/todo-app/                        minimal project fixture for E2E tests
+```
+
+### E2E tests
+
+`src/orchestrator/e2e.test.ts` exercises the full engine state flow against
+the `fixtures/todo-app` project. Each test copies the fixture into a fresh
+temp directory, initializes a git repo, and drives the orchestrator's state
+APIs directly — no real agent dispatch is performed. Coverage:
+
+- Status initialization with default phases
+- Phase 1 to 4 FSM transitions (skip / freeze / lock)
+- Story Ready Gate dependency tracking
+- Gate Evaluator artifact_exists fail-closed -> pass cycle
+- Merge queue enqueue + dependency-ordered reconciliation
+- Atomic save (no `.tmp.*` leakage) + reload recovery
+- Split-file status mode + unified yaml fallback
+- Change Request blocking + resolution flow
+
+Run a single E2E test:
+
+```bash
+cd orchestrator
+npm test -- e2e
+```
+
+Run with verbose output:
+
+```bash
+npx vitest run --reporter=verbose
 ```
 
 ## Key Architecture Decisions

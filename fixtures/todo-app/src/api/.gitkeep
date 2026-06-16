@@ -1,0 +1,1 @@
+# backend scope_write target — keep this directory present so SRG-07 (parent dirs exist) passes.
