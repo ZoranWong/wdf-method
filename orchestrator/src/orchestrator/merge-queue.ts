@@ -1,5 +1,10 @@
 import { SprintStatusManager } from './sprint-status.js';
-import { Track, MergeQueueItem } from './types.js';
+import { Track, MergeQueueItem, ScopeLockConfig } from './types.js';
+import {
+  validateActualChangesAgainstScope,
+  applyEnforcementMode,
+  summarizeViolations,
+} from './scope-lock.js';
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -8,10 +13,16 @@ import { Track, MergeQueueItem } from './types.js';
 export class MergeQueueManager {
   private state: SprintStatusManager;
   private projectRoot: string;
+  private scopeLockConfig: ScopeLockConfig | null;
 
-  constructor(state: SprintStatusManager, projectRoot: string) {
+  constructor(
+    state: SprintStatusManager,
+    projectRoot: string,
+    scopeLockConfig?: ScopeLockConfig | null,
+  ) {
     this.state = state;
     this.projectRoot = projectRoot;
+    this.scopeLockConfig = scopeLockConfig ?? null;
   }
 
   /**
@@ -81,9 +92,29 @@ export class MergeQueueManager {
    * V3.6 Atomic Merge Protocol:
    * git merge --no-commit --no-ff → integration checks → commit OR abort.
    * Zero partial merge state on main branch.
+   *
+   * Task 7: Pre-merge scope-lock check inserted *before* the no-commit merge
+   * is attempted. If the branch diff includes files outside the story's
+   * declared scope_write (or hits forbidden_paths), the merge aborts with
+   * `merge_failed_reason = "scope-lock violation: …"`. Honours
+   * `enforcement_mode`:
+   *   - strict      → block, mark merge_status=failed.
+   *   - warning     → audit + continue.
+   *   - permissive  → silently continue.
    */
   async attemptAtomicMerge(item: MergeQueueItem): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
     const { execSync } = await import('child_process');
+
+    // ── Step 0: Scope-Lock pre-merge gate (Task 7, post-merge stage) ──
+    const scopeBlock = await this.runScopeLockPreMergeGate(item);
+    if (scopeBlock) {
+      await this.state.updateMergeItem(item.story_id, {
+        merge_status: 'failed',
+        merge_failed_reason: scopeBlock,
+      });
+      return { merged: false, error: scopeBlock };
+    }
+
     try {
       // Step 1: Merge without committing
       execSync(`git merge ${item.branch} --no-commit --no-ff`, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
@@ -113,6 +144,77 @@ export class MergeQueueManager {
       try { execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' }); } catch {}
       return { merged: false, error: err.message ?? String(err) };
     }
+  }
+
+  /**
+   * Pre-merge scope-lock gate — compares the branch's actual diff against
+   * the story's declared `scope_write` (read from
+   * `global_state.development_order`) and the configured forbidden_paths.
+   *
+   * Returns a non-empty string when the merge MUST be blocked; null
+   * otherwise.
+   */
+  private async runScopeLockPreMergeGate(item: MergeQueueItem): Promise<string | null> {
+    const cfg = this.scopeLockConfig;
+    if (!cfg || !cfg.enabled) return null;
+
+    const order = this.state.data.global_state.development_order ?? [];
+    const story = order.find((s) => s.story_id === item.story_id);
+    if (!story) {
+      // Cannot validate — log and continue conservatively.
+      await this.state.appendAudit('scope_lock_pre_merge', {
+        story_id: item.story_id,
+        decision: 'skip',
+        reason: 'story not found in development_order',
+      });
+      return null;
+    }
+
+    let changed: string[] = [];
+    try {
+      const { execSync } = await import('child_process');
+      // Diff branch against the merge-base with master/main. Try both refs.
+      let diffOut = '';
+      try {
+        diffOut = execSync(
+          `git diff --name-only $(git merge-base HEAD ${item.branch})..${item.branch}`,
+          { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe', shell: '/bin/sh' as any },
+        );
+      } catch {
+        // Fallback: simple two-dot diff between current HEAD and branch.
+        diffOut = execSync(
+          `git diff --name-only HEAD..${item.branch}`,
+          { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe' },
+        );
+      }
+      changed = diffOut.split('\n').map((s) => s.trim()).filter(Boolean);
+    } catch (err: any) {
+      // Best-effort: if we cannot resolve a diff, do not block on it. Audit and continue.
+      await this.state.appendAudit('scope_lock_pre_merge', {
+        story_id: item.story_id,
+        decision: 'skip',
+        reason: `diff failed: ${err?.message ?? String(err)}`,
+      });
+      return null;
+    }
+
+    const result = validateActualChangesAgainstScope(changed, story.scope_write ?? [], cfg);
+    const outcome = applyEnforcementMode(result, cfg.enforcement_mode);
+
+    if (result.violations.length > 0) {
+      await this.state.appendAudit('scope_lock_pre_merge', {
+        story_id: item.story_id,
+        decision: outcome.should_block ? 'block' : 'warn',
+        enforcement_mode: cfg.enforcement_mode,
+        violations: result.violations,
+        summary: summarizeViolations(result.violations),
+      });
+    }
+
+    if (outcome.should_block) {
+      return `scope-lock violation: ${summarizeViolations(outcome.reported)}`;
+    }
+    return null;
   }
 
   /**

@@ -5,7 +5,13 @@ import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
-import { StoryEntry, Track, PhaseStatus, StoryStatus } from './types.js';
+import { StoryEntry, Track, PhaseStatus, StoryStatus, ScopeLockConfig } from './types.js';
+import {
+  validateScopeLock,
+  validateActualChangesAgainstScope,
+  applyEnforcementMode,
+  summarizeViolations,
+} from './scope-lock.js';
 
 /**
  * Sub-step ID mapping for BE and FE stories.
@@ -32,6 +38,7 @@ export class StoryRunner {
   private agentDispatcher: AgentDispatcher;
   private storiesDir: string;
   private outputDir: string;
+  private scopeLockConfig: ScopeLockConfig | null;
 
   constructor(
     state: SprintStatusManager,
@@ -39,7 +46,8 @@ export class StoryRunner {
     gateEvaluator: GateEvaluator,
     projectRoot: string,
     storiesDir: string,
-    outputDir: string
+    outputDir: string,
+    scopeLockConfig?: ScopeLockConfig | null,
   ) {
     this.state = state;
     this.worktree = worktree;
@@ -47,6 +55,7 @@ export class StoryRunner {
     this.agentDispatcher = new AgentDispatcher(projectRoot, storiesDir, outputDir);
     this.storiesDir = storiesDir;
     this.outputDir = outputDir;
+    this.scopeLockConfig = scopeLockConfig ?? null;
   }
 
   /**
@@ -241,7 +250,57 @@ export class StoryRunner {
     this.addSRG04_PathSafety(story, results);
     this.addSRG08_ProtectedPaths(story, results);
     this.addSRG09_CommandSafety(story, results);
+    // Task 7: Scope-Lock pre-execution gate
+    await this.addScopeLockCheck(story, results);
     return { all_pass: results.every(r => r.status === 'pass'), results };
+  }
+
+  /**
+   * Pre-execution scope-lock gate: validates declared scope_write against
+   * forbidden / protected paths and the frozen implementation_boundary.
+   * Honours `enforcement_mode`:
+   *   - strict      → forbidden / outside_boundary errors fail the gate.
+   *   - warning     → never fails the gate; violations recorded in audit log.
+   *   - permissive  → silenced (debug only).
+   */
+  private async addScopeLockCheck(story: StoryEntry, results: any[]): Promise<void> {
+    const cfg = this.scopeLockConfig;
+    if (!cfg || !cfg.enabled) {
+      results.push({ id: 'SCOPE-LOCK', status: 'pass', reason: 'scope_lock disabled' });
+      return;
+    }
+
+    const boundary = this.state.data.global_state.implementation_boundary;
+    const boundaryPaths = boundary && boundary.scope_frozen
+      ? [...boundary.backend_scope, ...boundary.frontend_scope, ...boundary.shared_scope]
+      : undefined;
+
+    const result = validateScopeLock(story.scope_write ?? [], cfg, boundaryPaths);
+    const outcome = applyEnforcementMode(result, cfg.enforcement_mode);
+
+    if (result.violations.length > 0) {
+      await this.state.appendAudit('scope_lock_pre_check', {
+        story_id: story.story_id,
+        decision: outcome.should_block ? 'block' : 'warn',
+        enforcement_mode: cfg.enforcement_mode,
+        violations: result.violations,
+        summary: summarizeViolations(result.violations),
+      });
+    }
+
+    if (outcome.should_block) {
+      const summary = summarizeViolations(outcome.reported);
+      results.push({
+        id: 'SCOPE-LOCK',
+        status: 'fail',
+        reason: `scope-lock pre-check (${cfg.enforcement_mode}): ${summary}`,
+      });
+    } else {
+      const note = outcome.reported.length > 0
+        ? `${outcome.reported.length} warning(s)`
+        : 'clean';
+      results.push({ id: 'SCOPE-LOCK', status: 'pass', reason: note });
+    }
   }
 
   /** SRG-01~03,05~07: Base checks from V3.1 */
@@ -452,20 +511,56 @@ export class StoryRunner {
 
   /**
    * Scope Exit Verification: git diff vs scope_write.
+   *
+   * Uses the centralised scope-lock validator
+   * (`validateActualChangesAgainstScope`) so the same rules — including
+   * forbidden_paths and `enforcement_mode` — apply uniformly across the
+   * pre-execution gate, the per-substep exit check, and the merge-queue
+   * post-merge gate.
    */
   private async runScopeExitVerification(story: StoryEntry, worktreePath: string): Promise<boolean> {
     const changedFiles = await this.worktree.getChangedFilesInWorktree(worktreePath);
-    const violations = changedFiles.filter(f =>
-      !story.scope_write.some(sw => f.startsWith(sw) || f.includes(sw))
-    );
+    const cfg = this.scopeLockConfig;
 
-    if (violations.length > 0) {
-      console.log(`  ✗ ${story.story_id} SCOPE VIOLATION — ${violations.length} files outside scope_write:`);
-      for (const v of violations) console.log(`    ✗ ${v}`);
-      return false; // Strict mode: block on violations
+    // No config → fall back to the legacy "every file must be inside scope_write" check
+    // (no forbidden / boundary awareness).
+    if (!cfg || !cfg.enabled) {
+      const violations = changedFiles.filter(f =>
+        !story.scope_write.some(sw => f.startsWith(sw) || f.includes(sw))
+      );
+      if (violations.length > 0) {
+        console.log(`  ✗ ${story.story_id} SCOPE VIOLATION — ${violations.length} files outside scope_write:`);
+        for (const v of violations) console.log(`    ✗ ${v}`);
+        return false;
+      }
+      console.log(`  ✓ ${story.story_id} SCOPE EXIT CLEAN — ${changedFiles.length} files, 0 violations`);
+      return true;
     }
 
-    console.log(`  ✓ ${story.story_id} SCOPE EXIT CLEAN — ${changedFiles.length} files, 0 violations`);
+    const result = validateActualChangesAgainstScope(changedFiles, story.scope_write ?? [], cfg);
+    const outcome = applyEnforcementMode(result, cfg.enforcement_mode);
+
+    if (result.violations.length > 0) {
+      await this.state.appendAudit('scope_lock_exit_check', {
+        story_id: story.story_id,
+        decision: outcome.should_block ? 'block' : 'warn',
+        enforcement_mode: cfg.enforcement_mode,
+        violations: result.violations,
+        summary: summarizeViolations(result.violations),
+      });
+    }
+
+    if (outcome.should_block) {
+      console.log(`  ✗ ${story.story_id} SCOPE EXIT BLOCK — ${summarizeViolations(outcome.reported)}`);
+      for (const v of outcome.reported) console.log(`    ✗ [${v.rule}] ${v.path}`);
+      return false;
+    }
+
+    if (outcome.reported.length > 0) {
+      console.log(`  ⚠ ${story.story_id} SCOPE EXIT WARN — ${summarizeViolations(outcome.reported)}`);
+    } else {
+      console.log(`  ✓ ${story.story_id} SCOPE EXIT CLEAN — ${changedFiles.length} files, 0 violations`);
+    }
     return true;
   }
 }
