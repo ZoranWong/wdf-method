@@ -1,0 +1,9 @@
+schema: wireframes-v1
+artifact_type: wireframes
+description: "Wireframes with layout structure and component inventory"
+phase: 2
+required_sections:
+  page_inventory: { description: "All key pages with layout description", min_items: 2 }
+  component_inventory: { description: "Reusable components per page", min_items: 3 }
+  ui_states: { description: "Loading, empty, error, edge cases for each page", min_items: 3 }
+optional_sections: [responsive_breakpoints, interaction_notes, accessibility_notes]

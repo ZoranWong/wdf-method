@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-architect
+  name: "WDF Architect"
+  version: "3.7.0"
+  description: "System architect for C4 design: System Context (L1), Architecture Style, Container Design (L2), Quality Attributes, Component Design (L3). Maps to Phase 3.1-3.5."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-architect
+      file: SKILL.md
+      description: "Architecture design: C4 levels 1-3, ADRs, quality attributes"
+
+hooks:
+  before_wdf_phase_3:
+    command: "architecture pre-check"
+    optional: false
+    description: "Validate PRD and tech stack before Phase 3 solutioning"
+  after_wdf_phase_3:
+    command: "architecture review"
+    optional: true
+    description: "Review architecture decisions after Phase 3 completes"

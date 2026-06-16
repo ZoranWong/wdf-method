@@ -1,0 +1,11 @@
+schema: product-brief-v1
+artifact_type: product_brief
+description: "Product brief — vision, users, problems, solution hypotheses"
+phase: 1
+required_sections:
+  vision: { description: "One paragraph — what is the product and why does it matter?", min_chars: 100 }
+  target_users: { description: "At least 2 user segments with goals and context", min_items: 2 }
+  problems: { description: "Problems to solve, ranked by severity", min_items: 2 }
+  solution_hypotheses: { description: "How we think we can solve each problem", min_items: 2 }
+  success_metrics: { description: "How we'll know this product is working", min_items: 2 }
+optional_sections: [assumptions, constraints, competitors, timeline]

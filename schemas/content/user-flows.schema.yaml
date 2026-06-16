@@ -1,0 +1,9 @@
+schema: user-flows-v1
+artifact_type: user_flows
+description: "User flows — primary, secondary, and error paths"
+phase: 2
+required_sections:
+  flow_inventory: { description: "All flows with entry/exit conditions", min_items: 2 }
+  primary_flows: { description: "Happy-path step-by-step", min_items: 1 }
+  error_paths: { description: "Error handling per flow", min_items: 1 }
+optional_sections: [secondary_flows, wireframe_references, state_diagrams]

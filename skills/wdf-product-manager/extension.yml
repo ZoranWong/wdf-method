@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-product-manager
+  name: "WDF Product Manager"
+  version: "3.7.0"
+  description: "Product manager for PRD creation, impact mapping, story mapping, and prioritization. Maps to Phase 2."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-product-manager
+      file: SKILL.md
+      description: "Product management: PRD, impact mapping, prioritization"
+
+hooks:
+  before_wdf_phase_2:
+    command: "prd pre-check"
+    optional: false
+    description: "Validate project brief before Phase 2 planning"
+  after_wdf_phase_2:
+    command: "requirements freeze"
+    optional: false
+    description: "Freeze requirements after PRD is locked"

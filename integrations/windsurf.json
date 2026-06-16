@@ -1,0 +1,17 @@
+{
+  "key": "windsurf",
+  "name": "Windsurf",
+  "folder": ".windsurf",
+  "commands_dir": "workflows",
+  "skills_dir": null,
+  "format": "markdown",
+  "args_placeholder": "$ARGUMENTS",
+  "extension": ".md",
+  "context_file": ".windsurf/rules/wdf.md",
+  "invoke_separator": ".",
+  "command_prefix": "/",
+  "requires_cli": false,
+  "install_url": null,
+  "detect_files": [".windsurf"],
+  "detect_binaries": []
+}

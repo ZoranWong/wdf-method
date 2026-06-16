@@ -1,0 +1,30 @@
+schema: sprint-plan-v1
+artifact_type: sprint_plan
+description: "Sprint plan with capacity assessment, story assignment, and parallel groups"
+phase: 4
+
+required_sections:
+  capacity:
+    description: "Available developer capacity (hours/points per track)"
+    min_chars: 100
+  story_assignment:
+    description: "Stories assigned to tracks with order and dependencies"
+    min_items: 1
+    item_format: "| Story ID | Title | Track | Priority | Depends On | Parallel Safe | Est. Hours |"
+  parallel_groups:
+    description: "Groups of stories that can execute concurrently"
+    min_items: 1
+  scope_freeze:
+    description: "Git tag reference and freeze boundary"
+    pattern: "^scope-freeze/"
+  risk_assessment:
+    description: "Known risks and mitigation strategies"
+    min_items: 1
+  timeline:
+    description: "Sprint calendar with milestones"
+    min_chars: 100
+
+optional_sections:
+  - team_assignments
+  - tooling_requirements
+  - rollback_plan

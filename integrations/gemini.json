@@ -1,0 +1,17 @@
+{
+  "key": "gemini",
+  "name": "Gemini CLI",
+  "folder": ".gemini",
+  "commands_dir": "commands",
+  "skills_dir": null,
+  "format": "toml",
+  "args_placeholder": "{{args}}",
+  "extension": ".toml",
+  "context_file": "GEMINI.md",
+  "invoke_separator": ".",
+  "command_prefix": "/",
+  "requires_cli": true,
+  "install_url": "https://github.com/google-gemini/gemini-cli",
+  "detect_files": [".gemini", ".gemini/commands"],
+  "detect_binaries": ["gemini"]
+}

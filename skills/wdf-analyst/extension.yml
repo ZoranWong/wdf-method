@@ -1,0 +1,29 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-analyst
+  name: "WDF Analyst"
+  version: "3.7.0"
+  description: "Product analyst for brainstorming, domain research, and product brief creation. Maps to Phase 1 sub-phases."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-analyst
+      file: SKILL.md
+      description: "Product analysis: brainstorming, domain research, product brief"
+  commands: []
+
+hooks:
+  before_wdf_phase_1:
+    command: "wdf-analyst brainstorm"
+    optional: false
+    description: "Run brainstorming before Phase 1 analysis"
+  after_wdf_phase_1:
+    command: "sync analysis outputs"
+    optional: true
+    description: "Sync Phase 1 outputs to planning directory"

@@ -1,0 +1,17 @@
+{
+  "key": "codex",
+  "name": "Codex CLI",
+  "folder": ".agents",
+  "commands_dir": "skills",
+  "skills_dir": "skills",
+  "format": "skill",
+  "args_placeholder": "$ARGUMENTS",
+  "extension": "/SKILL.md",
+  "context_file": "AGENTS.md",
+  "invoke_separator": "-",
+  "command_prefix": "/",
+  "requires_cli": true,
+  "install_url": "https://github.com/openai/codex",
+  "detect_files": [".agents/skills", ".codex"],
+  "detect_binaries": ["codex"]
+}

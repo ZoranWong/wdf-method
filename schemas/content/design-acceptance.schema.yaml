@@ -1,0 +1,10 @@
+schema: design-acceptance-v1
+artifact_type: design_acceptance
+description: "Design acceptance criteria — visual parity, a11y, interaction benchmarks"
+phase: 2
+required_sections:
+  design_review_summary: { description: "What was reviewed and by whom", min_chars: 100 }
+  visual_parity_checklist: { description: "Visual comparison against design specs", min_items: 3 }
+  accessibility_standards: { description: "WCAG level, audit results", min_chars: 80 }
+  verdict: { description: "APPROVED or REVISIONS_REQUIRED", pattern: "^(APPROVED|REVISIONS_REQUIRED)" }
+optional_sections: [revision_items, design_debt, interaction_benchmarks]

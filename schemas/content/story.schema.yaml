@@ -1,0 +1,31 @@
+schema: story-v1
+artifact_type: story
+description: "Individual user story with acceptance criteria and technical notes"
+phase: 3
+
+required_sections:
+  user_story:
+    description: "As a [role], I want [goal], so that [reason]"
+    pattern: "^As a .+, I want .+, so that .+$"
+  acceptance_criteria:
+    description: "Given/When/Then scenarios that define done"
+    min_items: 3
+    item_format: "{N}. **Given** [context], **When** [event], **Then** [outcome]"
+  technical_notes:
+    description: "Implementation guidance — files, patterns, constraints"
+    min_chars: 100
+  scope_write:
+    description: "List of files this story will modify"
+    min_items: 1
+  acceptance_checks:
+    description: "Executable commands that validate the story (not placeholders)"
+    min_items: 1
+  code_standards_source:
+    description: "Reference to coding standards file"
+    min_items: 1
+
+optional_sections:
+  - out_of_scope
+  - dependencies
+  - execution_units
+  - handoff_notes

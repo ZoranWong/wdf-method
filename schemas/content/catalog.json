@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-06-13T00:00:00Z",
+  "schemas": {
+    "product-brief": { "file": "product-brief.schema.yaml", "artifact_type": "product_brief", "phase": 1, "sections": 5 },
+    "domain-research": { "file": "domain-research.schema.yaml", "artifact_type": "domain_research", "phase": 1, "sections": 4 },
+    "prd": { "file": "prd.schema.yaml", "artifact_type": "prd", "phase": 2, "sections": 7 },
+    "impact-map": { "file": "impact-map.schema.yaml", "artifact_type": "impact_map", "phase": 2, "sections": 4 },
+    "story-map": { "file": "story-map.schema.yaml", "artifact_type": "story_map", "phase": 2, "sections": 5 },
+    "prioritization": { "file": "prioritization.schema.yaml", "artifact_type": "prioritization", "phase": 2, "sections": 4 },
+    "user-flows": { "file": "user-flows.schema.yaml", "artifact_type": "user_flows", "phase": 2, "sections": 4 },
+    "wireframes": { "file": "wireframes.schema.yaml", "artifact_type": "wireframes", "phase": 2, "sections": 4 },
+    "design-tokens": { "file": "design-tokens.schema.yaml", "artifact_type": "design_tokens", "phase": 2, "sections": 6 },
+    "design-acceptance": { "file": "design-acceptance.schema.yaml", "artifact_type": "design_acceptance", "phase": 2, "sections": 4 },
+    "system-context": { "file": "system-context.schema.yaml", "artifact_type": "system_context", "phase": 3, "sections": 5 },
+    "architecture-style": { "file": "architecture-style.schema.yaml", "artifact_type": "architecture_style", "phase": 3, "sections": 5 },
+    "container-design": { "file": "container-design.schema.yaml", "artifact_type": "container_design", "phase": 3, "sections": 5 },
+    "component-design": { "file": "component-design.schema.yaml", "artifact_type": "component_design", "phase": 3, "sections": 5 },
+    "epics": { "file": "epics.schema.yaml", "artifact_type": "epics", "phase": 3, "sections": 4 },
+    "story": { "file": "story.schema.yaml", "artifact_type": "story", "phase": 3, "sections": 6 },
+    "readiness-check": { "file": "readiness-check.schema.yaml", "artifact_type": "readiness_check", "phase": 3, "sections": 5 },
+    "sprint-plan": { "file": "sprint-plan.schema.yaml", "artifact_type": "sprint_plan", "phase": 4, "sections": 6 },
+    "dev-log": { "file": "dev-log.schema.yaml", "artifact_type": "dev_log", "phase": 4, "sections": 5 },
+    "test-report": { "file": "test-report.schema.yaml", "artifact_type": "test_report", "phase": 4, "sections": 5 },
+    "acceptance-report": { "file": "acceptance-report.schema.yaml", "artifact_type": "acceptance_report", "phase": 4, "sections": 5 },
+    "integration-report": { "file": "integration-report.schema.yaml", "artifact_type": "integration_report", "phase": 4, "sections": 6 },
+    "retrospective": { "file": "retrospective.schema.yaml", "artifact_type": "retrospective", "phase": 4, "sections": 5 }
+  }
+}

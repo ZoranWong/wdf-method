@@ -1,0 +1,24 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-retrospective-host
+  name: "WDF Retrospective Host"
+  version: "3.7.0"
+  description: "Agile coach for Phase 4.14 retrospective: lessons learned, action items, metrics, improvement plan."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-retrospective-host
+      file: SKILL.md
+      description: "Retrospective: lessons learned, action items, metrics, improvement plan"
+
+hooks:
+  after_wdf_complete:
+    command: "retrospective"
+    optional: false
+    description: "Run project retrospective after all phases complete"

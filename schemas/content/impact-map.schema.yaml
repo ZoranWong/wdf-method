@@ -1,0 +1,10 @@
+schema: impact-map-v1
+artifact_type: impact_map
+description: "Impact map — business goal to actors to impacts to deliverables"
+phase: 2
+required_sections:
+  business_goal: { description: "SMART business goal", min_chars: 80 }
+  actors: { description: "All stakeholders mapped", min_items: 2 }
+  impacts: { description: "How the system changes each actor's behavior", min_items: 2 }
+  deliverables: { description: "What we need to build for each impact", min_items: 2 }
+optional_sections: [assumptions, risks, constraints]

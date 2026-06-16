@@ -1,0 +1,11 @@
+schema: event-storming-v1
+artifact_type: event_storming
+description: "Domain events, commands, aggregates, bounded contexts"
+phase: 2
+required_sections:
+  domain_events: { description: "Events organized by timeline", min_items: 3 }
+  commands: { description: "What triggers each event?", min_items: 2 }
+  aggregates: { description: "Consistency boundaries", min_items: 1 }
+  bounded_contexts: { description: "Context boundaries with ubiquitous language", min_items: 1 }
+  hotspots: { description: "Uncertainty areas flagged", min_items: 1 }
+optional_sections: [policies, external_systems, read_models]

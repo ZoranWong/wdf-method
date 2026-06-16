@@ -1,0 +1,9 @@
+schema: container-design-v1
+artifact_type: container_design
+description: "C4 Level 2 — runtime containers"
+phase: 3
+required_sections:
+  containers: { description: "Each container with type, tech, responsibilities", min_items: 2 }
+  technology_choices: { description: "ADRs for each container", min_items: 2 }
+  deployment_view: { description: "How containers communicate", min_chars: 150 }
+optional_sections: [container_diagram, scaling_strategy, security_boundaries]

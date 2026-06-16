@@ -21,81 +21,81 @@ default_auth_method = "jwt"
 default_deployment_target = "docker"
 
 # ── Output paths ──
-output_dir = "{project-root}/_wdf_output"
-prd_output = "{project-root}/_wdf_output/prd.md"
-research_output = "{project-root}/_wdf_output/research"
-impact_map_output = "{project-root}/_wdf_output/_output/planning/impact-map.md"
-event_storming_output = "{project-root}/_wdf_output/_output/planning/event-storm.md"
-jtbd_cards_output = "{project-root}/_wdf_output/_output/planning/jtbd-cards.md"
-story_map_output = "{project-root}/_wdf_output/_output/planning/story-map.md"
-prioritization_output = "{project-root}/_wdf_output/_output/planning/prioritization.md"
-architecture_output = "{project-root}/_wdf_output/architecture.md"
-architecture_system_context_output = "{project-root}/_wdf_output/_output/solutioning/system-context.md"
-architecture_style_output = "{project-root}/_wdf_output/_output/solutioning/architecture-style.md"
-architecture_container_design_output = "{project-root}/_wdf_output/_output/solutioning/container-design.md"
-architecture_quality_attributes_output = "{project-root}/_wdf_output/_output/solutioning/quality-attributes.md"
-architecture_component_design_output = "{project-root}/_wdf_output/_output/solutioning/component-design.md"
-epics_output = "{project-root}/_wdf_output/epics.md"
-stories_output = "{project-root}/_wdf_output/stories"
+output_dir = "{project-root}/_bmad-output/web-dev-flow"
+prd_output = "{project-root}/_bmad-output/web-dev-flow/prd.md"
+research_output = "{project-root}/_bmad-output/web-dev-flow/research"
+impact_map_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/impact-map.md"
+event_storming_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/event-storm.md"
+jtbd_cards_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/jtbd-cards.md"
+story_map_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/story-map.md"
+prioritization_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/prioritization.md"
+architecture_output = "{project-root}/_bmad-output/web-dev-flow/architecture.md"
+architecture_system_context_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/system-context.md"
+architecture_style_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/architecture-style.md"
+architecture_container_design_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/container-design.md"
+architecture_quality_attributes_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/quality-attributes.md"
+architecture_component_design_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/component-design.md"
+epics_output = "{project-root}/_bmad-output/web-dev-flow/epics.md"
+stories_output = "{project-root}/_bmad-output/web-dev-flow/stories"
 
 # ── Phase 2: Planning outputs ──
-product_brief_output = "{project-root}/_wdf_output/_output/planning/product-brief.md"
-domain_research_output = "{project-root}/_wdf_output/_output/planning/domain-research.md"
-user_flows_output = "{project-root}/_wdf_output/_output/planning/user-flows.md"
-sitemap_output = "{project-root}/_wdf_output/_output/planning/sitemap.md"
-wireframes_output = "{project-root}/_wdf_output/_output/planning/wireframes.md"
-design_tokens_output = "{project-root}/_wdf_output/_output/planning/design-tokens.md"
-design_acceptance_output = "{project-root}/_wdf_output/_output/planning/design-acceptance.md"
+product_brief_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/product-brief.md"
+domain_research_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/domain-research.md"
+user_flows_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/user-flows.md"
+sitemap_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/sitemap.md"
+wireframes_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/wireframes.md"
+design_tokens_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/design-tokens.md"
+design_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/_output/planning/design-acceptance.md"
 
 # ── Phase 3: Solutioning outputs ──
-readiness_check_output = "{project-root}/_wdf_output/_output/solutioning/readiness-check.md"
-api_spec_output = "{project-root}/_wdf_output/api-spec.yaml"
-db_schema_output = "{project-root}/_wdf_output/db-schema.md"
-integration_output = "{project-root}/_wdf_output/integration-report.md"
-sprint_tracking = "{project-root}/_wdf_output/sprint-status.yaml"
+readiness_check_output = "{project-root}/_bmad-output/web-dev-flow/_output/solutioning/readiness-check.md"
+api_spec_output = "{project-root}/_bmad-output/web-dev-flow/api-spec.yaml"
+db_schema_output = "{project-root}/_bmad-output/web-dev-flow/db-schema.md"
+integration_output = "{project-root}/_bmad-output/web-dev-flow/integration-report.md"
+sprint_tracking = "{project-root}/_bmad-output/web-dev-flow/sprint-status.yaml"
 
 # ── V3.6 Split-File Status Directory ──
 # sprint-status.yaml is DERIVED from status/ files — never directly written.
 # Each file has exactly ONE writer. See specs/status-directory.md.
-status_dir = "{project-root}/_wdf_output/status"
-status_global_file = "{project-root}/_wdf_output/status/global.yaml"
-status_phase_01_file = "{project-root}/_wdf_output/status/phase-01.yaml"
-status_phase_02_file = "{project-root}/_wdf_output/status/phase-02.yaml"
-status_phase_03_file = "{project-root}/_wdf_output/status/phase-03.yaml"
-status_phase_04_be_file = "{project-root}/_wdf_output/status/phase-04-be.yaml"
-status_phase_04_fe_file = "{project-root}/_wdf_output/status/phase-04-fe.yaml"
-status_change_requests_file = "{project-root}/_wdf_output/status/change-requests.yaml"
-status_stories_dir = "{project-root}/_wdf_output/status/stories"
-status_merge_queue_dir = "{project-root}/_wdf_output/status/merge-queue"
+status_dir = "{project-root}/_bmad-output/web-dev-flow/status"
+status_global_file = "{project-root}/_bmad-output/web-dev-flow/status/global.yaml"
+status_phase_01_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-01.yaml"
+status_phase_02_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-02.yaml"
+status_phase_03_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-03.yaml"
+status_phase_04_be_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-04-be.yaml"
+status_phase_04_fe_file = "{project-root}/_bmad-output/web-dev-flow/status/phase-04-fe.yaml"
+status_change_requests_file = "{project-root}/_bmad-output/web-dev-flow/status/change-requests.yaml"
+status_stories_dir = "{project-root}/_bmad-output/web-dev-flow/status/stories"
+status_merge_queue_dir = "{project-root}/_bmad-output/web-dev-flow/status/merge-queue"
 
 # ── Phase 4: Backend sub-phase outputs ──
-be_scaffold_report_output = "{project-root}/_wdf_output/be-scaffold-report.md"
-be_migration_report_output = "{project-root}/_wdf_output/be-migration-report.md"
-be_api_client_report_output = "{project-root}/_wdf_output/be-api-client-report.md"
-be_dev_log_output = "{project-root}/_wdf_output/be-dev-log.md"
-be_test_report_output = "{project-root}/_wdf_output/be-test-report.md"
-be_code_acceptance_output = "{project-root}/_wdf_output/be-code-acceptance-report.md"
+be_scaffold_report_output = "{project-root}/_bmad-output/web-dev-flow/be-scaffold-report.md"
+be_migration_report_output = "{project-root}/_bmad-output/web-dev-flow/be-migration-report.md"
+be_api_client_report_output = "{project-root}/_bmad-output/web-dev-flow/be-api-client-report.md"
+be_dev_log_output = "{project-root}/_bmad-output/web-dev-flow/be-dev-log.md"
+be_test_report_output = "{project-root}/_bmad-output/web-dev-flow/be-test-report.md"
+be_code_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/be-code-acceptance-report.md"
 
 # ── Phase 4: Frontend sub-phase outputs ──
-fe_scaffold_report_output = "{project-root}/_wdf_output/fe-scaffold-report.md"
-fe_design_system_report_output = "{project-root}/_wdf_output/fe-design-system-report.md"
-fe_api_client_report_output = "{project-root}/_wdf_output/fe-api-client-report.md"
-fe_component_specs_output = "{project-root}/_wdf_output/fe-component-specs.md"
-fe_dev_log_output = "{project-root}/_wdf_output/fe-dev-log.md"
-fe_ui_acceptance_output = "{project-root}/_wdf_output/fe-ui-acceptance-report.md"
+fe_scaffold_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-scaffold-report.md"
+fe_design_system_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-design-system-report.md"
+fe_api_client_report_output = "{project-root}/_bmad-output/web-dev-flow/fe-api-client-report.md"
+fe_component_specs_output = "{project-root}/_bmad-output/web-dev-flow/fe-component-specs.md"
+fe_dev_log_output = "{project-root}/_bmad-output/web-dev-flow/fe-dev-log.md"
+fe_ui_acceptance_output = "{project-root}/_bmad-output/web-dev-flow/fe-ui-acceptance-report.md"
 
 # ── Phase 4: Acceptance report outputs ──
-feature_acceptance_report_output = "{project-root}/_wdf_output/_output/acceptance/feature-acceptance-report.md"
-e2e_browser_report_output = "{project-root}/_wdf_output/_output/acceptance/e2e-browser-report.md"
+feature_acceptance_report_output = "{project-root}/_bmad-output/web-dev-flow/_output/acceptance/feature-acceptance-report.md"
+e2e_browser_report_output = "{project-root}/_bmad-output/web-dev-flow/_output/acceptance/e2e-browser-report.md"
 
 # ── Phase 4: Scope Lock audit output ──
-scope_audit_log_output = "{project-root}/_wdf_output/scope-audit-log.yaml"
+scope_audit_log_output = "{project-root}/_bmad-output/web-dev-flow/scope-audit-log.yaml"
 
 # ── Phase 4: Step Audit (task tracking + session recovery) ──
-step_audit_log_output = "{project-root}/_wdf_output/step-audit-log.yaml"
+step_audit_log_output = "{project-root}/_bmad-output/web-dev-flow/step-audit-log.yaml"
 
 # ── Phase 4: Sprint Planning output ──
-sprint_plan_output = "{project-root}/_wdf_output/sprint-plan.md"
+sprint_plan_output = "{project-root}/_bmad-output/web-dev-flow/sprint-plan.md"
 
 # ── Hooks ──
 activation_steps_prepend = []
@@ -850,12 +850,12 @@ dependency_wait_timeout_minutes = 15 # Max wait for blocked dependencies before 
 # Agent Communication (V3.6)
 # ─────────────────────────────────────────
 # Cross-worktree communication via shared signal directory.
-# All worktrees (main + story/*) access the same project-relative directory.
+# All worktrees (main + story/*) access the same /tmp directory.
 # See: specs/agent-communication.md
 
 [agent_communication]
 enabled = true
-signal_dir = "{project-root}/_wdf_output/signals"
+signal_dir = "~/.wdf-method/signals"
 heartbeat_interval_seconds = 30          # Agent heartbeat frequency
 pause_timeout_seconds = 300              # Max wait for agent to pause
 heartbeat_timeout_seconds = 120          # Agent considered dead after this

@@ -1,0 +1,10 @@
+schema: story-map-v1
+artifact_type: story_map
+description: "Story map — backbone, tasks, stories, releases"
+phase: 2
+required_sections:
+  user_activity_backbone: { description: "Top-level activities", min_items: 2 }
+  task_decomposition: { description: "Each activity broken into tasks", min_items: 2 }
+  story_inventory: { description: "All story seeds mapped to activities", min_items: 3 }
+  release_slices: { description: "Walking Skeleton → MVP → v1.1 → v2", min_items: 2 }
+optional_sections: [priorities, dependencies, estimates]

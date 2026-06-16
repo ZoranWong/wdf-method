@@ -1,0 +1,9 @@
+schema: prioritization-v1
+artifact_type: prioritization
+description: "Kano classification + RICE scoring + prioritized backlog"
+phase: 2
+required_sections:
+  kano_classification: { description: "Features classified by Kano category", min_items: 3 }
+  rice_scores: { description: "RICE scores with Reach/Impact/Confidence/Effort", min_items: 3 }
+  prioritized_backlog: { description: "Final ordered backlog", min_items: 3 }
+optional_sections: [ice_scores, moscow, cost_of_delay]

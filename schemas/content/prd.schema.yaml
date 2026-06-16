@@ -1,0 +1,32 @@
+schema: prd-v1
+artifact_type: prd
+description: "Product Requirements Document — the single source of truth for what to build"
+phase: 2
+
+required_sections:
+  problem_statement:
+    description: "What problem does this product solve? Who has this problem?"
+    min_chars: 200
+  personas:
+    description: "Who are the target users? At least 2 personas with goals and pain points"
+    min_items: 2
+    item_format: "## {Persona Name}\n- **Role**: ...\n- **Goals**: ...\n- **Pain Points**: ..."
+  functional_requirements:
+    description: "What MUST the system do? FR-{NNN} format"
+    min_items: 5
+    item_format: "- **FR-{NNN}**: System MUST {capability}"
+  non_functional_requirements:
+    description: "Performance, security, scalability constraints"
+    min_items: 3
+  success_criteria:
+    description: "Measurable outcomes that define success"
+    min_items: 3
+    item_format: "- **SC-{NNN}**: {measurable metric}"
+
+optional_sections:
+  - technical_constraints
+  - competitors
+  - glossary
+  - assumptions
+  - out_of_scope
+  - open_questions

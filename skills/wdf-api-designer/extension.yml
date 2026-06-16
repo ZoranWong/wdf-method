@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-api-designer
+  name: "WDF API Designer"
+  version: "3.7.0"
+  description: "API and data model designer. Maps to Phase 3.8: generates OpenAPI 3.0 spec and database schema from story contracts."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-api-designer
+      file: SKILL.md
+      description: "API design: OpenAPI spec, database schema, field-level contracts"
+
+hooks:
+  before_api_design:
+    command: "contract validation"
+    optional: false
+    description: "Validate story contracts before API design"
+  after_api_design:
+    command: "contract freeze"
+    optional: false
+    description: "Lock API spec and DB schema after design"

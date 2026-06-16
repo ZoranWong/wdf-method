@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-readiness-auditor
+  name: "WDF Readiness Auditor"
+  version: "3.7.0"
+  description: "Technical auditor for Phase 3.9 readiness check: pre-implementation validation, architecture verification, contract completeness."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-readiness-auditor
+      file: SKILL.md
+      description: "Readiness audit: pre-implementation checks, architecture validation, contract review"
+
+hooks:
+  before_readiness_check:
+    command: "all artifacts present"
+    optional: false
+    description: "Verify all Phase 3 artifacts exist"
+  after_readiness_check:
+    command: "implementation gate"
+    optional: false
+    description: "Gate check before Phase 4 implementation"

@@ -1,0 +1,34 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-orchestrator
+  name: "WDF Orchestrator"
+  version: "3.7.0"
+  description: "Thin state machine that manages the full web development lifecycle through 4 phases with dual-layer FSM, Gate Cards, acceptance gates, and parallel BE/FE execution."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+  tools:
+    - name: git
+      required: true
+    - name: node
+      required: true
+
+provides:
+  skills:
+    - name: wdf-orchestrator
+      file: SKILL.md
+      description: "Primary workflow orchestrator entry point"
+  commands: []
+
+hooks:
+  before_wdf_start:
+    command: "validate gate card"
+    optional: false
+    description: "Evaluate phase gate card before entering any phase"
+  after_wdf_start:
+    command: "update sprint status"
+    optional: false
+    description: "Write phase state transition to status files"

@@ -1,0 +1,27 @@
+schema: dev-log-v1
+artifact_type: dev_log
+description: "Development log tracking per-story implementation progress"
+phase: 4
+
+required_sections:
+  story_reference:
+    description: "Link to the story file this log tracks"
+    pattern: "^stories/.+\\.md$"
+  implementation_summary:
+    description: "What was built, key decisions made"
+    min_chars: 200
+  files_changed:
+    description: "List of files created/modified"
+    min_items: 1
+    item_format: "- `{filepath}` — {change description}"
+  test_results:
+    description: "Test run output — all tests pass/fail counts"
+    min_chars: 100
+  acceptance_status:
+    description: "Result of acceptance_check commands"
+    min_items: 1
+
+optional_sections:
+  - blockers_encountered
+  - deviations_from_story
+  - technical_debt_introduced

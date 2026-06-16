@@ -3,7 +3,7 @@ import { SprintStatusValidator } from './state-validator.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { existsSync } from 'fs';
 import { resolve, join } from 'path';
-import { recoverStatus } from './recovery.js';
+import { loadConfig, getSprintTrackingPath, getStatusDir, getSignalDir } from './config.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -44,7 +44,8 @@ async function main() {
       break;
 
     case 'validate-state': {
-      const trackingPath = resolve(projectRoot, '_wdf_output/sprint-status.yaml');
+      const cfg = loadConfig(projectRoot, { silent: true }).config;
+      const trackingPath = getSprintTrackingPath(cfg, projectRoot);
       if (!existsSync(trackingPath)) {
         console.log('No sprint-status.yaml found — nothing to validate.');
         process.exit(0);
@@ -58,6 +59,7 @@ async function main() {
 
     case 'health': {
       const isFull = args.includes('--full');
+      const cfg = loadConfig(projectRoot, { silent: true }).config;
       if (isFull) {
         console.log('╔══════════════════════════════════════════╗');
         console.log('║   wdf-method V3.6 — Full Health Check    ║');
@@ -74,10 +76,10 @@ async function main() {
         // Disk
         try { const df = require('child_process').execSync('df -h .', { encoding: 'utf8', cwd: projectRoot }).trim().split('\n')[1]; results.push(['Disk', true, df.split(/\s+/)[3] + ' available']); } catch { results.push(['Disk', false, 'Cannot check']); }
         // Signals
-        const signalDir = join(projectRoot, '_wdf_output', 'signals');
+        const signalDir = getSignalDir(cfg, projectRoot);
         results.push(['Signals dir', existsSync(signalDir), existsSync(signalDir) ? signalDir : 'Not found']);
         // Status files
-        const statusDir = join(projectRoot, '_wdf_output', 'status');
+        const statusDir = getStatusDir(cfg, projectRoot);
         if (existsSync(statusDir)) {
           const files = require('fs').readdirSync(statusDir).filter((f: string) => f.endsWith('.yaml'));
           results.push(['Status files', files.length > 0, `${files.length} files: ${files.join(', ')}`]);
@@ -104,14 +106,10 @@ async function main() {
       process.exit(result.overall === 'blocked' ? 1 : 0);
     }
 
-    case 'recover':
-      console.log(recoverStatus(projectRoot).dashboard);
-      break;
-
     case 'help':
     default:
       console.log(`
-wdf-method orchestrator v3.6.0
+web-dev-flow orchestrator v3.6.0
 
 Usage:
   orchestrator status [project-root]     Show current status dashboard
@@ -120,7 +118,6 @@ Usage:
   orchestrator run-track <backend|frontend> [project-root]  Run a specific track
   orchestrator merge-queue [project-root]   Show merge queue status
   orchestrator validate-state [project-root] Validate sprint-status.yaml consistency
-  orchestrator recover [project-root]    Non-destructive recovery of corrupted state
   orchestrator health [project-root]     Check BMAD skill availability
   orchestrator help                      Show this help
       `);

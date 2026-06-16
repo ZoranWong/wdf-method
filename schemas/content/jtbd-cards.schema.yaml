@@ -1,0 +1,8 @@
+schema: jtbd-cards-v1
+artifact_type: jtbd_cards
+description: "Jobs-to-be-done cards with situation, motivation, outcome"
+phase: 2
+required_sections:
+  job_cards: { description: "Per-persona JTBD cards", min_items: 2,
+    item_format: "| Persona | Situation | Motivation | Expected Outcome | Functional | Emotional | Social |" }
+optional_sections: [job_hierarchy, competing_solutions, success_metrics]

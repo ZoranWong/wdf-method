@@ -1,0 +1,8 @@
+schema: component-design-v1
+artifact_type: component_design
+description: "C4 Level 3 — components within containers"
+phase: 3
+required_sections:
+  components: { description: "Each component with interfaces", min_items: 3 }
+  component_interactions: { description: "How components communicate", min_chars: 100 }
+optional_sections: [data_models, state_machines, api_contracts]

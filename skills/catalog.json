@@ -1,0 +1,146 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-06-13T00:00:00Z",
+  "skills": {
+    "wdf-orchestrator": {
+      "name": "WDF Orchestrator",
+      "id": "wdf-orchestrator",
+      "version": "3.7.0",
+      "description": "Thin state machine — manages FSM transitions, evaluates Gate Cards, dispatches sub-agents",
+      "phase": "all",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_wdf_start", "after_wdf_start"]
+    },
+    "wdf-analyst": {
+      "name": "WDF Analyst",
+      "id": "wdf-analyst",
+      "version": "3.7.0",
+      "description": "Product analyst — brainstorming, domain research, product brief (Phase 1.1-1.3)",
+      "phase": "1",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_wdf_phase_1", "after_wdf_phase_1"]
+    },
+    "wdf-architect": {
+      "name": "WDF Architect",
+      "id": "wdf-architect",
+      "version": "3.7.0",
+      "description": "System architect — C4 design L1-L3, ADRs, quality attributes (Phase 3.1-3.5)",
+      "phase": "3",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_wdf_phase_3", "after_wdf_phase_3"]
+    },
+    "wdf-product-manager": {
+      "name": "WDF Product Manager",
+      "id": "wdf-product-manager",
+      "version": "3.7.0",
+      "description": "Product manager — PRD, impact mapping, story mapping, prioritization (Phase 2)",
+      "phase": "2",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_wdf_phase_2", "after_wdf_phase_2"]
+    },
+    "wdf-ux-designer": {
+      "name": "WDF UX Designer",
+      "id": "wdf-ux-designer",
+      "version": "3.7.0",
+      "description": "UX designer — user flows, wireframes, design tokens, interaction specs (Phase 2.6-2.10)",
+      "phase": "2",
+      "track": "frontend",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_wdf_phase_2_ux", "after_wdf_phase_2_ux"]
+    },
+    "wdf-story-planner": {
+      "name": "WDF Story Planner",
+      "id": "wdf-story-planner",
+      "version": "3.7.0",
+      "description": "Technical PM — epics hierarchy, story design, acceptance criteria, dev order freeze (Phase 3.6-3.7)",
+      "phase": "3",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_story_design", "after_story_design"]
+    },
+    "wdf-api-designer": {
+      "name": "WDF API Designer",
+      "id": "wdf-api-designer",
+      "version": "3.7.0",
+      "description": "API designer — OpenAPI spec, database schema, field-level contracts (Phase 3.8)",
+      "phase": "3",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_api_design", "after_api_design"]
+    },
+    "wdf-backend-developer": {
+      "name": "WDF Backend Developer",
+      "id": "wdf-backend-developer",
+      "version": "3.7.0",
+      "description": "Backend developer — scaffolding, database, endpoints, tests, code acceptance (Phase 4 BE track)",
+      "phase": "4",
+      "track": "backend",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_be_implementation", "after_be_implementation"]
+    },
+    "wdf-frontend-developer": {
+      "name": "WDF Frontend Developer",
+      "id": "wdf-frontend-developer",
+      "version": "3.7.0",
+      "description": "Frontend developer — pages, components, API client, a11y, UI acceptance (Phase 4 FE track)",
+      "phase": "4",
+      "track": "frontend",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_fe_implementation", "after_fe_implementation"]
+    },
+    "wdf-code-reviewer": {
+      "name": "WDF Code Reviewer",
+      "id": "wdf-code-reviewer",
+      "version": "3.7.0",
+      "description": "Code reviewer — security audit, correctness, readability, test quality (Phase 4.6, 4.12)",
+      "phase": "4",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["after_be_testing", "after_fe_a11y"]
+    },
+    "wdf-qa-verifier": {
+      "name": "WDF QA Verifier",
+      "id": "wdf-qa-verifier",
+      "version": "3.7.0",
+      "description": "QA engineer — feature, UI, E2E, contract, a11y, perf, visual, cross-browser verification",
+      "phase": "4",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 3 },
+      "hooks": ["after_feature_acceptance", "after_ui_acceptance", "after_merge"]
+    },
+    "wdf-sprint-planner": {
+      "name": "WDF Sprint Planner",
+      "id": "wdf-sprint-planner",
+      "version": "3.7.0",
+      "description": "Scrum master — capacity assessment, story assignment, scope freeze (Phase 4.1)",
+      "phase": "4",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_sprint_planning", "after_sprint_planning"]
+    },
+    "wdf-readiness-auditor": {
+      "name": "WDF Readiness Auditor",
+      "id": "wdf-readiness-auditor",
+      "version": "3.7.0",
+      "description": "Technical auditor — pre-implementation checks, architecture validation (Phase 3.9)",
+      "phase": "3",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 2 },
+      "hooks": ["before_readiness_check", "after_readiness_check"]
+    },
+    "wdf-retrospective-host": {
+      "name": "WDF Retrospective Host",
+      "id": "wdf-retrospective-host",
+      "version": "3.7.0",
+      "description": "Agile coach — lessons learned, action items, metrics, improvement plan (Phase 4.14)",
+      "phase": "4",
+      "track": "shared",
+      "provides": { "skills": 1, "hooks": 1 },
+      "hooks": ["after_wdf_complete"]
+    }
+  }
+}

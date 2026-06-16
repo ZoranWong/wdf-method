@@ -1,0 +1,17 @@
+{
+  "key": "claude",
+  "name": "Claude Code",
+  "folder": ".claude",
+  "commands_dir": "commands",
+  "skills_dir": "skills",
+  "format": "markdown",
+  "args_placeholder": "$ARGUMENTS",
+  "extension": ".md",
+  "context_file": "CLAUDE.md",
+  "invoke_separator": "-",
+  "command_prefix": "/",
+  "requires_cli": true,
+  "install_url": "https://docs.anthropic.com/en/docs/claude-code/overview",
+  "detect_files": [".claude/settings.json", ".claude/commands"],
+  "detect_binaries": ["claude"]
+}

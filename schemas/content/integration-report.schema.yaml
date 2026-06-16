@@ -1,0 +1,29 @@
+schema: integration-report-v1
+artifact_type: integration_report
+description: "Integration verification report covering merge queue, contract testing, and E2E"
+phase: 4
+
+required_sections:
+  merge_queue_summary:
+    description: "Stories merged, order, any conflicts encountered"
+    min_chars: 100
+  contract_verification:
+    description: "API contract compliance check results"
+    min_chars: 100
+  integration_test_results:
+    description: "End-to-end test suite results"
+    min_items: 1
+  security_audit:
+    description: "OWASP top 10 or dependency audit results"
+    min_chars: 100
+  feature_acceptance:
+    description: "Feature acceptance gate status — all stories code accepted?"
+    pattern: "^(PASSED|FAILED)"
+  e2e_browser_acceptance:
+    description: "Cross-browser, responsive, and network condition results"
+    min_chars: 100
+
+optional_sections:
+  - performance_benchmarks
+  - known_issues
+  - rollback_instructions

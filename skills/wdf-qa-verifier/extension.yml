@@ -1,0 +1,39 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-qa-verifier
+  name: "WDF QA Verifier"
+  version: "3.7.0"
+  description: "QA engineer for all verification types: feature, UI, E2E browser, contract, a11y, performance, visual regression, cross-browser."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+  tools:
+    - name: playwright
+      required: false
+    - name: lighthouse
+      required: false
+    - name: axe
+      required: false
+
+provides:
+  skills:
+    - name: wdf-qa-verifier
+      file: SKILL.md
+      description: "QA verification: feature, UI, E2E, contract, a11y, perf, visual, cross-browser"
+
+hooks:
+  after_feature_acceptance:
+    command: "e2e browser tests"
+    optional: true
+    description: "Run E2E browser tests after feature acceptance"
+  after_ui_acceptance:
+    command: "visual regression"
+    optional: true
+    description: "Run visual regression tests after UI acceptance"
+  after_merge:
+    command: "integration verification"
+    optional: false
+    description: "Verify integration after merge queue processing"

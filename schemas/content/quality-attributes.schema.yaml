@@ -1,0 +1,8 @@
+schema: quality-attributes-v1
+artifact_type: quality_attributes
+description: "Quality attribute scenarios with utility tree"
+phase: 3
+required_sections:
+  quality_scenarios: { description: "QA scenarios with stimulus/response/measure", min_items: 3 }
+  utility_tree: { description: "Prioritized QA scenarios", min_chars: 150 }
+optional_sections: [trade_off_analysis, sensitivity_points, risk_themes]

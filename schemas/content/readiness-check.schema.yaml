@@ -1,0 +1,10 @@
+schema: readiness-check-v1
+artifact_type: readiness_check
+description: "Pre-implementation readiness validation"
+phase: 3
+required_sections:
+  artifact_completeness: { description: "All Phase 1-3 artifacts", min_items: 5 }
+  story_contract_check: { description: "Story contract fields", min_chars: 150 }
+  gate_results: { description: "Phase 3 gate results", min_items: 3 }
+  verdict: { description: "READY or NOT_READY", pattern: "^(READY|NOT_READY)" }
+optional_sections: [blockers, risk_register]

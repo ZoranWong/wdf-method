@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-code-reviewer
+  name: "WDF Code Reviewer"
+  version: "3.7.0"
+  description: "Code reviewer for Phase 4.6 and 4.12: adversarial code review, security audit, quality gate enforcement."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-code-reviewer
+      file: SKILL.md
+      description: "Code review: security, correctness, readability, test quality"
+
+hooks:
+  after_be_testing:
+    command: "code acceptance review"
+    optional: false
+    description: "Review backend code after testing suite"
+  after_fe_a11y:
+    command: "ui acceptance review"
+    optional: false
+    description: "Review frontend code after a11y audit"

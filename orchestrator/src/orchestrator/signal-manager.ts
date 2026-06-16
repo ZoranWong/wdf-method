@@ -1,10 +1,15 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 
-// V3.6: Signals live under the project's _wdf_output/signals/ directory.
-// Worktrees (main + story/*) share the same project root via the orchestrator.
-// Default falls back to cwd-relative until SignalManager.setProjectRoot() is called.
-let SIGNAL_DIR = join(process.cwd(), '_wdf_output', 'signals');
+// V3.6: Signals live in user home, outside any git worktree.
+// All worktrees (main + story/*) share the same home directory.
+// Survives reboots, protected by user filesystem permissions.
+//
+// The default location is ~/.wdf-method/signals/ but it is overridable
+// via [agent_communication].signal_dir in customize.toml. The orchestrator
+// configures the path on startup by calling SignalManager.setSignalDir().
+let SIGNAL_DIR = join(homedir(), '.wdf-method', 'signals');
 
 interface PauseCommand {
   type: 'pause' | 'abort' | 'none';
@@ -26,16 +31,15 @@ interface AgentStatus {
  * All agents (main orchestrator + story agents) share this directory.
  */
 export class SignalManager {
-  // Signals at _wdf_output/signals/ — relative to project root, scoped per-project
-  // Use SignalManager.setProjectRoot(projectRoot) once at orchestrator startup
-  // to point at the correct project's signal directory.
+  // Signals at ~/.wdf-method/signals/ — outside all git worktrees, persists across reboots
+  // No need for init() — path is constant and always accessible from any worktree
 
-  /** Configure the signal directory based on the project root. */
-  static setProjectRoot(projectRoot: string): void {
-    SIGNAL_DIR = join(projectRoot, '_wdf_output', 'signals');
+  /** Override the signal directory (called by orchestrator from customize.toml). */
+  static setSignalDir(dir: string): void {
+    SIGNAL_DIR = dir;
   }
 
-  /** Get the current signal directory (used for diagnostics) */
+  /** Read the current signal directory (for diagnostics). */
   static getSignalDir(): string {
     return SIGNAL_DIR;
   }

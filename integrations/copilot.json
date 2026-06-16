@@ -1,0 +1,17 @@
+{
+  "key": "copilot",
+  "name": "GitHub Copilot",
+  "folder": ".github",
+  "commands_dir": "prompts",
+  "skills_dir": null,
+  "format": "markdown",
+  "args_placeholder": "$ARGUMENTS",
+  "extension": ".prompt.md",
+  "context_file": ".github/copilot-instructions.md",
+  "invoke_separator": ".",
+  "command_prefix": "/",
+  "requires_cli": false,
+  "install_url": "https://github.com/features/copilot",
+  "detect_files": [".github/copilot-instructions.md"],
+  "detect_binaries": []
+}

@@ -1,0 +1,10 @@
+schema: architecture-style-v1
+artifact_type: architecture_style
+description: "Architecture style selection with weighted decision matrix"
+phase: 3
+required_sections:
+  constraints_analysis: { description: "What constraints drive the choice?", min_chars: 100 }
+  style_options: { description: "Styles evaluated", min_items: 2 }
+  selected_style: { description: "ADR-001: Selected style", min_chars: 100 }
+  trade_offs: { description: "Gains and losses", min_chars: 80 }
+optional_sections: [anti_patterns, reference_architectures]

@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-story-planner
+  name: "WDF Story Planner"
+  version: "3.7.0"
+  description: "Technical PM for epics and story design. Maps to Phase 3.6-3.7: Epics & Feature Plan → Story Design + Development Order Freeze."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-story-planner
+      file: SKILL.md
+      description: "Story planning: epics hierarchy, story design, acceptance criteria, dev order freeze"
+
+hooks:
+  before_story_design:
+    command: "epics validation"
+    optional: false
+    description: "Validate epics before story design"
+  after_story_design:
+    command: "contract freeze"
+    optional: false
+    description: "Run story contract freeze gate after story design"

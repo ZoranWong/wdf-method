@@ -1,0 +1,10 @@
+schema: design-tokens-v1
+artifact_type: design_tokens
+description: "Design tokens — colors, typography, spacing, shadows, breakpoints"
+phase: 2
+required_sections:
+  color_palette: { description: "Primary, neutral, semantic colors", min_items: 5 }
+  typography: { description: "Font family, size scale, line heights", min_items: 5 }
+  spacing: { description: "Spacing scale tokens", min_items: 4 }
+  breakpoints: { description: "Responsive breakpoints", min_items: 3 }
+optional_sections: [shadows, border_radius, icons, animation_tokens, dark_mode_variants]

@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-backend-developer
+  name: "WDF Backend Developer"
+  version: "3.7.0"
+  description: "Backend developer for Phase 4 BE track: scaffolding, database, API endpoints, testing suite, code acceptance."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-backend-developer
+      file: SKILL.md
+      description: "Backend implementation: endpoints, database, tests, code acceptance"
+
+hooks:
+  before_be_implementation:
+    command: "be scaffold check"
+    optional: false
+    description: "Verify BE scaffold is ready before endpoint implementation"
+  after_be_implementation:
+    command: "code acceptance"
+    optional: false
+    description: "Run code acceptance after all BE stories complete"

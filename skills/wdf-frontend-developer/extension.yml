@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-frontend-developer
+  name: "WDF Frontend Developer"
+  version: "3.7.0"
+  description: "Frontend developer for Phase 4 FE track: scaffolding, design system, API client, pages, a11y audit, UI acceptance."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-frontend-developer
+      file: SKILL.md
+      description: "Frontend implementation: pages, components, API client, tests, UI acceptance"
+
+hooks:
+  before_fe_implementation:
+    command: "fe scaffold check"
+    optional: false
+    description: "Verify FE scaffold and design system ready"
+  after_fe_implementation:
+    command: "ui acceptance"
+    optional: false
+    description: "Run UI acceptance after all FE pages complete"

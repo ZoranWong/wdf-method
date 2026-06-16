@@ -1,0 +1,10 @@
+schema: domain-research-v1
+artifact_type: domain_research
+description: "Domain research — existing solutions, patterns, knowledge gaps"
+phase: 1
+required_sections:
+  sources_analyzed: { description: "What was researched?", min_items: 3 }
+  domain_patterns: { description: "Recurring patterns in this domain", min_items: 2 }
+  existing_solutions: { description: "What exists? What do they miss?", min_items: 2 }
+  knowledge_gaps: { description: "What we still don't know", min_items: 1 }
+optional_sections: [competitive_analysis, technology_landscape, regulatory_landscape]

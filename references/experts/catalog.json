@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-06-13T00:00:00Z",
+  "domains": {
+    "healthtech": {
+      "file": "healthtech.json",
+      "name": "Healthcare Compliance Expert",
+      "keywords": ["patient","health","medical","clinic","hospital","pharma","HIPAA","PHI","FDA","clinical","diagnostic","prescription","telehealth","EHR","EMR","FHIR","doctor","nurse","therapy","wellness","vaccine","insurance","medicare"]
+    },
+    "fintech": {
+      "file": "fintech.json",
+      "name": "Fintech Compliance Expert",
+      "keywords": ["payment","bank","finance","trading","invest","loan","credit","debit","crypto","blockchain","KYC","AML","PCI","fintech","wallet","transaction","ledger","accounting","tax","invoice","subscription","remittance"]
+    },
+    "finance": {
+      "file": "finance.json",
+      "name": "Financial Domain Expert",
+      "keywords": ["accounting","ledger","GL","balance sheet","income statement","cash flow","treasury","FX","foreign exchange","audit","SOX","IFRS","GAAP","portfolio","asset","liability","equity","valuation","DCF","fund","broker","custodian","settlement","clearing","trade","trading desk","risk management","hedge","derivative","corporate finance","M&A","capital","dividend","IPO"]
+    },
+    "financial-planning": {
+      "file": "financial-planning.json",
+      "name": "Financial Planning Expert",
+      "keywords": ["retirement","401k","IRA","Roth","pension","Social Security","wealth","net worth","budget","saving","debt","mortgage","student loan","credit score","FICO","college","529","estate","will","trust","life insurance","disability","LTC","annuity","CFP","fiduciary","planning","goals","FIRE","financial independence","withdrawal","distribution","RMD","tax planning"]
+    },
+    "web3": {
+      "file": "web3.json",
+      "name": "Web3 & Crypto Ecosystem Expert",
+      "keywords": ["web3","crypto","blockchain","DeFi","NFT","DAO","token","tokenomics","smart contract","solidity","EVM","Ethereum","Solana","L2","layer 2","rollup","zk","zero knowledge","bridge","cross-chain","stablecoin","staking","validator","consensus","PoS","PoW","governance","multisig","wallet","metamask","DEX","AMM","lending","yield","liquidity","MEV","airdrop","ICO","IDO","TGE","vesting","whitelist","mint","metaverse","GameFi","oracle","Chainlink","IPFS","ENS","did","decentralized","permissionless","trustless","cryptography","ECDSA","MPC","TSS","threshold","signature","BIP","SLIP","HD wallet","seed phrase","mnemonic","hardware wallet","cold storage","hot wallet","multi-party","TSS","social recovery","account abstraction","ERC-4337","gas","Gwei","Satoshi","Bitcoin","BTC","ETH","USDC","USDT","DAI","wrapped","WBTC","WETH","stETH","rETH","LSD","LST","liquid staking","restaking","EigenLayer","AVS","slashing","cryptoeconomic","nothing at stake","long range","Byzantine","PBFT","Tendermint","Cosmos","IBC","Polkadot","substrate","parachain","Near","Aptos","Sui","Move","Cairo","StarkNet","StarkWare","zkSync","Scroll","Polygon","Arbitrum","Optimism","Base","Mantle","Linea","Blast","Celestia","Avail","EigenDA","data availability","modular","monolithic","rollapp","OP Stack","Arbitrum Orbit","Polygon CDK","Avalanche","subnet","appchain","Cosmos SDK","sovereign","shared security","interchain","cross-chain","CCIP","LayerZero","Wormhole","Axelar","Hyperlane","Across","Connext","Hop","Synapse","Socket","LiFi","Bungee","Squid","multichain","omnichain"]
+    },
+    "edtech": {
+      "file": "edtech.json",
+      "name": "Education Technology Expert",
+      "keywords": ["student","teacher","course","classroom","learning","education","school","university","curriculum","assessment","quiz","grade","enroll","academic","training","LMS","MOOC","tutor","homework","certification","credential"]
+    },
+    "ecommerce": {
+      "file": "ecommerce.json",
+      "name": "E-Commerce Expert",
+      "keywords": ["shop","store","cart","checkout","product","inventory","order","shipping","delivery","returns","catalog","SKU","coupon","discount","loyalty","marketplace","dropship","wholesale","retail","consumer","brand"]
+    },
+    "saas": {
+      "file": "saas.json",
+      "name": "SaaS Platform Expert",
+      "keywords": ["SaaS","subscription","tenant","onboarding","freemium","trial","workspace","team","collaboration","multi-tenant","webhook","integration","API key","rate limit","quota","usage-based","cloud","platform","dashboard","admin","billing"]
+    },
+    "gaming": {
+      "file": "gaming.json",
+      "name": "Gaming Industry Expert",
+      "keywords": ["game","gamer","esport","leaderboard","achievement","quest","avatar","multiplayer","matchmaking","loot","in-game","microtransaction","battle pass","streaming","mod","sandbox","MMO","RPG","FPS","mobile game"]
+    },
+    "iot": {
+      "file": "iot.json",
+      "name": "IoT & Embedded Systems Expert",
+      "keywords": ["IoT","sensor","device","embedded","firmware","MQTT","edge","gateway","telemetry","actuator","protocol","low-power","mesh","OTA","firmware update","industrial","smart home","wearable","connected","microcontroller"]
+    },
+    "legaltech": {
+      "file": "legaltech.json",
+      "name": "Legal Technology Expert",
+      "keywords": ["legal","law","contract","compliance","regulation","litigation","attorney","court","filing","patent","trademark","copyright","NDA","privacy","GDPR","CCPA","terms","policy","dispute","arbitration"]
+    },
+    "govtech": {
+      "file": "govtech.json",
+      "name": "Government Technology Expert",
+      "keywords": ["government","federal","state","municipal","public sector","citizen","FOIA","procurement","FedRAMP","NIST","FISMA","accessibility","section 508","open data","digital service","civic tech","voting","permitting","licensing","benefits"]
+    },
+    "ai-ml": {
+      "file": "ai-ml.json",
+      "name": "AI/ML Systems Expert",
+      "keywords": ["AI","ML","machine learning","model","training","inference","LLM","neural network","NLP","computer vision","embedding","vector","RAG","fine-tuning","prompt","token","hallucination","bias","explainability","GPU","data pipeline","annotation"]
+    }
+  }
+}

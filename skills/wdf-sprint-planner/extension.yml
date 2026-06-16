@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-sprint-planner
+  name: "WDF Sprint Planner"
+  version: "3.7.0"
+  description: "Scrum master for Phase 4.1 sprint planning: capacity assessment, story assignment, parallel groups, scope freeze."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-sprint-planner
+      file: SKILL.md
+      description: "Sprint planning: capacity, assignment, scope freeze, parallel groups"
+
+hooks:
+  before_sprint_planning:
+    command: "readiness check"
+    optional: false
+    description: "Verify Phase 3 is LOCKED before sprint planning"
+  after_sprint_planning:
+    command: "scope freeze"
+    optional: false
+    description: "Create scope freeze git tag after sprint plan is locked"

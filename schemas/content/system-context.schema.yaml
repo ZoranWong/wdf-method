@@ -1,0 +1,10 @@
+schema: system-context-v1
+artifact_type: system_context
+description: "C4 Level 1 — system boundary, actors, external integrations"
+phase: 3
+required_sections:
+  system_boundary: { description: "What is inside vs outside?", min_chars: 150 }
+  actors: { description: "All system actors", min_items: 3 }
+  external_integrations: { description: "External systems and protocols", min_items: 1 }
+  data_flows: { description: "What data flows?", min_chars: 100 }
+optional_sections: [context_diagram, assumptions, constraints]

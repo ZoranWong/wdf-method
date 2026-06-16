@@ -1,0 +1,27 @@
+schema: retrospective-v1
+artifact_type: retrospective
+description: "Project retrospective — lessons learned and improvement actions"
+phase: 4
+
+required_sections:
+  summary:
+    description: "High-level summary of the sprint/project"
+    min_chars: 200
+  what_went_well:
+    description: "Practices, decisions, and outcomes that worked"
+    min_items: 3
+  what_could_improve:
+    description: "Areas where the process or output could be better"
+    min_items: 3
+  action_items:
+    description: "Concrete, assigned improvements for next sprint"
+    min_items: 2
+    item_format: "- [ ] **{Action}** — Owner: {name}, By: {date}"
+  metrics:
+    description: "Key numbers: stories completed, velocity, bugs found"
+    min_chars: 100
+
+optional_sections:
+  - team_feedback
+  - tooling_feedback
+  - celebration_highlights

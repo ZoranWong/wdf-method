@@ -1,0 +1,28 @@
+schema_version: "1.0"
+
+extension:
+  id: wdf-ux-designer
+  name: "WDF UX Designer"
+  version: "3.7.0"
+  description: "UX designer for user flows, wireframes, design system, and interaction design. Maps to Phase 2.6-2.10."
+  author: wdf-method-core
+  license: MIT
+
+requires:
+  wdf_version: ">=3.7.0"
+
+provides:
+  skills:
+    - name: wdf-ux-designer
+      file: SKILL.md
+      description: "UX design: user flows, wireframes, design tokens, interaction specs"
+
+hooks:
+  before_wdf_phase_2_ux:
+    command: "design pre-check"
+    optional: true
+    description: "Check design requirements before UX design phase"
+  after_wdf_phase_2_ux:
+    command: "design acceptance"
+    optional: false
+    description: "Run design acceptance review after UX deliverables"
