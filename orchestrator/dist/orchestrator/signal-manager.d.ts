@@ -16,6 +16,10 @@ interface AgentStatus {
  * All agents (main orchestrator + story agents) share this directory.
  */
 export declare class SignalManager {
+    /** Configure the signal directory based on the project root. */
+    static setProjectRoot(projectRoot: string): void;
+    /** Get the current signal directory (used for diagnostics) */
+    static getSignalDir(): string;
     /** Write global pause signal */
     static pauseAll(reason?: string): void;
     /** Write global resume signal */

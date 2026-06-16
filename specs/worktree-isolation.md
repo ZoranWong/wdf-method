@@ -10,7 +10,7 @@
 /workspace/                                          # Main worktree
 ├── main 分支
 ├── sprint-status.yaml                               # Orchestrator writes only
-├── _bmad-output/web-dev-flow/
+├── _wdf_output/
 │   └── stories/
 │       ├── S-3.1-status.yaml                        # Per-story status (agent writes)
 │       └── S-3.2-status.yaml
@@ -19,7 +19,7 @@
 .claude/worktrees/story/S-3.1-be/                    # Story S-3.1 worktree
 ├── story/S-3.1-be 分支（从 main 创建）
 ├── 该 story 的代码变更（scope_write 范围内）
-└── _bmad-output/web-dev-flow/stories/S-3.1-status.yaml  ← agent 在此写入
+└── _wdf_output/stories/S-3.1-status.yaml  ← agent 在此写入
 
 .claude/worktrees/story/S-1.1-fe/                    # Story S-1.1 worktree (parallel)
 ├── story/S-1.1-fe 分支
@@ -70,7 +70,7 @@ git worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" main
 cd .claude/worktrees/story/{story_id}-{track}
 
 # Initialize per-story status
-cat > _bmad-output/web-dev-flow/stories/{story_id}-status.yaml <<EOF
+cat > _wdf_output/stories/{story_id}-status.yaml <<EOF
 story_id: "{story_id}"
 title: "{title}"
 track: "{track}"
@@ -97,7 +97,7 @@ Coverage: {percent}%
 Status: TESTED"
 
 # 4f-4h: Handoff + CODE ACCEPTANCE → Checkpoint Commit 3
-git add _bmad-output/
+git add _wdf_output/
 git commit -m "accept({story_id}): CODE_ACCEPTED — {story_title}
 
 Review: PASSED

@@ -8,7 +8,7 @@
 export declare function resolveWorkflowPath(projectRoot: string, value: string | undefined, fallback?: string): string;
 /**
  * Read workflow.status_dir from config and resolve to an absolute path.
- * Defaults to `<projectRoot>/_bmad-output/wdf-method/status` when not set.
+ * Defaults to `<projectRoot>/_wdf_output/status` when not set.
  */
 export declare function resolveStatusDir(projectRoot: string, config: Record<string, any>): string;
 //# sourceMappingURL=status-paths.d.ts.map

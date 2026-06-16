@@ -46,15 +46,15 @@
 ```
 
 **Pause check protocol (V3.6 — Signal-based):**
-在每个子步骤开始前，读取 `/tmp/web-dev-flow/signals/main-to-{agentId}.json`：
+在每个子步骤开始前，读取 `_wdf_output/signals/main-to-{agentId}.json`：
 - `{"type": "pause"}`: 完成当前子步骤，checkpoint commit，写 `{agentId}-to-main.json`，返回 `{ status: "PAUSED", agentId, last_completed_substep }`
 - `{"type": "abort"}`: 回滚未提交变更，返回 `{ status: "ABORTED", agentId }`
 - `{"type": "none"}` 或文件不存在: 正常继续
 - 子步骤 4g ~ 4j: 暂停检查挂起——直接运行到 CODE_ACCEPTED 后返回
 
 在每个子步骤完成后，写入心跳：
-- `echo "{ISO}" > /tmp/web-dev-flow/signals/agents/{agentId}/heartbeat.txt`
-- 更新 `/tmp/web-dev-flow/signals/{agentId}-to-main.json`（current_substep + heartbeat_at）
+- `echo "{ISO}" > _wdf_output/signals/agents/{agentId}/heartbeat.txt`
+- 更新 `_wdf_output/signals/{agentId}-to-main.json`（current_substep + heartbeat_at）
 - Checkpoint commit（如有代码变更）
 
 ### TDD Cycle

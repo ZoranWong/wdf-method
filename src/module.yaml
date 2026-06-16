@@ -26,13 +26,13 @@ user_skill_level:
       label: "Expert - Be direct and technical"
 
 output_folder:
-  prompt: "Where should web-dev-flow output artifacts be stored?"
-  default: "_bmad-output"
+  prompt: "Where should wdf-method output artifacts be stored?"
+  default: "_wdf_output"
   result: "{project-root}/{value}"
 
 output_dir:
-  prompt: "Where should web-dev-flow status and state files be stored?"
-  default: "{output_folder}/web-dev-flow"
+  prompt: "Where should wdf-method status and state files be stored?"
+  default: "{output_folder}"
   result: "{project-root}/{value}"
 
 dev_mode:

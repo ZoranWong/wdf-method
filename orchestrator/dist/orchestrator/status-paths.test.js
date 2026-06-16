@@ -39,11 +39,11 @@ describe('resolveStatusDir', () => {
     const projectRoot = '/tmp/sample-project';
     it('uses the default fallback when config is empty', () => {
         const out = resolveStatusDir(projectRoot, {});
-        expect(out).toBe(resolve(projectRoot, '_bmad-output/wdf-method/status'));
+        expect(out).toBe(resolve(projectRoot, '_wdf_output/status'));
     });
     it('uses the default fallback when workflow.status_dir is missing', () => {
         const out = resolveStatusDir(projectRoot, { workflow: {} });
-        expect(out).toBe(resolve(projectRoot, '_bmad-output/wdf-method/status'));
+        expect(out).toBe(resolve(projectRoot, '_wdf_output/status'));
     });
     it('honours a workflow.status_dir override', () => {
         const out = resolveStatusDir(projectRoot, {
@@ -59,7 +59,7 @@ describe('resolveStatusDir', () => {
     });
     it('ignores non-string workflow.status_dir values', () => {
         const out = resolveStatusDir(projectRoot, { workflow: { status_dir: 42 } });
-        expect(out).toBe(resolve(projectRoot, '_bmad-output/wdf-method/status'));
+        expect(out).toBe(resolve(projectRoot, '_wdf_output/status'));
     });
 });
 //# sourceMappingURL=status-paths.test.js.map

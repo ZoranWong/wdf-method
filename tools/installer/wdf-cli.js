@@ -30,7 +30,7 @@ for (let i=0; i<args.length; i++) {
 const PROJECT = f.project ? path.resolve(f.project) : null;
 const SKILLS_DIR = PROJECT ? path.join(PROJECT, '.claude', 'skills') : path.join(os.homedir(), '.claude', 'skills');
 const SETTINGS_DIR = PROJECT ? path.join(PROJECT, '.claude') : path.join(PKG_ROOT, '.claude');
-const config = { language: f.config.language||'zh', output_dir: f.config.output_dir||'_bmad-output', dev_mode: f.config.dev_mode||'separated', frontend: f.config.frontend||'react', backend: f.config.backend||'express' };
+const config = { language: f.config.language||'zh', output_dir: f.config.output_dir||'_wdf_output', dev_mode: f.config.dev_mode||'separated', frontend: f.config.frontend||'react', backend: f.config.backend||'express' };
 const OUTPUT_DIR = PROJECT ? path.join(PROJECT, config.output_dir) : path.join(PKG_ROOT, config.output_dir);
 const MODE = PROJECT ? `Project → ${PROJECT}` : 'Global → ~/.claude/skills/';
 
@@ -43,14 +43,14 @@ if (!cmd || cmd==='help') {
   console.log(`  ${C.YELLOW}npx wdf-method install --project . --yes \\${C.NC}`);
   console.log(`      ${C.YELLOW}--tools claude-code \\${C.NC}`);
   console.log(`      ${C.YELLOW}--set wdf.language=zh \\${C.NC}`);
-  console.log(`      ${C.YELLOW}--set wdf.output_dir=_bmad-output \\${C.NC}`);
+  console.log(`      ${C.YELLOW}--set wdf.output_dir=_wdf_output \\${C.NC}`);
   console.log(`      ${C.YELLOW}--set wdf.frontend=react${C.NC}`);
   console.log(`  ${C.YELLOW}npx wdf-method status${C.NC}                        Check installation`);
   console.log(`  ${C.YELLOW}npx wdf-method --project . status${C.NC}            Project status`);
   console.log(`  ${C.YELLOW}npx wdf-method uninstall${C.NC}                     Remove skill\n`);
   console.log(`Config (--set wdf.<key>=<value>):`);
   console.log(`  ${C.GRAY}language${C.NC}       zh|en — Agent language`);
-  console.log(`  ${C.GRAY}output_dir${C.NC}    Output path (default: _bmad-output)`);
+  console.log(`  ${C.GRAY}output_dir${C.NC}    Output path (default: _wdf_output)`);
   console.log(`  ${C.GRAY}dev_mode${C.NC}      separated|full_stack`);
   console.log(`  ${C.GRAY}frontend${C.NC}     react|vue|svelte|next`);
   console.log(`  ${C.GRAY}backend${C.NC}      express|nest|fastify|none`);
@@ -61,16 +61,16 @@ if (!cmd || cmd==='help') {
 // ── Status ──
 if (cmd === 'status') {
   console.log(`\n${C.BOLD}wdf-method V3.6 — Status${C.NC}\n`);
-  const target = path.join(SKILLS_DIR, 'web-dev-flow');
+  const target = path.join(SKILLS_DIR, 'wdf-method');
   const ok = fs.existsSync(target);
   console.log(`  Install:    ${ok ? `${C.GREEN}✓${C.NC} ${target}` : `${C.RED}✗${C.NC} not installed`}`);
   if (ok) console.log(`  Agents:     ${fs.readdirSync(path.join(target,'skills')).filter(d=>fs.existsSync(path.join(target,'skills',d,'SKILL.md'))).length} agents`);
-  console.log(`  Signals:    ${fs.existsSync('/tmp/web-dev-flow/signals') ? `${C.GREEN}✓${C.NC} ready` : `${C.RED}✗${C.NC} missing`}`);
+  console.log(`  Signals:    ${fs.existsSync(path.join(OUTPUT_DIR,'signals')) ? `${C.GREEN}✓${C.NC} ready` : `${C.RED}✗${C.NC} missing`}`);
   console.log(`  Permissions:${fs.existsSync(path.join(SETTINGS_DIR,'settings.json')) ? `${C.GREEN}✓${C.NC} configured` : `${C.YELLOW}⚠${C.NC} not configured`}`);
-  const cfgFile = path.join(OUTPUT_DIR, 'web-dev-flow', 'project-config.json');
+  const cfgFile = path.join(OUTPUT_DIR, 'project-config.json');
   if (fs.existsSync(cfgFile)) {
     const c = JSON.parse(fs.readFileSync(cfgFile,'utf8'));
-    console.log(`  Config:     language=${c.language||'zh'} output_dir=${c.output_dir||'_bmad-output'} dev_mode=${c.dev_mode||'separated'} frontend=${c.frontend||'react'} backend=${c.backend||'express'}`);
+    console.log(`  Config:     language=${c.language||'zh'} output_dir=${c.output_dir||'_wdf_output'} dev_mode=${c.dev_mode||'separated'} frontend=${c.frontend||'react'} backend=${c.backend||'express'}`);
   }
   console.log('');
   process.exit(0);
@@ -81,7 +81,7 @@ if (cmd === 'uninstall') {
   console.log(`\n${C.RED}${C.BOLD}╔══════════════════════════════════════╗${C.NC}`);
   console.log(`${C.RED}${C.BOLD}║   wdf-method — Uninstall             ║${C.NC}`);
   console.log(`${C.RED}${C.BOLD}╚══════════════════════════════════════╝${C.NC}\n`);
-  const target = path.join(SKILLS_DIR, 'web-dev-flow');
+  const target = path.join(SKILLS_DIR, 'wdf-method');
   if (fs.existsSync(target)) { fs.unlinkSync(target); console.log(`  ${C.GREEN}✓${C.NC} Removed: ${target}\n`); }
   else { console.log(`  ${C.GRAY}Not installed${C.NC}\n`); }
   process.exit(0);
@@ -96,7 +96,7 @@ if (cmd === 'install') {
 
   // Step 1: Skills
   console.log(`${C.BOLD}Step 1: Skills${C.NC}\n`);
-  const target = path.join(SKILLS_DIR, 'web-dev-flow');
+  const target = path.join(SKILLS_DIR, 'wdf-method');
   if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true });
   if (fs.existsSync(target)) {
     console.log(`  ${C.GREEN}✓${C.NC} Already installed: ${target}`);
@@ -119,7 +119,7 @@ if (cmd === 'install') {
 
   // Step 3: Signals
   console.log(`${C.BOLD}Step 3: Agent Communication${C.NC}\n`);
-  const sig = '/tmp/web-dev-flow/signals';
+  const sig = path.join(OUTPUT_DIR, 'signals');
   if (!fs.existsSync(sig)) { fs.mkdirSync(path.join(sig,'agents'),{recursive:true}); console.log(`  ${C.GREEN}✓${C.NC} Created: ${sig}`); }
   else console.log(`  ${C.GREEN}✓${C.NC} Exists: ${sig}`);
   console.log('');
@@ -127,10 +127,10 @@ if (cmd === 'install') {
   // Step 4: Output dirs
   if (PROJECT) {
     console.log(`${C.BOLD}Step 4: Output + Config${C.NC}\n`);
-    ['_output/planning','_output/solutioning','_output/acceptance','status/merge-queue/items','status/stories'].forEach(d => fs.mkdirSync(path.join(OUTPUT_DIR,'web-dev-flow',d),{recursive:true}));
-    console.log(`  ${C.GREEN}✓${C.NC} ${OUTPUT_DIR}/web-dev-flow/`);
+    ['_output/planning','_output/solutioning','_output/acceptance','status/merge-queue/items','status/stories'].forEach(d => fs.mkdirSync(path.join(OUTPUT_DIR,d),{recursive:true}));
+    console.log(`  ${C.GREEN}✓${C.NC} ${OUTPUT_DIR}/`);
     const cfg = { workflow:{version:'3.6.0',dev_mode:config.dev_mode,default_frontend_framework:config.frontend,default_backend_framework:config.backend}, output_dir:config.output_dir, language:config.language, tools:f.tools };
-    const cfp = path.join(OUTPUT_DIR, 'web-dev-flow', 'project-config.json');
+    const cfp = path.join(OUTPUT_DIR, 'project-config.json');
     fs.mkdirSync(path.dirname(cfp),{recursive:true});
     fs.writeFileSync(cfp, JSON.stringify(cfg,null,2));
     console.log(`  ${C.GREEN}✓${C.NC} Config: lang=${config.language} out=${config.output_dir} dev=${config.dev_mode} fe=${config.frontend} be=${config.backend}\n`);

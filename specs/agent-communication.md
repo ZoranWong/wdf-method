@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0
 **Applies to:** Phase 4 (Implementation) — All story agents
-**Principle:** `/tmp/web-dev-flow/signals/` 不在任何 git 仓库内，所有 worktree 共享同一路径
+**Principle:** `_wdf_output/signals/` 不在任何 git 仓库内，所有 worktree 共享同一路径
 
 ---
 
@@ -10,7 +10,7 @@
 
 ```
 主 worktree (main 分支)               子 worktree (story/S-3.2-be 分支)
-_bmad-output/status/                  _bmad-output/status/
+_wdf_output/status/                  _wdf_output/status/
         ↓                                     ↓
    同一个逻辑路径                             同一个逻辑路径
    但实际上：git worktree 的文件系统是隔离的
@@ -22,7 +22,7 @@ _bmad-output/status/                  _bmad-output/status/
 ## 正确方案：独立于 git 的共享目录
 
 ```
-/tmp/web-dev-flow/signals/              ← 不在任何 git worktree 内
+_wdf_output/signals/              ← 不在任何 git worktree 内
 ├── global.json                         ← 全局信号
 ├── main-to-{agentId}.json              ← 主 agent → 子 agent 指令
 ├── {agentId}-to-main.json              ← 子 agent → 主 agent 状态
@@ -32,7 +32,7 @@ _bmad-output/status/                  _bmad-output/status/
         └── checkpoint.json             ← 最后完成的 checkpoint 信息
 ```
 
-所有 worktree（main、story/*）都能读写 `/tmp/web-dev-flow/signals/`。零同步延迟。
+所有 worktree（main、story/*）都能读写 `_wdf_output/signals/`。零同步延迟。
 
 ---
 
@@ -89,8 +89,8 @@ _bmad-output/status/                  _bmad-output/status/
 ```
 每个子步骤开始前 (BEFORE 4a→4b→4c→4d→4e→4f→4f2→4g→4h→4j):
 
-  1. 读 /tmp/web-dev-flow/signals/main-to-{agentId}.json
-  2. 读 /tmp/web-dev-flow/signals/global.json
+  1. 读 _wdf_output/signals/main-to-{agentId}.json
+  2. 读 _wdf_output/signals/global.json
   
   3. IF global.action == "abort_all" OR command.type == "abort":
        回滚当前未提交变更
@@ -160,7 +160,7 @@ _bmad-output/status/                  _bmad-output/status/
 
 ## 崩溃恢复
 
-如果主 agent 崩溃，`/tmp/web-dev-flow/signals/` 中保留了最后的状态：
+如果主 agent 崩溃，`_wdf_output/signals/` 中保留了最后的状态：
 
 ```
 恢复流程:
@@ -185,7 +185,7 @@ _bmad-output/status/                  _bmad-output/status/
 # customize.toml
 [agent_communication]
 enabled = true
-signal_dir = "/tmp/web-dev-flow/signals"
+signal_dir = "_wdf_output/signals"
 heartbeat_interval_seconds = 30          # 子 agent 心跳频率
 pause_timeout_seconds = 300              # 等待 agent 暂停的最大时间
 heartbeat_timeout_seconds = 120          # 判定 agent 宕机的心跳超时

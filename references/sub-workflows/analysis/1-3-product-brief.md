@@ -131,7 +131,7 @@ Invoke the BMAD product-brief agent.
 
 - Synthesize available research and brainstorming (if any) into a concise product brief.
 - Focus on strategic clarity: who, what problem, why us, how measured.
-- Output to `{product_brief_output}` (typically `_bmad-output/web-dev-flow/analysis/product-brief.md`).
+- Output to `{product_brief_output}` (typically `_wdf_output/analysis/product-brief.md`).
 - Frontmatter must include `artifact_type: "product_brief"`, `phase: 1`, `sub_phase: "1.3"`, `status: "draft"`.
 
 The Product Brief must cover these sections:

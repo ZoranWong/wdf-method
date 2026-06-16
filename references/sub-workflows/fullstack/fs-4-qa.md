@@ -251,7 +251,7 @@ e2e_browser_acceptance:
 
 ## Step 5: Generate QA Report
 
-Create `_bmad-output/web-dev-flow/_output/acceptance/qa-report.md`:
+Create `_wdf_output/_output/acceptance/qa-report.md`:
 
 ```markdown
 # Full-Stack QA Report

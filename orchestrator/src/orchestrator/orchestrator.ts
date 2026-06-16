@@ -94,6 +94,7 @@ export class PhaseOrchestrator {
   constructor(projectRoot: string, skillRoot?: string) {
     this.projectRoot = resolve(projectRoot);
     this.skillRoot = skillRoot ? resolve(skillRoot) : join(projectRoot);
+    SignalManager.setProjectRoot(this.projectRoot);
     this.config = {};
   }
 
@@ -117,7 +118,7 @@ export class PhaseOrchestrator {
     } else {
       this.state = await SprintStatusManager.load(trackingPath);
     }
-    // V3.6: Signals at ~/.wdf-method/signals/ — outside all worktrees, auto-created on first use
+    // V3.6: Signals at _wdf_output/signals/ — outside all worktrees, auto-created on first use
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);
@@ -639,14 +640,11 @@ export class PhaseOrchestrator {
   }
 
   private resolveConfigPath(key: string): string {
-    // Defaults match the documented `wdf-method` workflow layout. The legacy
-    // `web-dev-flow` paths were the original engine location and have been
-    // removed; customize.toml [workflow] keys remain the source of truth for
-    // any project-specific override.
+    // Defaults match the documented `wdf-method` workflow layout with _wdf_output root
     const defaults: Record<string, string> = {
-      sprint_tracking: join('{project-root}', '_bmad-output', 'wdf-method', 'sprint-status.yaml'),
-      stories_output: join('{project-root}', '_bmad-output', 'wdf-method', 'stories'),
-      output_dir: join('{project-root}', '_bmad-output', 'wdf-method'),
+      sprint_tracking: '_wdf_output/sprint-status.yaml',
+      stories_output: '_wdf_output/stories',
+      output_dir: '_wdf_output',
     };
 
     const cfg = this.config as Record<string, any>;
@@ -699,7 +697,7 @@ export class PhaseOrchestrator {
       SignalManager.pauseAgent(agentId);
     }
     await this.state.setOverallStatus('paused');
-    return `Paused. ${activeAgents.length} agent(s) notified. Resume: /web-dev-flow resume`;
+    return `Paused. ${activeAgents.length} agent(s) notified. Resume: /wdf-method resume`;
   }
 
   /** Resume from paused state */

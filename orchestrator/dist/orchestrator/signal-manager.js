@@ -1,17 +1,25 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
-// V3.6: Signals live in user home, outside any git worktree.
-// All worktrees (main + story/*) share the same home directory.
-// Survives reboots, protected by user filesystem permissions.
-let SIGNAL_DIR = join(homedir(), '.wdf-method', 'signals');
+// V3.6: Signals live under the project's _wdf_output/signals/ directory.
+// Worktrees (main + story/*) share the same project root via the orchestrator.
+// Default falls back to cwd-relative until SignalManager.setProjectRoot() is called.
+let SIGNAL_DIR = join(process.cwd(), '_wdf_output', 'signals');
 /**
  * SignalManager — Cross-worktree agent communication via /tmp.
  * All agents (main orchestrator + story agents) share this directory.
  */
 export class SignalManager {
-    // Signals at ~/.wdf-method/signals/ — outside all git worktrees, persists across reboots
-    // No need for init() — path is constant and always accessible from any worktree
+    // Signals at _wdf_output/signals/ — relative to project root, scoped per-project
+    // Use SignalManager.setProjectRoot(projectRoot) once at orchestrator startup
+    // to point at the correct project's signal directory.
+    /** Configure the signal directory based on the project root. */
+    static setProjectRoot(projectRoot) {
+        SIGNAL_DIR = join(projectRoot, '_wdf_output', 'signals');
+    }
+    /** Get the current signal directory (used for diagnostics) */
+    static getSignalDir() {
+        return SIGNAL_DIR;
+    }
     /** Write global pause signal */
     static pauseAll(reason) {
         if (!existsSync(SIGNAL_DIR))

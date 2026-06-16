@@ -26,7 +26,7 @@ export function resolveWorkflowPath(
 
 /**
  * Read workflow.status_dir from config and resolve to an absolute path.
- * Defaults to `<projectRoot>/_bmad-output/wdf-method/status` when not set.
+ * Defaults to `<projectRoot>/_wdf_output/status` when not set.
  */
 export function resolveStatusDir(
   projectRoot: string,
@@ -34,6 +34,6 @@ export function resolveStatusDir(
 ): string {
   const workflow = (config?.workflow ?? {}) as Record<string, any>;
   const configured = typeof workflow.status_dir === 'string' ? workflow.status_dir : undefined;
-  const fallback = join('{project-root}', '_bmad-output', 'wdf-method', 'status');
+  const fallback = join('{project-root}', '_wdf_output', 'status');
   return resolveWorkflowPath(projectRoot, configured, fallback);
 }

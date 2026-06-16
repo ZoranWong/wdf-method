@@ -20,7 +20,7 @@ bmad_skill: "/bmad-sprint-planning"
 
 **Why This Matters:** Jumping directly into implementation without sprint planning leads to unrealistic expectations, overloaded tracks, and missed dependencies. Sprint planning ensures each track has a manageable, ordered set of stories with clear acceptance criteria.
 
-**Output:** `{sprint_plan_output}` (typically `_bmad-output/web-dev-flow/sprint-plan.md`)
+**Output:** `{sprint_plan_output}` (typically `_wdf_output/sprint-plan.md`)
 
 **Duration:** One session. Runs once at the start of Phase 4, then transitions to LOCKED.
 

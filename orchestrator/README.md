@@ -47,6 +47,14 @@ npm run build                    TypeScript compile
 npm test                         Run test suite
 ```
 
+## Key Architecture Decisions
+
+1. **Minimal TOML parser**: No external TOML dependency — built-in parser handles customize.toml sections, arrays, strings, booleans
+2. **Split-file state**: writes to `_wdf_output/status/` directory per the V3.6 spec
+3. **Agent dispatch**: calls Claude Code `Agent({ isolation: "worktree" })` for story execution
+4. **Signal-based communication**: reads/writes `_wdf_output/signals/` for pause/resume
+5. **Simple-git**: for worktree management, merge operations, scope verification
+
 ## Engine Hardening Features (V3.6)
 
 1. **Fail-Closed Gate Evaluator**: Every check type has explicit behavior — unimplemented types do not silently pass

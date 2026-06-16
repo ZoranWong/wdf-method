@@ -20,7 +20,7 @@
 
 ### 原则 1：sprint-status.yaml 是唯一真相源
 
-不再维护独立的 `step-audit-log.yaml`。步骤跟踪信息直接嵌入 `sprint-status.yaml` 每个 story 对象中，同时也写入 per-story 状态文件 `_bmad-output/web-dev-flow/stories/{story_id}-status.yaml` 中。故事 agent 只写 per-story 文件；main orchestrator 在 merge 时将 per-story 状态聚合到 sprint-status.yaml。
+不再维护独立的 `step-audit-log.yaml`。步骤跟踪信息直接嵌入 `sprint-status.yaml` 每个 story 对象中，同时也写入 per-story 状态文件 `_wdf_output/stories/{story_id}-status.yaml` 中。故事 agent 只写 per-story 文件；main orchestrator 在 merge 时将 per-story 状态聚合到 sprint-status.yaml。
 
 ### 原则 2：只记录关键状态转换
 
@@ -168,6 +168,6 @@ detail_level = "minimal"    # "minimal" (仅 started/completed) | "full" (每子
 | 文档 | 作用 | 写入时机 | 恢复用途 |
 |------|------|---------|---------|
 | `sprint-status.yaml` | 唯一真相源：FSM 状态 + 步骤跟踪（聚合后） | Main orchestrator 在 merge 时原子写入 | 确定恢复点 |
-| `_bmad-output/web-dev-flow/stories/{story_id}-status.yaml` | Per-story 状态（agent 写入） | Agent 在 worktree 中开发时 | 按 story 的详细状态 |
+| `_wdf_output/stories/{story_id}-status.yaml` | Per-story 状态（agent 写入） | Agent 在 worktree 中开发时 | 按 story 的详细状态 |
 | `self-check.md` | 故事自检报告 | 每个故事完成后 | 测试/检查结果回溯 |
 | `handoff.md` | 故事交接文档 | 每个故事完成后 | 了解实现细节 |

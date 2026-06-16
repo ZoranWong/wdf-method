@@ -124,7 +124,7 @@ Execute a comprehensive adversarial code review of the entire full-stack codebas
 
 ### Review Output
 
-Generate `_bmad-output/web-dev-flow/_output/acceptance/code-review-report.md`:
+Generate `_wdf_output/_output/acceptance/code-review-report.md`:
 
 ```markdown
 # Final Code Review Report
@@ -249,7 +249,7 @@ Execute a BMAD retrospective:
    - Sub-phase sequencing optimizations
    - BMAD skill invocation timing refinements
 
-Generate: `_bmad-output/web-dev-flow/_output/retrospective.md`
+Generate: `_wdf_output/_output/retrospective.md`
 
 ---
 
@@ -286,7 +286,7 @@ Full-Stack 5 — Review & Delivery Complete
 
 Code Review: ✓  ({N} issues, 0 critical)
 Delivery Checklist: 10/10 ✓
-Retrospective: ✓  (_bmad-output/.../retrospective.md)
+Retrospective: ✓  (_wdf_output/.../retrospective.md)
 
 All 4 Acceptance Gates:
   CODE ACCEPTANCE         ✓  (all stories)

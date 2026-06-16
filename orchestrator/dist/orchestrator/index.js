@@ -36,7 +36,7 @@ async function main() {
             console.log(orchestrator.displayMergeQueue());
             break;
         case 'validate-state': {
-            const trackingPath = resolve(projectRoot, '_bmad-output/web-dev-flow/sprint-status.yaml');
+            const trackingPath = resolve(projectRoot, '_wdf_output/sprint-status.yaml');
             if (!existsSync(trackingPath)) {
                 console.log('No sprint-status.yaml found — nothing to validate.');
                 process.exit(0);
@@ -89,10 +89,10 @@ async function main() {
                     results.push(['Disk', false, 'Cannot check']);
                 }
                 // Signals
-                const signalDir = join(require('os').homedir(), '.wdf-method', 'signals');
+                const signalDir = join(projectRoot, '_wdf_output', 'signals');
                 results.push(['Signals dir', existsSync(signalDir), existsSync(signalDir) ? signalDir : 'Not found']);
                 // Status files
-                const statusDir = join(projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+                const statusDir = join(projectRoot, '_wdf_output', 'status');
                 if (existsSync(statusDir)) {
                     const files = require('fs').readdirSync(statusDir).filter((f) => f.endsWith('.yaml'));
                     results.push(['Status files', files.length > 0, `${files.length} files: ${files.join(', ')}`]);
@@ -140,7 +140,7 @@ async function main() {
         case 'help':
         default:
             console.log(`
-web-dev-flow orchestrator v3.6.0
+wdf-method orchestrator v3.6.0
 
 Usage:
   orchestrator status [project-root]     Show current status dashboard
