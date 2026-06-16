@@ -127,7 +127,7 @@ export class PhaseOrchestrator {
     this.storyRunner = new StoryRunner(
       this.state, this.worktree, this.gateEvaluator,
       this.projectRoot, storiesDir, outputDir,
-      scopeLockCfg,
+      { protectedPaths: this.config.scope_lock?.protected_paths ?? [] }
     );
     this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot, scopeLockCfg);
   }
@@ -558,7 +558,15 @@ export class PhaseOrchestrator {
       const result = await this.storyRunner.runNextStory(track);
       if (!result) break;
       runs++;
-      console.log(`  ✓ ${result.storyId} completed — ${result.status}`);
+      const serialFlag = result.serial_only ? ' [SERIAL_ONLY]' : '';
+      console.log(`  ✓ ${result.storyId} completed — ${result.status}${serialFlag}`);
+      // SRG-08: a serial-only story (touched a protected path) cannot run
+      // alongside others. Stop this track's pump so the merge queue can drain
+      // before any new dispatch picks up.
+      if (result.serial_only) {
+        console.log('  ⏸  Serial-only story dispatched — pausing track for queue drain');
+        break;
+      }
     }
 
     if (runs === 0) {
