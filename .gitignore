@@ -26,3 +26,4 @@ coverage/
 
 # Claude
 .claude-plugin/
+.worktrees/
