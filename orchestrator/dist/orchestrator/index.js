@@ -3,6 +3,7 @@ import { SprintStatusValidator } from './state-validator.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { existsSync } from 'fs';
 import { resolve, join } from 'path';
+import { recoverStatus } from './recovery.js';
 async function main() {
     const args = process.argv.slice(2);
     const command = args[0] ?? 'status';
@@ -133,6 +134,9 @@ async function main() {
             console.log(checker.formatReport(result));
             process.exit(result.overall === 'blocked' ? 1 : 0);
         }
+        case 'recover':
+            console.log(recoverStatus(projectRoot).dashboard);
+            break;
         case 'help':
         default:
             console.log(`
@@ -145,6 +149,7 @@ Usage:
   orchestrator run-track <backend|frontend> [project-root]  Run a specific track
   orchestrator merge-queue [project-root]   Show merge queue status
   orchestrator validate-state [project-root] Validate sprint-status.yaml consistency
+  orchestrator recover [project-root]    Non-destructive recovery of corrupted state
   orchestrator health [project-root]     Check BMAD skill availability
   orchestrator help                      Show this help
       `);
