@@ -199,12 +199,12 @@ Agent 生命周期（Per Story — Independent Sub-Agent）:
    ├→ 按步骤实现
    ├→ 每个关键步骤做 git commit（规范: 至少 3 次 commit，见 git-commit-checkpoints.md）
    └→ 完成后写入 per-story status 文件:
-        路径: _bmad-output/web-dev-flow/stories/{story_id}-status.yaml
+        路径: _wdf_output/stories/{story_id}-status.yaml
         内容: { story_id, status: "CODE_ACCEPTED", started_at, completed_at, last_completed_substep, step_history, scope_audit }
         ⚠️ 故事 agent 不直接写 sprint-status.yaml —— 只写 per-story status 文件
 
 3. RETURN
-   └→ agent 返回: { story_id, status: "CODE_ACCEPTED", status_file: "_bmad-output/web-dev-flow/stories/{story_id}-status.yaml" }
+   └→ agent 返回: { story_id, status: "CODE_ACCEPTED", status_file: "_wdf_output/stories/{story_id}-status.yaml" }
    └→ main orchestrator 收到信号
         ↓
    └→ main orchestrator 读取 per-story status 文件
@@ -227,13 +227,13 @@ Agent 生命周期（Per Story — Independent Sub-Agent）:
 
 | 角色 | 写入目标 | 写入时机 |
 |------|---------|---------|
-| **Story Agent** | `_bmad-output/web-dev-flow/stories/{story_id}-status.yaml` (per-story 文件) | 故事开发过程中，在 worktree 内 |
+| **Story Agent** | `_wdf_output/stories/{story_id}-status.yaml` (per-story 文件) | 故事开发过程中，在 worktree 内 |
 | **Main Orchestrator** | `sprint-status.yaml` (全局状态) | agent 返回后，merge 前，原子写入 |
 
 ### Per-Story Status File 格式
 
 ```yaml
-# _bmad-output/web-dev-flow/stories/{story_id}-status.yaml
+# _wdf_output/stories/{story_id}-status.yaml
 story_id: "S-3.2"
 title: "Auth Endpoints"
 status: "CODE_ACCEPTED"

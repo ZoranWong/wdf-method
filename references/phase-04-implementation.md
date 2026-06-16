@@ -634,7 +634,7 @@ See `specs/worktree-isolation.md` for the full specification.
 /workspace/                                          # Main worktree
 ├── main 分支
 ├── sprint-status.yaml                               # 聚合状态（story merge 时更新）
-├── _bmad-output/web-dev-flow/stories/
+├── _wdf_output/stories/
 │   ├── S-3.1-status.yaml                            # 每个 story 的状态（agent 在 worktree 中写）
 │   └── S-3.2-status.yaml
 

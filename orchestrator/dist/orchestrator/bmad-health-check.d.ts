@@ -21,6 +21,7 @@ export interface HealthCheckResult {
     acceptance_commands: {
         name: string;
         available: boolean;
+        usedIn?: string;
     }[];
     overall: 'healthy' | 'degraded' | 'blocked';
 }

@@ -274,7 +274,7 @@ sprint_status:
         required: false
         additionalProperties:
           type: "string"
-          description: "Relative path from _bmad-output/web-dev-flow/ to the story status file"
+          description: "Relative path from _wdf_output/ to the story status file"
 
       implementation_boundary:
         type: "object"

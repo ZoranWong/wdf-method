@@ -187,7 +187,7 @@ Change Requests (CRs) are filed when a downstream phase discovers an issue in an
 ## File Structure
 
 ```
-web-dev-flow/
+wdf-method/
 ├── CLAUDE.md                           # This file
 ├── SKILL.md                            # Main entry point, routing, FSM engine
 ├── customize.toml                      # Configuration + acceptance gates
@@ -263,7 +263,7 @@ web-dev-flow/
 ## Output Structure
 
 ```
-_bmad-output/web-dev-flow/
+_wdf_output/
 ├── prd.md
 ├── research/
 ├── _output/analysis/

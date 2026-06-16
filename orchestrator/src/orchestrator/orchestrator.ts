@@ -93,6 +93,7 @@ export class PhaseOrchestrator {
   constructor(projectRoot: string, skillRoot?: string) {
     this.projectRoot = resolve(projectRoot);
     this.skillRoot = skillRoot ? resolve(skillRoot) : join(projectRoot);
+    SignalManager.setProjectRoot(this.projectRoot);
     this.config = {};
   }
 
@@ -102,13 +103,13 @@ export class PhaseOrchestrator {
   async initialize(): Promise<void> {
     const trackingPath = this.resolveConfigPath('sprint_tracking');
     // V3.6: Try split-file status directory first
-    const statusDir = join(this.projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+    const statusDir = join(this.projectRoot, '_wdf_output', 'status');
     if (existsSync(statusDir)) {
       this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
     } else {
       this.state = await SprintStatusManager.load(trackingPath);
     }
-    // V3.6: Signals at ~/.wdf-method/signals/ — outside all worktrees, auto-created on first use
+    // V3.6: Signals at _wdf_output/signals/ — outside all worktrees, auto-created on first use
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);
@@ -634,9 +635,9 @@ export class PhaseOrchestrator {
 
   private resolveConfigPath(key: string): string {
     const paths: Record<string, string> = {
-      sprint_tracking: '_bmad-output/web-dev-flow/sprint-status.yaml',
-      stories_output: '_bmad-output/web-dev-flow/stories',
-      output_dir: '_bmad-output/web-dev-flow',
+      sprint_tracking: '_wdf_output/sprint-status.yaml',
+      stories_output: '_wdf_output/stories',
+      output_dir: '_wdf_output',
     };
 
     // Check customize.toml first for overrides
@@ -692,7 +693,7 @@ export class PhaseOrchestrator {
       SignalManager.pauseAgent(agentId);
     }
     await this.state.setOverallStatus('paused');
-    return `Paused. ${activeAgents.length} agent(s) notified. Resume: /web-dev-flow resume`;
+    return `Paused. ${activeAgents.length} agent(s) notified. Resume: /wdf-method resume`;
   }
 
   /** Resume from paused state */

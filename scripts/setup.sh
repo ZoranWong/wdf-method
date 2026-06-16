@@ -85,7 +85,7 @@ if [ "$UNINSTALL" = true ]; then
   fi
 
   echo ""
-  echo -e "  ${GRAY}Note: Project output directories (.claude/worktrees/, _bmad-output/) are NOT removed.${NC}"
+  echo -e "  ${GRAY}Note: Project output directories (.claude/worktrees/, _wdf_output/) are NOT removed.${NC}"
   echo ""
   exit 0
 fi
@@ -143,7 +143,7 @@ echo ""
 echo -e "${BOLD}Step 3: Agent Communication Directory${NC}"
 echo ""
 
-SIGNAL_DIR="/tmp/web-dev-flow/signals"
+SIGNAL_DIR="$OUTPUT_ROOT/_wdf_output/signals"
 if [ -d "$SIGNAL_DIR" ]; then
   echo -e "  ${GREEN}✓${NC} Signal directory exists: $SIGNAL_DIR"
 else
@@ -162,7 +162,7 @@ if [ "$INIT" = true ]; then
   echo -e "${BOLD}Step 4: Initialize Project Structure${NC}"
   echo ""
 
-  OUTPUT_DIR="$SKILL_DIR/_bmad-output/wdf-method"
+  OUTPUT_DIR="$SKILL_DIR/_wdf_output"
   if [ "$DRY_RUN" = true ]; then
     echo -e "  ${GRAY}[DRY RUN] Would create:${NC}"
     echo -e "  ${GRAY}  $OUTPUT_DIR/_output/{planning,solutioning,acceptance}${NC}"
@@ -188,7 +188,7 @@ echo ""
 
 echo -e "${BOLD}What's configured:${NC}"
 echo -e "  ${GREEN}✓${NC} Claude Code skill — use /wdf-method to start"
-echo -e "  ${GREEN}✓${NC} Agent communication — /tmp/web-dev-flow/signals/"
+echo -e "  ${GREEN}✓${NC} Agent communication — _wdf_output/signals/"
 if [ -f "$SETTINGS_FILE" ]; then
   echo -e "  ${GREEN}✓${NC} Sub-agent permissions — Read Write Bash Grep Glob Edit Agent Task"
 fi

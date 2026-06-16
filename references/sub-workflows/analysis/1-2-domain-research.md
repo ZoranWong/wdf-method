@@ -129,7 +129,7 @@ Invoke: `/bmad-domain-research`
 - Research the defined scope areas based on user priorities.
 - Focus on practical, actionable findings — not academic literature.
 - For each area, produce: current state, key insights, implications for our project.
-- Output to `{domain_research_output}` (typically `_bmad-output/web-dev-flow/analysis/domain-research.md`).
+- Output to `{domain_research_output}` (typically `_wdf_output/analysis/domain-research.md`).
 - Frontmatter must include `artifact_type: "domain_research"`, `phase: 1`, `sub_phase: "1.2"`, `status: "draft"`.
 
 Transition: `IN_PROGRESS` → `RESEARCHING`.

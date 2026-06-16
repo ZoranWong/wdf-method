@@ -1457,12 +1457,12 @@ Agents work in isolated worktrees that cannot see each other's files. Communicat
 
 ```
 Phase A: Set global pause signal
-  1. Write /tmp/web-dev-flow/signals/global.json:
+  1. Write _wdf_output/signals/global.json:
      {"action": "pause_all", "issued_at": "{ISO}"}
 
 Phase B: Signal each running agent
   2. FOR each running agent (tracked by agentId):
-     Write /tmp/web-dev-flow/signals/main-to-{agentId}.json:
+     Write _wdf_output/signals/main-to-{agentId}.json:
      {"type": "pause", "issued_at": "{ISO}"}
 
 Phase C: Agents self-pause at next sub-step boundary
@@ -1645,25 +1645,25 @@ All output paths are resolved from customize.toml:
 
 | Config Key | Description | Default Path Pattern |
 |------------|-------------|---------------------|
-| `prd_output` | PRD document | `{project-root}/_bmad-output/web-dev-flow/prd.md` |
-| `architecture_output` | Architecture decisions | `{project-root}/_bmad-output/web-dev-flow/architecture.md` |
-| `epics_output` | Epics and stories outline | `{project-root}/_bmad-output/web-dev-flow/epics.md` |
-| `stories_output` | Individual story files | `{project-root}/_bmad-output/web-dev-flow/stories/` |
-| `api_spec_output` | OpenAPI 3.0 spec | `{project-root}/_bmad-output/web-dev-flow/api-spec.yaml` |
-| `db_schema_output` | Database schema docs | `{project-root}/_bmad-output/web-dev-flow/db-schema.md` |
-| `sprint_tracking` | Sprint/phase status (System of Record) | `{project-root}/_bmad-output/web-dev-flow/sprint-status.yaml` |
-| `integration_output` | Integration report | `{project-root}/_bmad-output/web-dev-flow/integration-report.md` |
-| `research_output` | Domain research output | `{project-root}/_bmad-output/web-dev-flow/research/` |
-| `impact_map_output` | Impact Map (Phase 1.1/2.3) | `{project-root}/_bmad-output/web-dev-flow/_output/analysis/impact-map.md` |
-| `event_storming_output` | Event Storming board (Phase 1.2/2.4) | `{project-root}/_bmad-output/web-dev-flow/_output/analysis/event-storm.md` |
-| `jtbd_cards_output` | JTBD cards (Phase 1.3/2.5) | `{project-root}/_bmad-output/web-dev-flow/_output/analysis/jtbd-cards.md` |
-| `story_map_output` | Story Map (Phase 2.6) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/story-map.md` |
-| `prioritization_output` | Prioritization report (Phase 2.7) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/prioritization.md` |
-| `user_flows_output` | User Flows (Phase 2.8) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/user-flows.md` |
-| `wireframes_output` | Wireframes (Phase 2.9) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/wireframes.md` |
-| `design_tokens_output` | Design Tokens (Phase 2.9) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/design-tokens.md` |
-| `design_acceptance_output` | Design Acceptance (Phase 2.10) | `{project-root}/_bmad-output/web-dev-flow/_output/planning/design-acceptance.md` |
-| `acceptance_report_output` | Acceptance reports | `{project-root}/_bmad-output/web-dev-flow/_output/acceptance/` |
+| `prd_output` | PRD document | `{project-root}/_wdf_output/prd.md` |
+| `architecture_output` | Architecture decisions | `{project-root}/_wdf_output/architecture.md` |
+| `epics_output` | Epics and stories outline | `{project-root}/_wdf_output/epics.md` |
+| `stories_output` | Individual story files | `{project-root}/_wdf_output/stories/` |
+| `api_spec_output` | OpenAPI 3.0 spec | `{project-root}/_wdf_output/api-spec.yaml` |
+| `db_schema_output` | Database schema docs | `{project-root}/_wdf_output/db-schema.md` |
+| `sprint_tracking` | Sprint/phase status (System of Record) | `{project-root}/_wdf_output/sprint-status.yaml` |
+| `integration_output` | Integration report | `{project-root}/_wdf_output/integration-report.md` |
+| `research_output` | Domain research output | `{project-root}/_wdf_output/research/` |
+| `impact_map_output` | Impact Map (Phase 1.1/2.3) | `{project-root}/_wdf_output/_output/analysis/impact-map.md` |
+| `event_storming_output` | Event Storming board (Phase 1.2/2.4) | `{project-root}/_wdf_output/_output/analysis/event-storm.md` |
+| `jtbd_cards_output` | JTBD cards (Phase 1.3/2.5) | `{project-root}/_wdf_output/_output/analysis/jtbd-cards.md` |
+| `story_map_output` | Story Map (Phase 2.6) | `{project-root}/_wdf_output/_output/planning/story-map.md` |
+| `prioritization_output` | Prioritization report (Phase 2.7) | `{project-root}/_wdf_output/_output/planning/prioritization.md` |
+| `user_flows_output` | User Flows (Phase 2.8) | `{project-root}/_wdf_output/_output/planning/user-flows.md` |
+| `wireframes_output` | Wireframes (Phase 2.9) | `{project-root}/_wdf_output/_output/planning/wireframes.md` |
+| `design_tokens_output` | Design Tokens (Phase 2.9) | `{project-root}/_wdf_output/_output/planning/design-tokens.md` |
+| `design_acceptance_output` | Design Acceptance (Phase 2.10) | `{project-root}/_wdf_output/_output/planning/design-acceptance.md` |
+| `acceptance_report_output` | Acceptance reports | `{project-root}/_wdf_output/_output/acceptance/` |
 
 Backend sub-phase outputs:
 | Config Key | Output File |
@@ -1830,7 +1830,7 @@ Configured in `customize.toml` → `[bmad_skill_fallbacks].fallback_mode`.
 ## V3 File Structure
 
 ```
-web-dev-flow/
+wdf-method/
 ├── CLAUDE.md                           # V3 architecture documentation
 ├── SKILL.md                            # THIS FILE — routing, FSM engine, commands
 ├── customize.toml                      # Configuration + acceptance gates + sub-phase config
@@ -1915,7 +1915,7 @@ Phase 4 uses the **One Story = One Agent = One Worktree = One Clean Context** pr
 2. **Per-Story Worktree**: Each sub-agent works in a dedicated git worktree (`story/{story_id}-{track}` branch). No file is ever written by two agents simultaneously. See `specs/agent-isolation.md` for full specification.
 3. **Shared System of Record (Split-File Design)**: All agents read sprint-status.yaml as the synchronization point — but ONLY the main orchestrator writes to it. Sprint-status.yaml is DERIVED (rebuilt from `status/` directory files on demand). Each phase, track, and story has its own status file. Per-story status files are written by story agents in their isolated worktrees. The merge-queue uses one file per item with a short-lived lock only during creation (~100ms). **No two processes ever write to the same file simultaneously.**
 4. **API Spec as Contract**: All agents share the api-spec.yaml as the contract — neither can modify it.
-5. **Context Firewall**: Sub-agent context is ephemeral. The sub-agent's implementation details, code, and conversation are NOT propagated to the main orchestrator. The orchestrator only reads the per-story status file (`_bmad-output/web-dev-flow/stories/{story_id}-status.yaml`) to determine the result.
+5. **Context Firewall**: Sub-agent context is ephemeral. The sub-agent's implementation details, code, and conversation are NOT propagated to the main orchestrator. The orchestrator only reads the per-story status file (`_wdf_output/stories/{story_id}-status.yaml`) to determine the result.
 6. **Integration gate (4.13)**: Both tracks must reach their acceptance gates (CODE_ACCEPTED + UI_ACCEPTED) before Integration can begin.
 
 When executing parallel mode:

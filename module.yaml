@@ -9,7 +9,7 @@ default_selected: false
 
 output_folder:
   prompt: "Where should web-dev-flow output artifacts be stored?"
-  default: "_bmad-output"
+  default: "_wdf_output"
   result: "{project-root}/{value}"
 
 dev_mode:
@@ -52,13 +52,13 @@ default_backend_framework:
 
 # Directories to create during installation
 directories:
-  - "{output_folder}/web-dev-flow"
-  - "{output_folder}/web-dev-flow/_output/planning"
-  - "{output_folder}/web-dev-flow/_output/solutioning"
-  - "{output_folder}/web-dev-flow/_output/acceptance"
-  - "{output_folder}/web-dev-flow/status"
-  - "{output_folder}/web-dev-flow/status/merge-queue/items"
-  - "{output_folder}/web-dev-flow/status/stories"
+  - "{output_folder}"
+  - "{output_folder}/_output/planning"
+  - "{output_folder}/_output/solutioning"
+  - "{output_folder}/_output/acceptance"
+  - "{output_folder}/status"
+  - "{output_folder}/status/merge-queue/items"
+  - "{output_folder}/status/stories"
 
 # Agent roster — web-dev-flow agents
 # Each agent has a SKILL.md in skills/ directory
@@ -67,96 +67,96 @@ agents:
     name: wdf-orchestrator
     title: Workflow Orchestrator
     icon: "⚙️"
-    team: web-dev-flow
+    team: wdf-method
     description: "Thin state machine that manages FSM transitions, gate cards, and dispatches story agents across all 4 phases."
 
   - code: wdf-analyst
     name: wdf-analyst
     title: Business Analyst
     icon: "📊"
-    team: web-dev-flow
+    team: wdf-method
     description: "Brainstorming, domain research, and product brief using structured analysis methodologies."
 
   - code: wdf-product-manager
     name: wdf-product-manager
     title: Product Manager
     icon: "📋"
-    team: web-dev-flow
+    team: wdf-method
     description: "Impact Mapping, Story Mapping, Kano+RICE prioritization, and PRD compilation."
 
   - code: wdf-ux-designer
     name: wdf-ux-designer
     title: UX Designer
     icon: "🎨"
-    team: web-dev-flow
+    team: wdf-method
     description: "User flows, wireframes, design tokens, interaction patterns, and design acceptance criteria."
 
   - code: wdf-architect
     name: wdf-architect
     title: System Architect
     icon: "🏗️"
-    team: web-dev-flow
+    team: wdf-method
     description: "C4 System Context through Component Design, architecture style selection, and ADRs."
 
   - code: wdf-story-planner
     name: wdf-story-planner
     title: Story Planner
     icon: "📝"
-    team: web-dev-flow
+    team: wdf-method
     description: "Epic decomposition, story design with 7 contract fields, and development order freezing."
 
   - code: wdf-api-designer
     name: wdf-api-designer
     title: API Designer
     icon: "🔌"
-    team: web-dev-flow
+    team: wdf-method
     description: "OpenAPI 3.0 specification, database schema design, and API contract compliance."
 
   - code: wdf-backend-developer
     name: wdf-backend-developer
     title: Backend Developer
     icon: "💻"
-    team: web-dev-flow
+    team: wdf-method
     description: "TDD, Clean Architecture, REST API implementation with checkpoint commits and signal-based pause."
 
   - code: wdf-frontend-developer
     name: wdf-frontend-developer
     title: Frontend Developer
     icon: "🖥️"
-    team: web-dev-flow
+    team: wdf-method
     description: "Component-driven development, accessibility audit, responsive design, UI acceptance."
 
   - code: wdf-code-reviewer
     name: wdf-code-reviewer
     title: Code Reviewer
     icon: "🔍"
-    team: web-dev-flow
+    team: wdf-method
     description: "Adversarial code review: security, correctness, readability, architecture compliance."
 
   - code: wdf-qa-verifier
     name: wdf-qa-verifier
     title: QA Verifier
     icon: "✅"
-    team: web-dev-flow
+    team: wdf-method
     description: "Feature, UI, A11y, Performance, and E2E Browser acceptance verification."
 
   - code: wdf-sprint-planner
     name: wdf-sprint-planner
     title: Sprint Planner
     icon: "📅"
-    team: web-dev-flow
+    team: wdf-method
     description: "Capacity assessment, story assignment to tracks, parallel group mapping, scope freeze."
 
   - code: wdf-retrospective-host
     name: wdf-retrospective-host
     title: Retrospective Host
     icon: "🔄"
-    team: web-dev-flow
+    team: wdf-method
     description: "Quantitative metrics + qualitative feedback, insights documentation, actionable improvement items."
 
   - code: wdf-readiness-auditor
     name: wdf-readiness-auditor
     title: Readiness Auditor
     icon: "🛡️"
-    team: web-dev-flow
+    team: wdf-method
     description: "Pre-implementation artifact audit, cross-phase consistency verification, implementation boundary generation."

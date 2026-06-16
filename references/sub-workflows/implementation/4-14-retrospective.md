@@ -293,7 +293,7 @@ Transition: `INSIGHTS_DOCUMENTED` → `ACTION_ITEMS_DEFINED`.
 
 ## Step 5: Generate Retrospective Report
 
-Produce `{retrospective_output}` (typically `_bmad-output/web-dev-flow/retrospective-report.md`) with frontmatter:
+Produce `{retrospective_output}` (typically `_wdf_output/retrospective-report.md`) with frontmatter:
 
 ```yaml
 ---

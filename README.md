@@ -167,7 +167,7 @@ my-project/
 ├── .claude/
 │   ├── skills/wdf/                 ← Orchestrator + 13 agents
 │   └── settings.json               ← Sub-agent permissions
-├── _bmad-output/web-dev-flow/
+├── _wdf_output/
 │   ├── prd.md                      ← Product requirements
 │   ├── epics.md                    ← Epic decomposition
 │   ├── stories/                    ← Story files (7 contract fields)
@@ -185,7 +185,7 @@ my-project/
 │   │   ├── stories/
 │   │   └── merge-queue/
 │   └── sprint-status.yaml          ← Derived index (auto-generated)
-└── /tmp/web-dev-flow/signals/      ← Agent communication
+└── _wdf_output/signals/      ← Agent communication
 ```
 
 ---

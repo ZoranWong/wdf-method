@@ -7,7 +7,7 @@
 ## Directory Structure
 
 ```
-_bmad-output/web-dev-flow/
+_wdf_output/
 ├── sprint-status.yaml              # DERIVED index (rebuilt from status/ — read-only)
 
 └── status/

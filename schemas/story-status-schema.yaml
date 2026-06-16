@@ -1,6 +1,6 @@
 # Per-Story Status Schema — web-dev-flow V3
 #
-# Each story gets its own status file: _bmad-output/web-dev-flow/stories/{story_id}-status.yaml
+# Each story gets its own status file: _wdf_output/stories/{story_id}-status.yaml
 # Pattern inspired by StoryRail's per-run files: one agent writes, no parallel conflicts.
 # Track/Phase status is DERIVED by reading all story files, not centrally stored.
 #

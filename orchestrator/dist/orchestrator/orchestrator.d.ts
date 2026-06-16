@@ -98,5 +98,11 @@ export declare class PhaseOrchestrator {
      * Display merge queue status.
      */
     displayMergeQueue(): string;
+    /** Gracefully pause the workflow */
+    pause(reason?: string): Promise<string>;
+    /** Resume from paused state */
+    resume(): Promise<string>;
+    /** Check if pause signal is active (called before each story dispatch) */
+    private checkPauseSignal;
 }
 //# sourceMappingURL=orchestrator.d.ts.map

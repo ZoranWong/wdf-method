@@ -116,7 +116,7 @@ Invoke: `/bmad-brainstorming`
 - This is a pre-requirements brainstorming session for a web development project.
 - The goal is to generate a broad set of ideas, not to filter or prioritize them.
 - Explore: potential features, user types, technical approaches, novel interactions, constraints, risks.
-- Output should be captured to `{brainstorm_output}` (typically `_bmad-output/web-dev-flow/analysis/brainstorm.md`).
+- Output should be captured to `{brainstorm_output}` (typically `_wdf_output/analysis/brainstorm.md`).
 
 **Agent should prompt the user:**
 

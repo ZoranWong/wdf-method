@@ -24,9 +24,9 @@ Template String → Customize Config → Default Path → Absolute Path
 | Variable | Resolution | Example Value |
 |----------|-----------|---------------|
 | `{project-root}` | Project working directory | `/workspace/my-app` |
-| `{skill-root}` | web-dev-flow installation directory | `/Users/wang/.claude/skills/web-dev-flow` |
+| `{skill-root}` | wdf-method installation directory | `/Users/wang/.claude/skills/wdf-method` |
 | `{sprint_tracking}` | customize.toml → `sprint_tracking` | READ-ONLY derived index. For WRITES, use `{status_phase_0N_file}` or `{status_global_file}`. |
-| `{status_dir}` | customize.toml → `status_dir` | `{project-root}/_bmad-output/web-dev-flow/status` |
+| `{status_dir}` | customize.toml → `status_dir` | `{project-root}/_wdf_output/status` |
 | `{status_global_file}` | customize.toml → `status_global_file` | WRITE target for global_state changes |
 | `{status_phase_01_file}` | customize.toml → `status_phase_01_file` | WRITE target for Phase 1 state |
 | `{status_phase_02_file}` | customize.toml → `status_phase_02_file` | WRITE target for Phase 2 state |
@@ -36,24 +36,24 @@ Template String → Customize Config → Default Path → Absolute Path
 | `{status_change_requests_file}` | customize.toml → `status_change_requests_file` | WRITE target for CR list |
 | `{status_stories_dir}` | customize.toml → `status_stories_dir` | Per-story status file directory |
 | `{status_merge_queue_dir}` | customize.toml → `status_merge_queue_dir` | Merge queue items directory |
-| `{prd_output}` | customize.toml → `prd_output` | `{project-root}/_bmad-output/web-dev-flow/prd.md` |
-| `{architecture_output}` | customize.toml → `architecture_output` | `{project-root}/_bmad-output/web-dev-flow/architecture.md` |
-| `{api_spec_output}` | customize.toml → `api_spec_output` | `{project-root}/_bmad-output/web-dev-flow/api-spec.yaml` |
-| `{db_schema_output}` | customize.toml → `db_schema_output` | `{project-root}/_bmad-output/web-dev-flow/db-schema.md` |
-| `{epics_output}` | customize.toml → `epics_output` | `{project-root}/_bmad-output/web-dev-flow/epics.md` |
-| `{stories_output}` | customize.toml → `stories_output` | `{project-root}/_bmad-output/web-dev-flow/stories` |
-| `{integration_output}` | customize.toml → `integration_output` | `{project-root}/_bmad-output/web-dev-flow/integration-report.md` |
-| `{research_output}` | customize.toml → `research_output` | `{project-root}/_bmad-output/web-dev-flow/research` |
-| `{impact_map_output}` | customize.toml → `impact_map_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/impact-map.md` |
-| `{event_storming_output}` | customize.toml → `event_storming_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/event-storm.md` |
-| `{jtbd_cards_output}` | customize.toml → `jtbd_cards_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/jtbd-cards.md` |
-| `{story_map_output}` | customize.toml → `story_map_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/story-map.md` |
-| `{prioritization_output}` | customize.toml → `prioritization_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/prioritization.md` |
-| `{wireframes_output}` | customize.toml → `wireframes_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/wireframes.md` |
-| `{design_tokens_output}` | customize.toml → `design_tokens_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/design-tokens.md` |
-| `{design_acceptance_output}` | customize.toml → `design_acceptance_output` | `{project-root}/_bmad-output/web-dev-flow/_output/planning/design-acceptance.md` |
-| `{step_audit_log_output}` | customize.toml → `step_audit_log_output` | `{project-root}/_bmad-output/web-dev-flow/step-audit-log.yaml` |
-| `{scope_audit_log_output}` | customize.toml → `scope_audit_log_output` | `{project-root}/_bmad-output/web-dev-flow/scope-audit-log.yaml` |
+| `{prd_output}` | customize.toml → `prd_output` | `{project-root}/_wdf_output/prd.md` |
+| `{architecture_output}` | customize.toml → `architecture_output` | `{project-root}/_wdf_output/architecture.md` |
+| `{api_spec_output}` | customize.toml → `api_spec_output` | `{project-root}/_wdf_output/api-spec.yaml` |
+| `{db_schema_output}` | customize.toml → `db_schema_output` | `{project-root}/_wdf_output/db-schema.md` |
+| `{epics_output}` | customize.toml → `epics_output` | `{project-root}/_wdf_output/epics.md` |
+| `{stories_output}` | customize.toml → `stories_output` | `{project-root}/_wdf_output/stories` |
+| `{integration_output}` | customize.toml → `integration_output` | `{project-root}/_wdf_output/integration-report.md` |
+| `{research_output}` | customize.toml → `research_output` | `{project-root}/_wdf_output/research` |
+| `{impact_map_output}` | customize.toml → `impact_map_output` | `{project-root}/_wdf_output/_output/planning/impact-map.md` |
+| `{event_storming_output}` | customize.toml → `event_storming_output` | `{project-root}/_wdf_output/_output/planning/event-storm.md` |
+| `{jtbd_cards_output}` | customize.toml → `jtbd_cards_output` | `{project-root}/_wdf_output/_output/planning/jtbd-cards.md` |
+| `{story_map_output}` | customize.toml → `story_map_output` | `{project-root}/_wdf_output/_output/planning/story-map.md` |
+| `{prioritization_output}` | customize.toml → `prioritization_output` | `{project-root}/_wdf_output/_output/planning/prioritization.md` |
+| `{wireframes_output}` | customize.toml → `wireframes_output` | `{project-root}/_wdf_output/_output/planning/wireframes.md` |
+| `{design_tokens_output}` | customize.toml → `design_tokens_output` | `{project-root}/_wdf_output/_output/planning/design-tokens.md` |
+| `{design_acceptance_output}` | customize.toml → `design_acceptance_output` | `{project-root}/_wdf_output/_output/planning/design-acceptance.md` |
+| `{step_audit_log_output}` | customize.toml → `step_audit_log_output` | `{project-root}/_wdf_output/step-audit-log.yaml` |
+| `{scope_audit_log_output}` | customize.toml → `scope_audit_log_output` | `{project-root}/_wdf_output/scope-audit-log.yaml` |
 
 ## Runtime Variables (Not from config)
 

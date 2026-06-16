@@ -41,7 +41,7 @@ Each phase produces production-ready artifacts. Gate Cards validate quality at e
 bash scripts/setup.sh
 ```
 
-This creates a symlink in `~/.claude/skills/web-dev-flow` → your project directory.
+This creates a symlink in `~/.claude/skills/wdf-method` → your project directory.
 
 Options:
 ```bash
@@ -68,7 +68,7 @@ If the install script is not available:
 
 ```bash
 # Create symlink to Claude Code skills directory
-ln -sf /Users/wang/study/ai-agent/web-dev-flow ~/.claude/skills/web-dev-flow
+ln -sf /Users/wang/study/ai-agent/wdf-method ~/.claude/skills/wdf-method
 ```
 
 Then restart Claude Code. The skill will appear as `/web-dev-flow`.
@@ -78,7 +78,7 @@ Then restart Claude Code. The skill will appear as `/web-dev-flow`.
 ## Architecture
 
 ```
-web-dev-flow/
+wdf-method/
 ├── SKILL.md                           # Main entry point (Claude Code skill)
 ├── SETUP.md                           # This file — installation guide
 ├── scripts/
@@ -120,10 +120,10 @@ All settings in `customize.toml`:
 
 ## Agent Communication
 
-Sub-agents work in isolated git worktrees. Communication uses a shared directory outside any git repo:
+Sub-agents work in isolated git worktrees. Communication uses a project-relative directory shared across worktrees:
 
 ```
-/tmp/web-dev-flow/signals/
+_wdf_output/signals/
 ├── global.json                    ← Pause/abort all agents
 ├── main-to-{agentId}.json         ← Main → sub-agent commands
 └── {agentId}-to-main.json         ← Sub-agent → main heartbeat + status
@@ -138,8 +138,8 @@ See `specs/agent-communication.md` for the full protocol.
 ### Skill not appearing in Claude Code
 ```bash
 # Verify symlink
-ls -la ~/.claude/skills/web-dev-flow
-# Expected: ~/.claude/skills/web-dev-flow -> /path/to/web-dev-flow
+ls -la ~/.claude/skills/wdf-method
+# Expected: ~/.claude/skills/wdf-method -> /path/to/wdf-method
 
 # Recreate if needed
 bash scripts/setup.sh
@@ -167,7 +167,7 @@ Rebuilds `sprint-status.yaml` from `status/` directory files. Zero data loss.
 ### Clean slate
 ```bash
 bash scripts/setup.sh --uninstall
-rm -rf _bmad-output/ _test-project/
+rm -rf _wdf_output/ _test-project/
 ```
 
 ---

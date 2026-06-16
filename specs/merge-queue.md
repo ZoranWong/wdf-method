@@ -6,7 +6,7 @@
 ## Directory Structure
 
 ```
-_bmad-output/web-dev-flow/
+_wdf_output/
 └── merge-queue/
     ├── queue.yaml              # Queue metadata: next_seq, total_items, config
     ├── .lock                   # Short-lived lock (only during item creation)
