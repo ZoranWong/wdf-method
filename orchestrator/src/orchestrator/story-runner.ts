@@ -26,6 +26,11 @@ function nextSubstep(current: string | null, isFE: boolean): string {
  * StoryRunner manages the lifecycle of individual stories during Phase 4.
  * Handles: worktree creation, story execution, scope validation, git commits, merge.
  */
+export interface StoryRunnerOptions {
+  /** Protected paths sourced from scope_lock.protected_paths in customize.toml. */
+  protectedPaths?: string[];
+}
+
 export class StoryRunner {
   private state: SprintStatusManager;
   private worktree: WorktreeManager;
@@ -33,6 +38,7 @@ export class StoryRunner {
   private agentDispatcher: AgentDispatcher;
   private storiesDir: string;
   private outputDir: string;
+  private protectedPaths: string[];
 
   constructor(
     state: SprintStatusManager,
@@ -40,7 +46,8 @@ export class StoryRunner {
     gateEvaluator: GateEvaluator,
     projectRoot: string,
     storiesDir: string,
-    outputDir: string
+    outputDir: string,
+    options: StoryRunnerOptions = {}
   ) {
     this.state = state;
     this.worktree = worktree;
@@ -48,13 +55,29 @@ export class StoryRunner {
     this.agentDispatcher = new AgentDispatcher(projectRoot, storiesDir, outputDir);
     this.storiesDir = storiesDir;
     this.outputDir = outputDir;
+    // Default protected paths (V3.6) — overridden by config when provided.
+    this.protectedPaths = options.protectedPaths && options.protectedPaths.length > 0
+      ? options.protectedPaths
+      : [
+          'shared/types',
+          'schema/migration',
+          'root/config',
+          'shared/contract',
+          'api/contract',
+          'route/entry',
+          'build/ci',
+        ];
   }
 
   /**
    * Main entry: run the next eligible story from development_order for the given track.
    * Returns the story that was run, or null if no story is ready.
+   *
+   * The returned `serial_only` flag (set by SRG-08 for protected paths) signals
+   * to the scheduler that this story should not have been run alongside others.
+   * Callers can use this hint to drain parallel work before invoking again.
    */
-  async runNextStory(track: Track): Promise<{ storyId: string; status: string } | null> {
+  async runNextStory(track: Track): Promise<{ storyId: string; status: string; serial_only?: boolean } | null> {
     const order = this.state.getDevelopmentOrder();
     const trackStories = order.filter(s => s.track === track || s.track === 'full-stack');
 
@@ -69,7 +92,7 @@ export class StoryRunner {
     return null;
   }
 
-  private async tryRunStory(story: StoryEntry): Promise<{ storyId: string; status: string } | null> {
+  private async tryRunStory(story: StoryEntry): Promise<{ storyId: string; status: string; serial_only?: boolean } | null> {
     const subKey = story.track === 'frontend' ? 'phase_4_10' :
                    story.track === 'backend' ? 'phase_4_4' : 'phase_4_4';
     const isFE = story.track === 'frontend';
@@ -104,8 +127,17 @@ export class StoryRunner {
     // Run Story Ready Gate (SRG checks)
     const gateResult = await this.runStoryReadyGate(story);
     if (!gateResult.all_pass) {
-      const reasons = gateResult.results.filter(r => r.status === 'fail').map(r => r.reason).join('; ');
-      console.log(`  ✗ ${story.story_id}: Story Ready Gate failed — ${reasons}`);
+      const failed = gateResult.results.filter(r => r.status === 'fail');
+      console.error(`  ✗ ${story.story_id}: Story Ready Gate failed (${failed.length} check${failed.length === 1 ? '' : 's'})`);
+      for (const check of failed) {
+        console.error(`    ✗ ${check.id}: ${check.reason}`);
+      }
+      await this.state.appendAudit('story_blocked', {
+        story_id: story.story_id,
+        decision: 'block',
+        reason: 'story_ready_gate',
+        data: { failures: failed.map(f => ({ id: f.id, reason: f.reason })) },
+      });
       return null;
     }
 
@@ -166,7 +198,7 @@ export class StoryRunner {
       await this.worktree.removeStoryWorktree(story.story_id, story.track as Track);
 
       console.log(`  ✓ ${story.story_id}: ${story.title} — MERGED`);
-      return { storyId: story.story_id, status: 'MERGED' };
+      return { storyId: story.story_id, status: 'MERGED', serial_only: gateResult.serial_only };
     }
 
     // Story failed — mark and return
@@ -179,7 +211,7 @@ export class StoryRunner {
     return null;
   }
 
-  private async resumeStory(story: StoryEntry, existing: any, subKey: string): Promise<{ storyId: string; status: string } | null> {
+  private async resumeStory(story: StoryEntry, existing: any, subKey: string): Promise<{ storyId: string; status: string; serial_only?: boolean } | null> {
     const isFE = story.track === 'frontend';
     const lastStep = existing.last_completed_substep;
     const nextStep = nextSubstep(lastStep, isFE);
@@ -242,23 +274,28 @@ export class StoryRunner {
   private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; serial_only: boolean; results: any[] }> {
     const beStories = this.state.getStories(4, 'phase_4_4');
     const feStories = this.state.getStories(4, 'phase_4_10');
-    const activeStories = [...beStories, ...feStories];
+    const statusEntries = [...beStories, ...feStories];
 
-    const protectedPaths = [
-      'shared/types',
-      'schema/migration',
-      'root/config',
-      'shared/contract',
-      'api/contract',
-      'route/entry',
-      'build/ci',
-    ];
+    // SRG-05 needs scope_write to detect overlap, but StoryStatus only carries
+    // status/id. Cross-reference development_order (StoryEntry) which holds
+    // the canonical scope_write declaration.
+    const order = this.state.getDevelopmentOrder();
+    const scopeIndex = new Map<string, string[]>();
+    for (const entry of order) {
+      if (entry.scope_write) scopeIndex.set(entry.story_id, entry.scope_write);
+    }
+
+    const activeStories = statusEntries.map(s => ({
+      id: s.id,
+      status: s.status,
+      scope_write: scopeIndex.get(s.id),
+    }));
 
     return evaluateStoryReadyGate(story, {
       projectRoot: this.worktree.baseDir || process.cwd(),
       storiesDir: this.storiesDir,
       activeStories,
-      protectedPaths,
+      protectedPaths: this.protectedPaths,
       implementationBoundary: this.state.data.global_state.implementation_boundary,
     });
   }
