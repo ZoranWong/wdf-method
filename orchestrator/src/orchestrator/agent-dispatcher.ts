@@ -1,8 +1,15 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 import { spawn, execSync } from 'child_process';
 import { StoryEntry, Track } from './types.js';
 import { appendAudit } from './audit-logger.js';
+import { assertSafeIdentifier } from './command-safety.js';
+import {
+  readResult,
+  validateAgentDispatchResult,
+  agentResultPath,
+  AGENT_RESULT_RELPATH,
+} from '../agent/write-result.js';
 
 /**
  * Agent dispatch configuration.
@@ -519,6 +526,7 @@ export class AgentDispatcher {
 
     return new Promise((origResolve) => {
       const projectRoot = this.projectRoot;
+      const startTime = Date.now();
       const resolve = (result: AgentResult) => {
         appendAudit(projectRoot, 'agent_dispatch_complete', {
           status: result.status === 'CODE_ACCEPTED' ? 'pass' : 'fail',
