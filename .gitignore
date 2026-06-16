@@ -5,6 +5,11 @@ _wdf_output/
 _review/
 .wdf/
 
+# Orchestrator subpackage
+orchestrator/dist/
+orchestrator/node_modules/
+orchestrator/coverage/
+
 # Dependencies
 node_modules/
 
