@@ -6,6 +6,10 @@ import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
 import { StoryEntry, Track, PhaseStatus, StoryStatus } from './types.js';
+import {
+  runAcceptanceChecks,
+  type AcceptanceReport,
+} from './acceptance-runner.js';
 
 /**
  * Sub-step ID mapping for BE and FE stories.
@@ -129,6 +133,32 @@ export class StoryRunner {
     const result = await this.executeStorySteps(story, worktreePath, subKey, isFE);
 
     if (result.success) {
+      // Verify acceptance checks via the safe execution engine before
+      // recording CODE_ACCEPTED. This is a belt-and-braces guard: the
+      // dispatched agent has already self-attested, but we re-run the
+      // declared `acceptance_check` commands here under the validated
+      // spawn-based runner so a non-cooperative agent cannot smuggle a
+      // false PASS past us.
+      const acceptanceReport = await this.verifyAcceptanceChecks(
+        story,
+        worktreePath,
+      );
+      if (!acceptanceReport.all_passed) {
+        const failures = acceptanceReport.results
+          .filter((r) => !r.passed)
+          .map((r) => `${r.command} (${r.error ?? `exit ${r.exit_code}`})`)
+          .join('; ');
+        console.log(
+          `    ✗ ${story.story_id}: Acceptance verification failed — ${failures}`,
+        );
+        await this.state.updateStoryStatus(4, subKey, {
+          ...storyStatus,
+          status: 'BLOCKED',
+          last_completed_substep: isFE ? '4h' : '4g',
+        });
+        return null;
+      }
+
       // Commit CODE_ACCEPTED state
       await this.worktree.commitInWorktree(
         worktreePath, story.story_id, story.title, 'CODE_ACCEPTED',
@@ -467,5 +497,29 @@ export class StoryRunner {
 
     console.log(`  ✓ ${story.story_id} SCOPE EXIT CLEAN — ${changedFiles.length} files, 0 violations`);
     return true;
+  }
+
+  /**
+   * Re-run a story's declared `acceptance_check` commands under the
+   * safe execution engine. Any command that fails validation is
+   * surfaced as a failed result without ever touching the OS. Stories
+   * with no declared checks pass trivially — Story Ready Gate already
+   * prevents stories from reaching Phase 4 without checks where the
+   * project policy demands them.
+   */
+  private async verifyAcceptanceChecks(
+    story: StoryEntry,
+    worktreePath: string,
+  ): Promise<AcceptanceReport> {
+    const cmds = story.acceptance_check ?? [];
+    if (cmds.length === 0) {
+      return { all_passed: true, results: [], total_duration_ms: 0 };
+    }
+    return runAcceptanceChecks(cmds, {
+      cwd: worktreePath,
+      // Story acceptance checks are typically `npm test` / `tsc` runs;
+      // 5 minutes is a sensible upper bound for any single one.
+      timeout_ms: 5 * 60_000,
+    });
   }
 }

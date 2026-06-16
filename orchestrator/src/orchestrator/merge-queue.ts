@@ -1,5 +1,6 @@
 import { SprintStatusManager } from './sprint-status.js';
 import { Track, MergeQueueItem } from './types.js';
+import { runAcceptanceChecks } from './acceptance-runner.js';
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -88,17 +89,31 @@ export class MergeQueueManager {
       // Step 1: Merge without committing
       execSync(`git merge ${item.branch} --no-commit --no-ff`, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
 
-      // Step 2: Run integration checks
-      const checks = item.integration_checks.length > 0 ? item.integration_checks : ['npm run test', 'npm run build'];
-      for (const check of checks) {
-        try {
-          execSync(check, { cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000 });
-        } catch {
-          // Step 3a: Abort — no partial merge
-          execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
-          await this.state.updateMergeItem(item.story_id, { merge_status: 'failed', merge_failed_reason: `Integration check failed: ${check}` });
-          return { merged: false, error: `Integration check failed: ${check}` };
-        }
+      // Step 2: Run integration checks via the safe acceptance runner.
+      // Each declared command is validated against the allowlist +
+      // denylist before launch and executed without a shell. If any
+      // command fails (including validation rejection), abort the
+      // merge so main never sees a partial state.
+      const checks =
+        item.integration_checks.length > 0
+          ? item.integration_checks
+          : ['npm test', 'npm run build'];
+      const report = await runAcceptanceChecks(checks, {
+        cwd: this.projectRoot,
+        timeout_ms: 5 * 60_000,
+      });
+      if (!report.all_passed) {
+        const failed = report.results.find((r) => !r.passed);
+        const reason = failed
+          ? `${failed.command} (${failed.error ?? `exit ${failed.exit_code}`})`
+          : 'unknown failure';
+        // Step 3a: Abort — no partial merge
+        execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
+        await this.state.updateMergeItem(item.story_id, {
+          merge_status: 'failed',
+          merge_failed_reason: `Integration check failed: ${reason}`,
+        });
+        return { merged: false, error: `Integration check failed: ${reason}` };
       }
 
       // Step 3b: All checks passed — commit
