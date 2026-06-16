@@ -2,6 +2,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, resolve } from 'path';
 import { spawn, execSync } from 'child_process';
 import { StoryEntry, Track } from './types.js';
+import { appendAudit } from './audit-logger.js';
 
 /**
  * Agent dispatch configuration.
@@ -140,7 +141,6 @@ export class AgentDispatcher {
     this.projectRoot = projectRoot;
     this.promptBuilder = new AgentPromptBuilder(projectRoot, storiesDir, outputDir);
   }
-
   /**
    * Dispatch a story agent synchronously via Claude Code CLI.
    * Writes the prompt to a temp file and invokes `claude` in the worktree.
@@ -163,7 +163,32 @@ export class AgentDispatcher {
     console.log(`     Worktree: ${config.worktreePath}`);
     console.log(`     Prompt: ${promptFile}`);
 
-    return new Promise((resolve) => {
+    appendAudit(this.projectRoot, 'agent_dispatch_start', {
+      status: 'info',
+      story_id: story.story_id,
+      message: `dispatch ${story.story_id} (${config.track})`,
+      details: {
+        track: config.track,
+        worktree: config.worktreePath,
+        timeout_minutes: config.timeoutMinutes,
+      },
+    });
+
+    return new Promise((origResolve) => {
+      const projectRoot = this.projectRoot;
+      const resolve = (result: AgentResult) => {
+        appendAudit(projectRoot, 'agent_dispatch_complete', {
+          status: result.status === 'CODE_ACCEPTED' ? 'pass' : 'fail',
+          story_id: story.story_id,
+          message: `${result.status} (${(result.durationMs / 1000).toFixed(1)}s): ${result.summary || '-'}`,
+          details: {
+            track: config.track,
+            exit_code: result.exitCode,
+            duration_ms: result.durationMs,
+          },
+        });
+        origResolve(result);
+      };
       const timeoutMs = config.timeoutMinutes * 60 * 1000;
       let timedOut = false;
       let lastOutput = '';

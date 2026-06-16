@@ -6,6 +6,7 @@ import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
+import { appendAudit, readRecentAudit, formatAuditLines } from './audit-logger.js';
 import { WorkflowConfig, AcceptanceGateConfig, ScopeLockConfig, Track, DevMode, TriageMode } from './types.js';
 
 // Dynamic import for TOML parser since it may not be in deps
@@ -185,6 +186,12 @@ export class PhaseOrchestrator {
       const waiting = mq.items.filter(i => i.merge_status === 'waiting_dependency').length;
       lines.push(`Merge Queue: ${queued} queued, ${merged} merged, ${waiting} waiting`);
     }
+
+    // Recent audit log (last 10)
+    lines.push('');
+    lines.push('📋 Recent Audit Logs:');
+    const recent = readRecentAudit(this.projectRoot, 10);
+    lines.push(...formatAuditLines(recent));
 
     return lines.join('\n');
   }
@@ -567,6 +574,12 @@ export class PhaseOrchestrator {
     for (const item of ready) {
       console.log(`    → Merging ${item.story_id} (order ${item.merge_order})...`);
       await this.state.appendAudit('merge_attempt', { story_id: item.story_id, decision: 'approve' });
+      appendAudit(this.projectRoot, 'merge_attempt', {
+        status: 'info',
+        story_id: item.story_id,
+        message: `processing merge order ${item.merge_order}`,
+        details: { merge_order: item.merge_order, branch: item.branch },
+      });
       await this.mergeQueue.markMerging(item.story_id);
 
       try {
@@ -575,10 +588,21 @@ export class PhaseOrchestrator {
         const commitHash = log.split(' ')[0];
         await this.mergeQueue.markMerged(item.story_id, commitHash);
         await this.state.appendAudit('merge_success', { story_id: item.story_id, decision: 'approve', data: { commit: commitHash } });
+        appendAudit(this.projectRoot, 'merge_success', {
+          status: 'pass',
+          story_id: item.story_id,
+          message: `merged at ${commitHash}`,
+          details: { commit: commitHash },
+        });
         console.log(`    ✓ ${item.story_id} merged`);
       } catch (err: any) {
         await this.mergeQueue.markFailed(item.story_id, err.message ?? String(err));
         await this.state.appendAudit('merge_failed', { story_id: item.story_id, decision: 'reject', reason: err.message });
+        appendAudit(this.projectRoot, 'merge_abort', {
+          status: 'fail',
+          story_id: item.story_id,
+          message: `merge failed: ${err.message ?? String(err)}`,
+        });
         console.log(`    ✗ ${item.story_id} merge failed: ${err.message}`);
       }
     }

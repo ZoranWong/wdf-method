@@ -3,6 +3,7 @@ import YAML from 'js-yaml';
 import { GateCard, GateCheck, Track } from './types.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { resolve } from 'path';
+import { appendAudit } from './audit-logger.js';
 
 /**
  * Evaluates Gate Cards to determine if a phase/sub-phase can be entered.
@@ -28,6 +29,17 @@ export class GateEvaluator {
       gateCard.checks.map(check => this.evaluateCheck(check, state, options))
     );
     const all_pass = results.every(r => r.status === 'pass');
+
+    // Audit each check result so reviewers can see exactly which gate fired.
+    for (const r of results) {
+      appendAudit(this.projectRoot, 'gate_check', {
+        status: r.status === 'pass' ? 'pass' : r.status === 'fail' ? 'fail' : 'info',
+        message: r.reason ?? `${r.id}: ${r.status}`,
+        story_id: options?.storyId,
+        details: { check_id: r.id, phase: gateCard.phase, sub_phase: gateCard.sub_phase, track: options?.track },
+      });
+    }
+
     return { all_pass, results };
   }
 

@@ -1,5 +1,6 @@
 import { SprintStatusManager } from './sprint-status.js';
 import { Track, MergeQueueItem } from './types.js';
+import { appendAudit } from './audit-logger.js';
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -39,6 +40,13 @@ export class MergeQueueManager {
       depends_on: dependsOn,
       merge_order: order,
       integration_checks: integrationChecks,
+    });
+
+    appendAudit(this.projectRoot, 'merge_enqueue', {
+      status: 'info',
+      story_id: storyId,
+      message: `enqueued ${storyId} on ${branch} (order ${order})`,
+      details: { track, depends_on: dependsOn, queue_item_id: queueItemId },
     });
   }
 
@@ -84,6 +92,12 @@ export class MergeQueueManager {
    */
   async attemptAtomicMerge(item: MergeQueueItem): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
     const { execSync } = await import('child_process');
+    appendAudit(this.projectRoot, 'merge_attempt', {
+      status: 'info',
+      story_id: item.story_id,
+      message: `atomic merge start ${item.branch}`,
+      details: { branch: item.branch, integration_checks: item.integration_checks },
+    });
     try {
       // Step 1: Merge without committing
       execSync(`git merge ${item.branch} --no-commit --no-ff`, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
@@ -97,6 +111,12 @@ export class MergeQueueManager {
           // Step 3a: Abort — no partial merge
           execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
           await this.state.updateMergeItem(item.story_id, { merge_status: 'failed', merge_failed_reason: `Integration check failed: ${check}` });
+          appendAudit(this.projectRoot, 'merge_abort', {
+            status: 'fail',
+            story_id: item.story_id,
+            message: `integration check failed: ${check}`,
+            details: { branch: item.branch, failed_check: check },
+          });
           return { merged: false, error: `Integration check failed: ${check}` };
         }
       }
@@ -107,10 +127,22 @@ export class MergeQueueManager {
 
       const log = execSync('git log --oneline -1', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
       const commitHash = log.trim().split(' ')[0];
+      appendAudit(this.projectRoot, 'merge_success', {
+        status: 'pass',
+        story_id: item.story_id,
+        message: `merged ${item.branch} → ${commitHash}`,
+        details: { commit: commitHash, branch: item.branch },
+      });
       return { merged: true, commitHash };
     } catch (err: any) {
       // If merge itself fails (not just checks), abort
       try { execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' }); } catch {}
+      appendAudit(this.projectRoot, 'merge_abort', {
+        status: 'fail',
+        story_id: item.story_id,
+        message: `merge aborted: ${err.message ?? String(err)}`,
+        details: { branch: item.branch },
+      });
       return { merged: false, error: err.message ?? String(err) };
     }
   }
