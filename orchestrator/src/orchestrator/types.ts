@@ -246,6 +246,32 @@ export interface SprintStatus {
   change_requests: ChangeRequest[];
 }
 
+/**
+ * Structured result returned by a dispatched story agent.
+ *
+ * The agent is required to write a JSON document conforming to this shape
+ * to `_wdf_output/agent-result.json` inside its worktree. The orchestrator
+ * reads that file on completion — no regex / stdout parsing is performed.
+ *
+ * `status` mapping:
+ *   - 'success' → story is CODE_ACCEPTED
+ *   - 'failed'  → agent ran but did not pass acceptance
+ *   - 'timeout' → orchestrator timed the agent out before result file appeared
+ *   - 'blocked' → cross-track dependency missing; will retry later
+ */
+export type AgentDispatchStatus = 'success' | 'failed' | 'timeout' | 'blocked';
+
+export interface AgentDispatchResult {
+  status: AgentDispatchStatus;
+  story_id: string;
+  files_changed: string[];
+  tests_passed: number;
+  tests_total: number;
+  summary: string;
+  duration_ms: number;
+  error?: string;
+}
+
 export interface AcceptanceGateConfig {
   code_acceptance_min_coverage: number;
   code_acceptance_require_lint: boolean;
