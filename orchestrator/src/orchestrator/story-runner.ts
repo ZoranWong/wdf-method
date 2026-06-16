@@ -6,6 +6,8 @@ import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
 import { StoryEntry, Track, PhaseStatus, StoryStatus, ScopeLockConfig } from './types.js';
+import { evaluateStoryReadyGate } from './story-ready-gate.js';
+import { runAcceptanceChecks } from './acceptance-runner.js';
 import {
   validateScopeLock,
   validateActualChangesAgainstScope,
@@ -302,15 +304,12 @@ export class StoryRunner {
    * Story Ready Gate V3.6: validates all 9 SRG gates via the extracted
    * story-ready-gate module. Returns { all_pass, serial_only, results }.
    */
-  private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
-    const { results } = await this.runBaseSRGChecks(story);
-    // V3.6 additions
-    this.addSRG04_PathSafety(story, results);
-    this.addSRG08_ProtectedPaths(story, results);
-    this.addSRG09_CommandSafety(story, results);
+  private async runStoryReadyGate(story: StoryEntry): Promise<{ all_pass: boolean; serial_only: boolean; results: any[] }> {
+    const gateResult = await this.runBaseSRGChecks(story);
     // Task 7: Scope-Lock pre-execution gate
-    await this.addScopeLockCheck(story, results);
-    return { all_pass: results.every(r => r.status === 'pass'), results };
+    await this.addScopeLockCheck(story, gateResult.results);
+    const all_pass = gateResult.results.every(r => r.status === 'pass');
+    return { all_pass, serial_only: gateResult.serial_only, results: gateResult.results };
   }
 
   /**
@@ -362,7 +361,7 @@ export class StoryRunner {
   }
 
   /** SRG-01~03,05~07: Base checks from V3.1 */
-  private async runBaseSRGChecks(story: StoryEntry): Promise<{ all_pass: boolean; results: any[] }> {
+  private async runBaseSRGChecks(story: StoryEntry): Promise<{ all_pass: boolean; serial_only: boolean; results: any[] }> {
     const results: { id: string; status: 'pass' | 'fail'; reason?: string }[] = [];
     // SRG-02: scope_write non-empty
     if (!story.scope_write || story.scope_write.length === 0) {

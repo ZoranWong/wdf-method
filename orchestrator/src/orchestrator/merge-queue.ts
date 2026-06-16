@@ -6,6 +6,42 @@ import {
   applyEnforcementMode,
   summarizeViolations,
 } from './scope-lock.js';
+import { assertSafeIdentifier } from './command-safety.js';
+import { appendAudit } from './audit-logger.js';
+
+/**
+ * Validate a merge queue item before enqueuing.
+ * Ensures branch names are safe and commands are not shell-injection risks.
+ */
+export function validateMergeQueueItem(item: MergeQueueItem): void {
+  // Validate branch name safety (path traversal / shell injection)
+  assertSafeIdentifier(item.branch, 'branch');
+
+  // Validate integration checks: reject any command with forbidden substrings
+  const forbidden = ['&&', '||', ';', '|', '`', '$('];
+  for (const cmd of item.integration_checks ?? []) {
+    for (const bad of forbidden) {
+      if (cmd.includes(bad)) {
+        throw new Error(`Unsafe integration check command: contains '${bad}'`);
+      }
+    }
+  }
+}
+
+/**
+ * Detect files changed by both stories that are NOT declared in either story's scope_write.
+ * These are "hidden overlaps" that indicate accidental cross-story changes or missing scope declarations.
+ */
+export function detectHiddenOverlapsFromFileLists(
+  currentFiles: string[],
+  otherFiles: string[],
+  currentScope: string[],
+  otherScope: string[],
+): string[] {
+  const changedByBoth = currentFiles.filter(f => otherFiles.includes(f));
+  const allDeclaredScope = new Set([...currentScope, ...otherScope]);
+  return changedByBoth.filter(f => !allDeclaredScope.has(f));
+}
 
 /**
  * Dependency-ordered merge queue for Phase 4.
@@ -123,8 +159,6 @@ export class MergeQueueManager {
    *   - permissive  → silently continue.
    */
   async attemptAtomicMerge(item: MergeQueueItem): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
-    const { execSync } = await import('child_process');
-
     // ── Step 0: Scope-Lock pre-merge gate (Task 7, post-merge stage) ──
     const scopeBlock = await this.runScopeLockPreMergeGate(item);
     if (scopeBlock) {
@@ -136,26 +170,15 @@ export class MergeQueueManager {
     }
 
     try {
-      // Step 1: Merge without committing
-      execSync(`git merge ${item.branch} --no-commit --no-ff`, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
-
-      // Step 2: Run integration checks
-      const checks = item.integration_checks.length > 0 ? item.integration_checks : ['npm run test', 'npm run build'];
-      for (const check of checks) {
-        try {
-          execSync(check, { cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000 });
-        } catch {
-          // Step 3a: Abort — no partial merge
-          execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
-          await this.state.updateMergeItem(item.story_id, { merge_status: 'failed', merge_failed_reason: `Integration check failed: ${check}` });
-          appendAudit(this.projectRoot, 'merge_abort', {
-            status: 'fail',
-            story_id: item.story_id,
-            message: `integration check failed: ${check}`,
-            details: { branch: item.branch, failed_check: check },
-          });
-          return { merged: false, error: `Integration check failed: ${check}` };
-        }
+      // Step 1: Merge without committing — use spawnSync with arg array for safety
+      const mergeResult = spawnSync('git', ['merge', item.branch, '--no-commit', '--no-ff'], {
+        cwd: this.projectRoot,
+        stdio: 'pipe',
+        timeout: 60_000,
+        encoding: 'utf8',
+      });
+      if (mergeResult.status !== 0) {
+        throw new Error(`git merge failed: ${mergeResult.stderr || mergeResult.stdout}`);
       }
 
       // Step 2: Run integration checks via the safe acceptance runner.
@@ -177,7 +200,7 @@ export class MergeQueueManager {
           ? `${failed.command} (${failed.error ?? `exit ${failed.exit_code}`})`
           : 'unknown failure';
         // Step 3a: Abort — no partial merge
-        execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' });
+        spawnSync('git', ['merge', '--abort'], { cwd: this.projectRoot, stdio: 'pipe' });
         await this.state.updateMergeItem(item.story_id, {
           merge_status: 'failed',
           merge_failed_reason: `Integration check failed: ${reason}`,
@@ -196,8 +219,15 @@ export class MergeQueueManager {
         return { merged: false, error: `Git commit failed: ${commitResult.stderr || commitResult.stdout}` };
       }
 
-      const log = execSync('git log --oneline -1', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
-      const commitHash = log.trim().split(' ')[0];
+      const logResult = spawnSync('git', ['log', '--oneline', '-1'], {
+        cwd: this.projectRoot,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      if (logResult.status !== 0) {
+        return { merged: false, error: `Failed to get commit hash: ${logResult.stderr || logResult.stdout}` };
+      }
+      const commitHash = logResult.stdout.trim().split(' ')[0];
       appendAudit(this.projectRoot, 'merge_success', {
         status: 'pass',
         story_id: item.story_id,
@@ -207,7 +237,7 @@ export class MergeQueueManager {
       return { merged: true, commitHash };
     } catch (err: any) {
       // If merge itself fails (not just checks), abort
-      try { execSync('git merge --abort', { cwd: this.projectRoot, stdio: 'pipe' }); } catch {}
+      try { spawnSync('git', ['merge', '--abort'], { cwd: this.projectRoot, stdio: 'pipe' }); } catch {}
       appendAudit(this.projectRoot, 'merge_abort', {
         status: 'fail',
         story_id: item.story_id,
@@ -244,20 +274,37 @@ export class MergeQueueManager {
 
     let changed: string[] = [];
     try {
-      const { execSync } = await import('child_process');
       // Diff branch against the merge-base with master/main. Try both refs.
       let diffOut = '';
       try {
-        diffOut = execSync(
-          `git diff --name-only $(git merge-base HEAD ${item.branch})..${item.branch}`,
-          { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe', shell: '/bin/sh' as any },
-        );
+        // First: get the merge-base commit
+        const mergeBaseResult = spawnSync('git', ['merge-base', 'HEAD', item.branch], {
+          cwd: this.projectRoot,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        });
+        if (mergeBaseResult.status === 0) {
+          const mergeBase = mergeBaseResult.stdout.trim();
+          // Then: diff from merge-base to branch
+          const diffResult = spawnSync('git', ['diff', '--name-only', `${mergeBase}..${item.branch}`], {
+            cwd: this.projectRoot,
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+          if (diffResult.status === 0) {
+            diffOut = diffResult.stdout;
+          }
+        }
       } catch {
         // Fallback: simple two-dot diff between current HEAD and branch.
-        diffOut = execSync(
-          `git diff --name-only HEAD..${item.branch}`,
-          { cwd: this.projectRoot, encoding: 'utf8', stdio: 'pipe' },
-        );
+        const diffResult = spawnSync('git', ['diff', '--name-only', `HEAD..${item.branch}`], {
+          cwd: this.projectRoot,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        });
+        if (diffResult.status === 0) {
+          diffOut = diffResult.stdout;
+        }
       }
       changed = diffOut.split('\n').map((s) => s.trim()).filter(Boolean);
     } catch (err: any) {

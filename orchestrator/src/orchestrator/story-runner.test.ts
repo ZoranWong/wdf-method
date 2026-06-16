@@ -167,6 +167,13 @@ describe('StoryRunner — Story Ready Gate integration', () => {
     vi.spyOn(w, 'mergeToMain').mockResolvedValue(undefined);
     vi.spyOn(w, 'removeStoryWorktree').mockResolvedValue(undefined);
 
+    // Stub acceptance check verification (would run npm commands).
+    vi.spyOn(runner as any, 'verifyAcceptanceChecks').mockResolvedValue({
+      all_passed: true,
+      results: [],
+      total_duration_ms: 0,
+    });
+
     const dispatcher = (runner as any).agentDispatcher;
     vi.spyOn(dispatcher, 'dispatchStoryAgent').mockResolvedValue({
       status: 'CODE_ACCEPTED',
@@ -196,6 +203,13 @@ describe('StoryRunner — Story Ready Gate integration', () => {
     vi.spyOn(w, 'commitInWorktree').mockResolvedValue(undefined);
     vi.spyOn(w, 'mergeToMain').mockResolvedValue(undefined);
     vi.spyOn(w, 'removeStoryWorktree').mockResolvedValue(undefined);
+
+    // Stub acceptance check verification (would run npm commands).
+    vi.spyOn(runner as any, 'verifyAcceptanceChecks').mockResolvedValue({
+      all_passed: true,
+      results: [],
+      total_duration_ms: 0,
+    });
 
     const dispatcher = (runner as any).agentDispatcher;
     vi.spyOn(dispatcher, 'dispatchStoryAgent').mockResolvedValue({
