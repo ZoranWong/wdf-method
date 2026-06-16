@@ -855,7 +855,7 @@ dependency_wait_timeout_minutes = 15 # Max wait for blocked dependencies before 
 
 [agent_communication]
 enabled = true
-signal_dir = "/tmp/web-dev-flow/signals"
+signal_dir = "~/.wdf-method/signals"
 heartbeat_interval_seconds = 30          # Agent heartbeat frequency
 pause_timeout_seconds = 300              # Max wait for agent to pause
 heartbeat_timeout_seconds = 120          # Agent considered dead after this

@@ -83,8 +83,6 @@ export declare class PhaseOrchestrator {
      * Get auto-run configuration from customize.toml, with defaults.
      */
     private getAutoRunConfig;
-    private loadConfig;
-    private resolveConfigPath;
     private getScopeLockConfig;
     /**
      * Get the current active phase and sub-phase for status display.
@@ -98,5 +96,11 @@ export declare class PhaseOrchestrator {
      * Display merge queue status.
      */
     displayMergeQueue(): string;
+    /** Gracefully pause the workflow */
+    pause(reason?: string): Promise<string>;
+    /** Resume from paused state */
+    resume(): Promise<string>;
+    /** Check if pause signal is active (called before each story dispatch) */
+    private checkPauseSignal;
 }
 //# sourceMappingURL=orchestrator.d.ts.map

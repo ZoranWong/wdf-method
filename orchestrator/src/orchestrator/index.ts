@@ -3,6 +3,7 @@ import { SprintStatusValidator } from './state-validator.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { existsSync } from 'fs';
 import { resolve, join } from 'path';
+import { loadConfig, getSprintTrackingPath, getStatusDir, getSignalDir } from './config.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -43,7 +44,8 @@ async function main() {
       break;
 
     case 'validate-state': {
-      const trackingPath = resolve(projectRoot, '_bmad-output/web-dev-flow/sprint-status.yaml');
+      const cfg = loadConfig(projectRoot, { silent: true }).config;
+      const trackingPath = getSprintTrackingPath(cfg, projectRoot);
       if (!existsSync(trackingPath)) {
         console.log('No sprint-status.yaml found — nothing to validate.');
         process.exit(0);
@@ -57,6 +59,7 @@ async function main() {
 
     case 'health': {
       const isFull = args.includes('--full');
+      const cfg = loadConfig(projectRoot, { silent: true }).config;
       if (isFull) {
         console.log('╔══════════════════════════════════════════╗');
         console.log('║   wdf-method V3.6 — Full Health Check    ║');
@@ -73,10 +76,10 @@ async function main() {
         // Disk
         try { const df = require('child_process').execSync('df -h .', { encoding: 'utf8', cwd: projectRoot }).trim().split('\n')[1]; results.push(['Disk', true, df.split(/\s+/)[3] + ' available']); } catch { results.push(['Disk', false, 'Cannot check']); }
         // Signals
-        const signalDir = join(require('os').homedir(), '.wdf-method', 'signals');
+        const signalDir = getSignalDir(cfg, projectRoot);
         results.push(['Signals dir', existsSync(signalDir), existsSync(signalDir) ? signalDir : 'Not found']);
         // Status files
-        const statusDir = join(projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+        const statusDir = getStatusDir(cfg, projectRoot);
         if (existsSync(statusDir)) {
           const files = require('fs').readdirSync(statusDir).filter((f: string) => f.endsWith('.yaml'));
           results.push(['Status files', files.length > 0, `${files.length} files: ${files.join(', ')}`]);

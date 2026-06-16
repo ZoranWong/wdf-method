@@ -5,6 +5,10 @@ import { homedir } from 'os';
 // V3.6: Signals live in user home, outside any git worktree.
 // All worktrees (main + story/*) share the same home directory.
 // Survives reboots, protected by user filesystem permissions.
+//
+// The default location is ~/.wdf-method/signals/ but it is overridable
+// via [agent_communication].signal_dir in customize.toml. The orchestrator
+// configures the path on startup by calling SignalManager.setSignalDir().
 let SIGNAL_DIR = join(homedir(), '.wdf-method', 'signals');
 
 interface PauseCommand {
@@ -29,6 +33,16 @@ interface AgentStatus {
 export class SignalManager {
   // Signals at ~/.wdf-method/signals/ — outside all git worktrees, persists across reboots
   // No need for init() — path is constant and always accessible from any worktree
+
+  /** Override the signal directory (called by orchestrator from customize.toml). */
+  static setSignalDir(dir: string): void {
+    SIGNAL_DIR = dir;
+  }
+
+  /** Read the current signal directory (for diagnostics). */
+  static getSignalDir(): string {
+    return SIGNAL_DIR;
+  }
 
   /** Write global pause signal */
   static pauseAll(reason?: string): void {

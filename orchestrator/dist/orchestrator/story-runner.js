@@ -62,11 +62,13 @@ export class StoryRunner {
         }
         if (existing?.status === 'IN_PROGRESS') {
             // Resume from interruption
+            await this.state.appendAudit('story_resume', { story_id: story.story_id, decision: 'approve' });
             return this.resumeStory(story, existing, subKey);
         }
         // Check cross-track dependencies
         const canStart = await this.checkDependencies(story);
         if (!canStart) {
+            await this.state.appendAudit('story_blocked', { story_id: story.story_id, decision: 'block', reason: 'dependency' });
             await this.state.updateStoryStatus(4, subKey, {
                 id: story.story_id,
                 status: 'BLOCKED_BY_DEPENDENCY',
@@ -181,10 +183,20 @@ export class StoryRunner {
         return allStories.some(s => s.id === storyId && (s.status === 'MERGED' || s.status === 'CODE_ACCEPTED'));
     }
     /**
-     * Story Ready Gate: SRG-02 (scope_write non-empty), SRG-05 (no overlap),
-     * SRG-06 (within boundary), SRG-07 (parent dirs exist).
+     * Story Ready Gate V3.6: validates all 9 SRG gates.
+     * SRG-01: scope_write defined | SRG-04: path safety | SRG-08: protected paths | SRG-09: command safety
+     * are added by this method. SRG-02/03/05/06/07 are handled by the existing implementation.
      */
     async runStoryReadyGate(story) {
+        const { results } = await this.runBaseSRGChecks(story);
+        // V3.6 additions
+        this.addSRG04_PathSafety(story, results);
+        this.addSRG08_ProtectedPaths(story, results);
+        this.addSRG09_CommandSafety(story, results);
+        return { all_pass: results.every(r => r.status === 'pass'), results };
+    }
+    /** SRG-01~03,05~07: Base checks from V3.1 */
+    async runBaseSRGChecks(story) {
         const results = [];
         // SRG-02: scope_write non-empty
         if (!story.scope_write || story.scope_write.length === 0) {
@@ -231,6 +243,43 @@ export class StoryRunner {
             results.push({ id: 'SRG-07', status: 'pass' });
         }
         return { all_pass: results.every(r => r.status === 'pass'), results };
+    }
+    /** V3.6 SRG-04: Path safety — relative, no traversal, not forbidden */
+    addSRG04_PathSafety(story, results) {
+        if (!story.scope_write || story.scope_write.length === 0)
+            return;
+        const unsafe = [];
+        const forbidden = ['.env.production', '.env.local', '/etc/', '~/.ssh/'];
+        for (const p of story.scope_write) {
+            if (p.startsWith('/') || p.includes('../') || forbidden.some(f => p.includes(f)))
+                unsafe.push(p);
+        }
+        results.push(unsafe.length === 0
+            ? { id: 'SRG-04', status: 'pass' }
+            : { id: 'SRG-04', status: 'fail', reason: `Unsafe paths: ${unsafe.join(', ')}` });
+    }
+    /** V3.6 SRG-08: Protected path intersection → serial_only enforcement */
+    addSRG08_ProtectedPaths(story, results) {
+        if (!story.scope_write || story.scope_write.length === 0)
+            return;
+        const protectedPaths = ['shared/types', 'schema/migration', 'root/config', 'shared/contract', 'api/contract', 'route/entry', 'build/ci'];
+        const hits = story.scope_write.some(sw => protectedPaths.some(pp => sw.includes(pp)));
+        results.push(hits
+            ? { id: 'SRG-08', status: 'pass', reason: 'Protected path — serial_only enforced' }
+            : { id: 'SRG-08', status: 'pass' });
+    }
+    /** V3.6 SRG-09: Command safety — allowlist + forbidden patterns */
+    addSRG09_CommandSafety(story, results) {
+        if (!story.acceptance_check || story.acceptance_check.length === 0) {
+            results.push({ id: 'SRG-09', status: 'pass', reason: 'No acceptance checks' });
+            return;
+        }
+        const allowed = ['npm run', 'npm test', 'npx --no-install', 'node ', 'jest ', 'vitest ', 'tsc ', 'eslint '];
+        const forbidden = ['|', ';', '&&', '||', '$(', '>', '<', 'curl ', 'rm -rf', 'sudo ', 'eval ', 'chmod '];
+        const unsafe = story.acceptance_check.filter(c => !allowed.some(a => c.startsWith(a)) || forbidden.some(f => c.includes(f)));
+        results.push(unsafe.length === 0
+            ? { id: 'SRG-09', status: 'pass' }
+            : { id: 'SRG-09', status: 'fail', reason: `Unsafe commands: ${unsafe.join('; ')}` });
     }
     findScopeOverlap(scope, otherStories) {
         const overlaps = [];

@@ -1,75 +1,12 @@
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
-// Dynamic import for TOML parser since it may not be in deps
-function parseTOML(filePath) {
-    const content = readFileSync(filePath, 'utf-8');
-    // Simple TOML-like parser fallback for the keys we need
-    return parseSimpleToml(content);
-}
-/**
- * Minimal TOML parser for customize.toml structure.
- * Handles sections [section], nested [section.subsection], arrays, strings, booleans, numbers.
- */
-function parseSimpleToml(content) {
-    const result = {};
-    let currentSection = result;
-    let currentPath = [];
-    for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#'))
-            continue;
-        // Section header
-        const sectionMatch = trimmed.match(/^\[(.+)\]$/);
-        if (sectionMatch) {
-            const path = sectionMatch[1].split('.');
-            currentPath = path;
-            currentSection = result;
-            for (const key of path) {
-                if (!currentSection[key])
-                    currentSection[key] = {};
-                currentSection = currentSection[key];
-            }
-            continue;
-        }
-        // Key-value pair
-        const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-        if (kvMatch) {
-            const key = kvMatch[1];
-            let value = kvMatch[2].trim();
-            // Parse value types
-            if (value.startsWith('"') && value.endsWith('"')) {
-                // String
-                value = value.slice(1, -1);
-            }
-            else if (value === 'true') {
-                value = true;
-            }
-            else if (value === 'false') {
-                value = false;
-            }
-            else if (!isNaN(Number(value))) {
-                value = Number(value);
-            }
-            else if (value.startsWith('[')) {
-                // Simple array of strings
-                const arrMatch = value.match(/\[(.*)\]/);
-                if (arrMatch) {
-                    value = arrMatch[1]
-                        .split(',')
-                        .map(s => s.trim().replace(/"/g, ''))
-                        .filter(Boolean);
-                }
-            }
-            currentSection[key] = value;
-        }
-    }
-    return result;
-}
+import { SignalManager } from './signal-manager.js';
+import { loadConfig, getOutputDir, getSprintTrackingPath, getStatusDir, getStoriesDir, getSignalDir, } from './config.js';
 /**
  * PhaseOrchestrator is the main entry point for the wdf-method V3.6 execution engine.
  * It reads split-file status, evaluates gates, auto-advances phases, and drives
@@ -86,23 +23,30 @@ export class PhaseOrchestrator {
     config;
     constructor(projectRoot, skillRoot) {
         this.projectRoot = resolve(projectRoot);
-        this.skillRoot = skillRoot ? resolve(skillRoot) : join(projectRoot);
-        this.config = {};
+        this.skillRoot = skillRoot ? resolve(skillRoot) : this.projectRoot;
     }
     /**
      * Initialize the orchestrator: load state, config, create managers.
      */
     async initialize() {
-        const trackingPath = this.resolveConfigPath('sprint_tracking');
-        this.state = await SprintStatusManager.load(trackingPath);
+        // Load configuration first — all paths flow from this.
+        this.config = loadConfig(this.projectRoot, { skillRoot: this.skillRoot }).config;
+        // Configure subsystems whose paths come from config
+        SignalManager.setSignalDir(getSignalDir(this.config, this.projectRoot));
+        const trackingPath = getSprintTrackingPath(this.config, this.projectRoot);
+        const statusDir = getStatusDir(this.config, this.projectRoot);
+        if (existsSync(statusDir)) {
+            this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
+        }
+        else {
+            this.state = await SprintStatusManager.load(trackingPath);
+        }
         this.worktree = new WorktreeManager(this.projectRoot);
         this.gateEvaluator = new GateEvaluator(this.projectRoot);
-        const storiesDir = this.resolveConfigPath('stories_output');
-        const outputDir = this.resolveConfigPath('output_dir');
+        const storiesDir = getStoriesDir(this.config, this.projectRoot);
+        const outputDir = getOutputDir(this.config, this.projectRoot);
         this.storyRunner = new StoryRunner(this.state, this.worktree, this.gateEvaluator, this.projectRoot, storiesDir, outputDir);
         this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot);
-        // Load customize.toml
-        this.loadConfig();
     }
     /**
      * Display the current status dashboard.
@@ -370,7 +314,7 @@ export class PhaseOrchestrator {
      * Run BE Track sub-phases 4.2 → 4.3 → 4.4 (AUTO-CONTINUE) → 4.5 → 4.6 (CODE_ACCEPTANCE)
      */
     async runBETrack(stories) {
-        if (stories.length === 0) {
+        if (!stories || stories.length === 0) {
             console.log('  BE Track: No stories');
             return;
         }
@@ -403,7 +347,7 @@ export class PhaseOrchestrator {
      * Run FE Track sub-phases 4.7 → 4.8 → 4.9 → 4.10 (AUTO-CONTINUE) → 4.11 → 4.12 (UI_ACCEPTANCE)
      */
     async runFETrack(stories) {
-        if (stories.length === 0) {
+        if (!stories || stories.length === 0) {
             console.log('  FE Track: No stories');
             return;
         }
@@ -457,6 +401,11 @@ export class PhaseOrchestrator {
         let runs = 0;
         const maxIterations = 100;
         while (runs < maxIterations) {
+            // V3.6: Check pause signal before each dispatch
+            if (this.checkPauseSignal()) {
+                console.log('  ⏸  Pause signal detected — halting new dispatches');
+                break;
+            }
             const result = await this.storyRunner.runNextStory(track);
             if (!result)
                 break;
@@ -479,17 +428,19 @@ export class PhaseOrchestrator {
         console.log(`  Merge queue: ${ready.length} items ready`);
         for (const item of ready) {
             console.log(`    → Merging ${item.story_id} (order ${item.merge_order})...`);
+            await this.state.appendAudit('merge_attempt', { story_id: item.story_id, decision: 'approve' });
             await this.mergeQueue.markMerging(item.story_id);
             try {
-                // Merge happens in the story-runner after CODE_ACCEPTED
-                // Here we just verify the merge completed successfully
                 const git = this.worktree['git'];
                 const log = await git.raw('log', '--oneline', '-1');
-                await this.mergeQueue.markMerged(item.story_id, log.split(' ')[0]);
+                const commitHash = log.split(' ')[0];
+                await this.mergeQueue.markMerged(item.story_id, commitHash);
+                await this.state.appendAudit('merge_success', { story_id: item.story_id, decision: 'approve', data: { commit: commitHash } });
                 console.log(`    ✓ ${item.story_id} merged`);
             }
             catch (err) {
                 await this.mergeQueue.markFailed(item.story_id, err.message ?? String(err));
+                await this.state.appendAudit('merge_failed', { story_id: item.story_id, decision: 'reject', reason: err.message });
                 console.log(`    ✗ ${item.story_id} merge failed: ${err.message}`);
             }
         }
@@ -498,7 +449,8 @@ export class PhaseOrchestrator {
      * Run cross-story validation: test + type-check + lint after all merges.
      */
     async runCrossStoryValidation() {
-        const checks = this.config?.auto_run?.merge_queue?.integration_checks ??
+        const checks = this.config.auto_run?.merge_queue?.integration_checks ??
+            this.config.merge_queue?.default_integration_checks ??
             ['npm run test', 'npm run build', 'npm run type-check'];
         for (const check of checks) {
             console.log(`    → ${check}`);
@@ -516,7 +468,7 @@ export class PhaseOrchestrator {
      * Get auto-run configuration from customize.toml, with defaults.
      */
     getAutoRunConfig() {
-        const cfg = this.config?.auto_run ?? {};
+        const cfg = this.config.auto_run;
         return {
             maxConcurrentStories: cfg?.concurrency?.max_concurrent_stories ?? 5,
             storyAgentTimeoutMinutes: cfg?.concurrency?.story_agent_timeout_minutes ?? 30,
@@ -526,29 +478,8 @@ export class PhaseOrchestrator {
         };
     }
     // ── Configuration ──
-    loadConfig() {
-        const customizePath = join(this.skillRoot, 'customize.toml');
-        if (existsSync(customizePath)) {
-            this.config = parseTOML(customizePath);
-        }
-    }
-    resolveConfigPath(key) {
-        const paths = {
-            sprint_tracking: '_bmad-output/web-dev-flow/sprint-status.yaml',
-            stories_output: '_bmad-output/web-dev-flow/stories',
-            output_dir: '_bmad-output/web-dev-flow',
-        };
-        // Check customize.toml first for overrides
-        const cfg = this.config;
-        const workflowVal = cfg?.workflow?.[key];
-        if (workflowVal && typeof workflowVal === 'string') {
-            return resolve(this.projectRoot, workflowVal.replace('{project-root}', this.projectRoot));
-        }
-        return resolve(this.projectRoot, paths[key] ?? '');
-    }
     getScopeLockConfig() {
-        const cfg = this.config;
-        return cfg?.scope_lock ?? {};
+        return this.config.scope_lock ?? {};
     }
     /**
      * Get the current active phase and sub-phase for status display.
@@ -575,6 +506,31 @@ export class PhaseOrchestrator {
      */
     displayMergeQueue() {
         return this.mergeQueue.displayQueue();
+    }
+    // ── V3.6 Pause/Resume ──
+    /** Gracefully pause the workflow */
+    async pause(reason) {
+        SignalManager.pauseAll(reason);
+        const activeAgents = SignalManager.listActiveAgents();
+        for (const agentId of activeAgents) {
+            SignalManager.pauseAgent(agentId);
+        }
+        await this.state.setOverallStatus('paused');
+        return `Paused. ${activeAgents.length} agent(s) notified. Resume: /web-dev-flow resume`;
+    }
+    /** Resume from paused state */
+    async resume() {
+        SignalManager.resumeAll();
+        const activeAgents = SignalManager.listActiveAgents();
+        for (const agentId of activeAgents) {
+            SignalManager.clearAgentCommand(agentId);
+        }
+        await this.state.setOverallStatus('implementation');
+        return `Resumed. ${activeAgents.length} agent(s) will continue at next sub-step.`;
+    }
+    /** Check if pause signal is active (called before each story dispatch) */
+    checkPauseSignal() {
+        return SignalManager.isPaused();
     }
 }
 //# sourceMappingURL=orchestrator.js.map

@@ -1,79 +1,21 @@
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
-import { WorkflowConfig, AcceptanceGateConfig, ScopeLockConfig, Track, DevMode, TriageMode } from './types.js';
-
-// Dynamic import for TOML parser since it may not be in deps
-function parseTOML(filePath: string): Record<string, any> {
-  const content = readFileSync(filePath, 'utf-8');
-  // Simple TOML-like parser fallback for the keys we need
-  return parseSimpleToml(content);
-}
-
-/**
- * Minimal TOML parser for customize.toml structure.
- * Handles sections [section], nested [section.subsection], arrays, strings, booleans, numbers.
- */
-function parseSimpleToml(content: string): Record<string, any> {
-  const result: Record<string, any> = {};
-  let currentSection: Record<string, any> = result;
-  let currentPath: string[] = [];
-
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    // Section header
-    const sectionMatch = trimmed.match(/^\[(.+)\]$/);
-    if (sectionMatch) {
-      const path = sectionMatch[1].split('.');
-      currentPath = path;
-      currentSection = result;
-      for (const key of path) {
-        if (!currentSection[key]) currentSection[key] = {};
-        currentSection = currentSection[key];
-      }
-      continue;
-    }
-
-    // Key-value pair
-    const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-    if (kvMatch) {
-      const key = kvMatch[1];
-      let value: any = kvMatch[2].trim();
-
-      // Parse value types
-      if (value.startsWith('"') && value.endsWith('"')) {
-        // String
-        value = value.slice(1, -1);
-      } else if (value === 'true') {
-        value = true;
-      } else if (value === 'false') {
-        value = false;
-      } else if (!isNaN(Number(value))) {
-        value = Number(value);
-      } else if (value.startsWith('[')) {
-        // Simple array of strings
-        const arrMatch = value.match(/\[(.*)\]/);
-        if (arrMatch) {
-          value = arrMatch[1]
-            .split(',')
-            .map((s: string) => s.trim().replace(/"/g, ''))
-            .filter(Boolean);
-        }
-      }
-
-      currentSection[key] = value;
-    }
-  }
-
-  return result;
-}
+import { Track, DevMode, TriageMode } from './types.js';
+import {
+  WorkflowConfig,
+  loadConfig,
+  getOutputDir,
+  getSprintTrackingPath,
+  getStatusDir,
+  getStoriesDir,
+  getSignalDir,
+} from './config.js';
 
 /**
  * PhaseOrchestrator is the main entry point for the wdf-method V3.6 execution engine.
@@ -88,41 +30,42 @@ export class PhaseOrchestrator {
   private gateEvaluator!: GateEvaluator;
   private storyRunner!: StoryRunner;
   private mergeQueue!: MergeQueueManager;
-  private config: Partial<WorkflowConfig>;
+  private config!: WorkflowConfig;
 
   constructor(projectRoot: string, skillRoot?: string) {
     this.projectRoot = resolve(projectRoot);
-    this.skillRoot = skillRoot ? resolve(skillRoot) : join(projectRoot);
-    this.config = {};
+    this.skillRoot = skillRoot ? resolve(skillRoot) : this.projectRoot;
   }
 
   /**
    * Initialize the orchestrator: load state, config, create managers.
    */
   async initialize(): Promise<void> {
-    const trackingPath = this.resolveConfigPath('sprint_tracking');
-    // V3.6: Try split-file status directory first
-    const statusDir = join(this.projectRoot, '_bmad-output', 'web-dev-flow', 'status');
+    // Load configuration first — all paths flow from this.
+    this.config = loadConfig(this.projectRoot, { skillRoot: this.skillRoot }).config;
+
+    // Configure subsystems whose paths come from config
+    SignalManager.setSignalDir(getSignalDir(this.config, this.projectRoot));
+
+    const trackingPath = getSprintTrackingPath(this.config, this.projectRoot);
+    const statusDir = getStatusDir(this.config, this.projectRoot);
+
     if (existsSync(statusDir)) {
       this.state = await SprintStatusManager.loadFromStatusDir(statusDir, trackingPath);
     } else {
       this.state = await SprintStatusManager.load(trackingPath);
     }
-    // V3.6: Signals at ~/.wdf-method/signals/ — outside all worktrees, auto-created on first use
 
     this.worktree = new WorktreeManager(this.projectRoot);
     this.gateEvaluator = new GateEvaluator(this.projectRoot);
 
-    const storiesDir = this.resolveConfigPath('stories_output');
-    const outputDir = this.resolveConfigPath('output_dir');
+    const storiesDir = getStoriesDir(this.config, this.projectRoot);
+    const outputDir = getOutputDir(this.config, this.projectRoot);
     this.storyRunner = new StoryRunner(
       this.state, this.worktree, this.gateEvaluator,
       this.projectRoot, storiesDir, outputDir
     );
     this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot);
-
-    // Load customize.toml
-    this.loadConfig();
   }
 
   /**
@@ -588,7 +531,8 @@ export class PhaseOrchestrator {
    * Run cross-story validation: test + type-check + lint after all merges.
    */
   private async runCrossStoryValidation(): Promise<void> {
-    const checks = (this.config as any)?.auto_run?.merge_queue?.integration_checks ??
+    const checks = this.config.auto_run?.merge_queue?.integration_checks ??
+                   this.config.merge_queue?.default_integration_checks ??
                    ['npm run test', 'npm run build', 'npm run type-check'];
 
     for (const check of checks) {
@@ -613,7 +557,7 @@ export class PhaseOrchestrator {
     crossStoryValidation: boolean;
     autoProcessQueue: boolean;
   } {
-    const cfg = (this.config as any)?.auto_run ?? {};
+    const cfg = this.config.auto_run;
     return {
       maxConcurrentStories: cfg?.concurrency?.max_concurrent_stories ?? 5,
       storyAgentTimeoutMinutes: cfg?.concurrency?.story_agent_timeout_minutes ?? 30,
@@ -625,33 +569,8 @@ export class PhaseOrchestrator {
 
   // ── Configuration ──
 
-  private loadConfig(): void {
-    const customizePath = join(this.skillRoot, 'customize.toml');
-    if (existsSync(customizePath)) {
-      this.config = parseTOML(customizePath) as Partial<WorkflowConfig>;
-    }
-  }
-
-  private resolveConfigPath(key: string): string {
-    const paths: Record<string, string> = {
-      sprint_tracking: '_bmad-output/web-dev-flow/sprint-status.yaml',
-      stories_output: '_bmad-output/web-dev-flow/stories',
-      output_dir: '_bmad-output/web-dev-flow',
-    };
-
-    // Check customize.toml first for overrides
-    const cfg = this.config as Record<string, any>;
-    const workflowVal = cfg?.workflow?.[key];
-    if (workflowVal && typeof workflowVal === 'string') {
-      return resolve(this.projectRoot, workflowVal.replace('{project-root}', this.projectRoot));
-    }
-
-    return resolve(this.projectRoot, paths[key] ?? '');
-  }
-
   private getScopeLockConfig(): { forbidden_paths?: string[]; protected_paths?: string[] } {
-    const cfg = this.config as Record<string, any>;
-    return cfg?.scope_lock ?? {};
+    return this.config.scope_lock ?? {} as any;
   }
 
   /**
