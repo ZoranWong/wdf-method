@@ -16,7 +16,7 @@
 | [CHG-2026-002](CHG-2026-002-spec-delta/proposal.md) | Spec Delta 与提案治理 | **P0** | 3.7.0 | ✅ IMPLEMENTED | AI | OPT-01 |
 | [CHG-2026-003](CHG-2026-003-traceability-graph/proposal.md) | Traceability Graph + CR 影响分析 | **P0** | 3.7.0 | 📝 PROPOSED | TBD | OPT-02, OPT-09 |
 | [CHG-2026-004](CHG-2026-004-self-host-e2e/proposal.md) | 自托管 E2E（todo-app） | **P0** | 3.7.0 | 📝 PROPOSED | TBD | OPT-03 |
-| [CHG-2026-005](CHG-2026-005-contract-validator/proposal.md) | Contract Validator (AC↔测试) | **P0** | 3.7.0 | 📝 PROPOSED | TBD | OPT-04 |
+| [CHG-2026-005](CHG-2026-005-contract-validator/proposal.md) | Contract Validator (AC↔测试) | **P0** | 3.7.0 | ✅ IMPLEMENTED | AI | OPT-04 |
 | [CHG-2026-006](CHG-2026-006-auto-run-loop/proposal.md) | Auto-Run 主循环 | P1 | 3.8.0 | 📝 PROPOSED | TBD | OPT-05 |
 | [CHG-2026-007](CHG-2026-007-ci-action/proposal.md) | wdf GitHub Action | P1 | 3.8.0 | 📝 PROPOSED | TBD | OPT-06 |
 | [CHG-2026-008](CHG-2026-008-multi-ide-runtime/proposal.md) | 多 IDE 运行时 | P1 | 3.8.0 | 📝 PROPOSED | TBD | OPT-07 |

@@ -1,6 +1,35 @@
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 
+// CHG-2026-005 — re-export the AC ↔ Test binding validator so callers can
+// import everything contract-related from this single entrypoint.
+export {
+  parseAcsFromStory,
+  scanTestsForAcBindings,
+  parseVitestJson,
+  parseJestJson,
+  validateAcBindings,
+  formatAcBindingReport,
+  runAcBindingCheck,
+  auditAcCoverage,
+  formatAuditReport,
+} from './ac-test-binding.js';
+export type {
+  AcceptanceCriterion,
+  TestBinding,
+  TestRunResult,
+  TestStatus,
+  BindingKind,
+  AcBindingReport,
+  ScanOptions,
+  ValidateAcBindingsArgs,
+  TestFramework,
+  RunAcBindingCheckOptions,
+  RunAcBindingCheckResult,
+  AuditSuggestion,
+  AuditReport,
+} from './ac-test-binding.js';
+
 /**
  * Story Contract Freeze Gate — validates 7 contract fields before a story can enter Phase 4.
  * Blocked stories cannot enter implementation until all fields are compliant.
