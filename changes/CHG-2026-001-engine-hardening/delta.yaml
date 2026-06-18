@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────
+# CHG-2026-001 — Engine Hardening (back-filled delta, reference example)
+#
+# CHG-001 was a pure code-fix CR (proposal §3.2: "无规范变更"). This delta is
+# back-filled to demonstrate the format for future authors, per CHG-002 §5.
+#
+# It is intentionally minimal and apply-safe: the only material op is the
+# version bump 3.6.0 → 3.6.1 declared in proposal §8 ("版本：3.6.0 → 3.6.1").
+#
+# Preview:  wdf cr apply CHG-2026-001 --dry-run
+# Apply:    wdf cr apply CHG-2026-001
+# ─────────────────────────────────────────
+
+change_id: "CHG-2026-001"
+summary: "Engine hardening — fail-closed gates, secure shell exec, SRG fixes"
+base_version: "3.6.0"
+target_version: "3.6.1"
+
+operations:
+
+  # ── Patch-level version bump (proposal §8) ───────────────────────────
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "workflow.version"
+    value: "3.6.1"
+    rationale: "Reflects the post-hardening version declared in proposal §8"
+
+  # ── Append a traceability entry to SPEC §7 (illustrative) ────────────
+  # NOTE: this op is commented out because SPEC.md §7 has no implementation
+  # matrix in 3.6.x — CHG-2026-003 introduces TRACEABILITY.md. Uncomment after
+  # CHG-003 ships to see the append op in action.
+  #
+  # - op: append
+  #   target:
+  #     kind: spec_section
+  #     file: TRACEABILITY.md
+  #     section: "## 4. 实现矩阵"
+  #   value: |
+  #     | CHG-2026-001 引擎硬化 | orchestrator/src/orchestrator/gate-evaluator.ts | gate-evaluator.test.ts | merge-queue.test.ts |
+  #   rationale: "Records that engine-hardening fixes are anchored in gate-evaluator + merge-queue tests"
+
+# ─────────────────────────────────────────
+# Why this delta is short
+# ─────────────────────────────────────────
+# CHG-001 fixed five categories of bugs in the orchestrator:
+#   1. GateEvaluator default-pass paths flipped to fail-closed
+#   2. StoryRunner SRG-01..09 numbering realigned
+#   3. AgentDispatcher missing imports + startTime undefined
+#   4. MergeQueue execSync hardened against command injection
+#   5. State path resolution made config-driven
+#
+# All five live entirely in TypeScript source under
+# orchestrator/src/orchestrator/. They are not expressible as field-level
+# patches to specs/configs/schemas; the source-of-truth diff is in commit
+# 2d9fd00 ("refactor(orchestrator): harden execution engine").
+#
+# The lesson for future deltas: code-only CRs may legitimately have a tiny
+# delta.yaml. The delta tracks **spec/config surface area**, not source
+# refactors — those belong in the commit + tests.

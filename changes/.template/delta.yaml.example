@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────
+# Change Delta Template — copy to changes/<CHG-id>/delta.yaml
+# Schema: schemas/change-delta-schema.yaml
+# Apply:  wdf cr apply <CHG-id> [--dry-run] [--diff]
+# ─────────────────────────────────────────
+
+change_id: "CHG-YYYY-NNN"          # MUST equal parent directory name
+summary: "One-line description of what this delta achieves"
+base_version: "3.6.0"              # wdf-method version this was authored against
+target_version: "3.7.0"            # version after applying this delta
+
+# Operations are applied IN ORDER and ATOMICALLY:
+# if any op fails, no file is written.
+operations:
+
+  # ── 1. set: change a key in toml/yaml (creates if missing) ───────────
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "change_request.delta_required"
+    value: true
+    rationale: "Optional one-liner explaining why this op exists"
+
+  - op: set
+    target:
+      kind: yaml_key
+      file: schemas/sprint-status-schema.yaml
+      path: "version"
+    value: "3.7.0"
+
+  # ── 2. remove: drop a key from toml/yaml ─────────────────────────────
+  - op: remove
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "change_request.legacy_flag"
+
+  # ── 3. modify: literal text replacement inside a markdown section ────
+  #    `before` MUST appear exactly once in the section.
+  - op: modify
+    target:
+      kind: spec_section
+      file: SPEC.md
+      section: "## 7. Change Request 流程"
+    before: |
+      CR 仅以自然语言描述变更面。
+    after: |
+      CR 必须附带 delta.yaml，描述字段级变更面（详见 schemas/change-delta-schema.yaml）。
+
+  # ── 4. append: add new content to the end of a markdown section ──────
+  - op: append
+    target:
+      kind: spec_section
+      file: TRACEABILITY.md
+      section: "## 4. 实现矩阵"
+    value: |
+      | CR Delta 治理 | schemas/change-delta-schema.yaml | orchestrator/src/orchestrator/cr-applier.ts | cr-applier.test.ts |
+
+  # ── 5. create: new file (fails if file already exists) ───────────────
+  - op: create
+    target:
+      kind: file
+      file: docs/example-new-doc.md
+    content: |
+      # New Doc
+      First line.
+
+  # ── 6. delete: remove a file (optional expected_hash precondition) ───
+  - op: delete
+    target:
+      kind: file
+      file: docs/deprecated-doc.md
+    expected_hash: "abc123…"   # optional sha256 of file before deletion
+
+  # ── 7. text_match: replace a unique substring anywhere in a file ─────
+  - op: modify
+    target:
+      kind: text_match
+      file: README.md
+    before: "Version 3.6.0"
+    after:  "Version 3.7.0"
+
+# ─────────────────────────────────────────
+# Tips
+# ─────────────────────────────────────────
+# • Run `wdf cr apply <id> --dry-run` first; review the unified diff.
+# • For markdown edits, prefer `spec_section` over `text_match`:
+#   it scopes the search to a single section, avoiding accidental matches.
+# • If `before` is not unique, the apply fails fast (no partial write).
+# • To gate an op on file state, set `expected_hash: "<sha256>"`.
