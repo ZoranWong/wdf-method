@@ -50,6 +50,49 @@ describe('GateEvaluator (fail-closed)', () => {
     expect(result.results[0].reason).toMatch(/Unknown check type: totally_made_up_type/);
   });
 
+  it('user_confirmation: fail-closed by default (no auth record)', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+    const card = buildGate({
+      id: 'U-01',
+      type: 'user_confirmation',
+      description: 'interactive gate',
+    });
+    const result = await ev.evaluate(card, state);
+    expect(result.all_pass).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/User confirmation required/);
+  });
+
+  it('user_confirmation: auto-passes when allow_auto_degrade=true and executionMode=auto', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+    const card = buildGate({
+      id: 'U-02',
+      type: 'user_confirmation',
+      description: 'auto-degradable gate',
+      allow_auto_degrade: true,
+    });
+    const result = await ev.evaluate(card, state, { executionMode: 'auto' });
+    expect(result.all_pass).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+    expect(result.results[0].reason).toMatch(/Auto-degraded/);
+  });
+
+  it('user_confirmation: stays fail-closed in auto mode when allow_auto_degrade is false', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+    const card = buildGate({
+      id: 'U-03',
+      type: 'user_confirmation',
+      description: 'critical gate',
+      // allow_auto_degrade intentionally omitted → defaults to fail-closed
+    });
+    const result = await ev.evaluate(card, state, { executionMode: 'auto' });
+    expect(result.all_pass).toBe(false);
+    expect(result.results[0].reason).toMatch(/not marked allow_auto_degrade/);
+  });
+
   it('fails when dependency_status references an unimplemented field', async () => {
     const ev = new GateEvaluator(tmpRoot);
     const state = await freshState(join(tmpRoot, 'no-such.yaml'));
@@ -334,5 +377,288 @@ describe('GateEvaluator (fail-closed)', () => {
     const result = await ev.evaluate(card, state);
     expect(result.results[0].status).toBe('fail');
     expect(result.results[0].reason).toMatch(/boundary not frozen/i);
+  });
+
+  it('artifact_checksum fails when file is missing', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    const card = buildGate({
+      id: 'CHK-01',
+      type: 'artifact_checksum',
+      description: 'verify file integrity',
+      target: 'missing-file.txt',
+      expected: 'abc123',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/file not found/);
+  });
+
+  it('artifact_checksum fails when hash does not match', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    writeFileSync(join(tmpRoot, 'test.txt'), 'hello world', 'utf-8');
+
+    const card = buildGate({
+      id: 'CHK-02',
+      type: 'artifact_checksum',
+      description: 'verify file integrity',
+      target: 'test.txt',
+      expected: 'wronghash',
+      algorithm: 'sha256',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/hash mismatch/);
+  });
+
+  it('artifact_checksum passes when hash matches', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    const content = 'hello world';
+    writeFileSync(join(tmpRoot, 'test.txt'), content, 'utf-8');
+
+    // Calculate expected sha256 hash
+    const expected = 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
+
+    const card = buildGate({
+      id: 'CHK-03',
+      type: 'artifact_checksum',
+      description: 'verify file integrity',
+      target: 'test.txt',
+      expected,
+      algorithm: 'sha256',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.all_pass).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('artifact_checksum supports multiple algorithms', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    const content = 'test content';
+    writeFileSync(join(tmpRoot, 'test.txt'), content, 'utf-8');
+
+    // MD5: '9473fdd0d880a43c21b7778d34872157' for 'test content'
+    const cardMd5 = buildGate({
+      id: 'CHK-04',
+      type: 'artifact_checksum',
+      description: 'verify MD5 checksum',
+      target: 'test.txt',
+      expected: '9473fdd0d880a43c21b7778d34872157',
+      algorithm: 'md5',
+    });
+
+    const result = await ev.evaluate(cardMd5, state);
+    expect(result.all_pass).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('artifact_checksum fails with invalid algorithm', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    writeFileSync(join(tmpRoot, 'test.txt'), 'hello', 'utf-8');
+
+    const card = buildGate({
+      id: 'CHK-05',
+      type: 'artifact_checksum',
+      description: 'test invalid algorithm',
+      target: 'test.txt',
+      expected: 'abc',
+      algorithm: 'invalid-algo',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/unsupported algorithm/);
+  });
+
+  it('quality_threshold fails when metric is missing', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    const card = buildGate({
+      id: 'Q-01',
+      type: 'quality_threshold',
+      description: 'test coverage check',
+      metric: 'test_coverage',
+      threshold: 80,
+      operator: 'gte',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/metric "test_coverage" not found/);
+  });
+
+  it('quality_threshold passes when gte threshold met', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    // Set quality metrics in state
+    state.data.global_state.quality_metrics = {
+      test_coverage: 85,
+    };
+
+    const card = buildGate({
+      id: 'Q-02',
+      type: 'quality_threshold',
+      description: 'test coverage >= 80%',
+      metric: 'test_coverage',
+      threshold: 80,
+      operator: 'gte',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.all_pass).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('quality_threshold fails when gte threshold not met', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    state.data.global_state.quality_metrics = {
+      test_coverage: 75,
+    };
+
+    const card = buildGate({
+      id: 'Q-03',
+      type: 'quality_threshold',
+      description: 'test coverage >= 80%',
+      metric: 'test_coverage',
+      threshold: 80,
+      operator: 'gte',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.all_pass).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/test_coverage = 75 gte 80 failed/);
+  });
+
+  it('quality_threshold supports all comparison operators', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    state.data.global_state.quality_metrics = {
+      coverage: 85,
+      lint_issues: 3,
+      bundle_size: 450,
+    };
+
+    // gt (greater than)
+    const cardGt = buildGate({
+      id: 'Q-04',
+      type: 'quality_threshold',
+      description: 'coverage gt check',
+      metric: 'coverage',
+      threshold: 80,
+      operator: 'gt',
+    });
+    const resultGt = await ev.evaluate(cardGt, state);
+    expect(resultGt.results[0].status).toBe('pass');
+
+    // lte (less than or equal)
+    const cardLte = buildGate({
+      id: 'Q-05',
+      type: 'quality_threshold',
+      description: 'lint issues lte check',
+      metric: 'lint_issues',
+      threshold: 5,
+      operator: 'lte',
+    });
+    const resultLte = await ev.evaluate(cardLte, state);
+    expect(resultLte.results[0].status).toBe('pass');
+
+    // lt (less than)
+    const cardLt = buildGate({
+      id: 'Q-06',
+      type: 'quality_threshold',
+      description: 'bundle size lt check',
+      metric: 'bundle_size',
+      threshold: 500,
+      operator: 'lt',
+    });
+    const resultLt = await ev.evaluate(cardLt, state);
+    expect(resultLt.results[0].status).toBe('pass');
+
+    // eq (equal)
+    const cardEq = buildGate({
+      id: 'Q-07',
+      type: 'quality_threshold',
+      description: 'lint issues eq check',
+      metric: 'lint_issues',
+      threshold: 3,
+      operator: 'eq',
+    });
+    const resultEq = await ev.evaluate(cardEq, state);
+    expect(resultEq.results[0].status).toBe('pass');
+
+    // neq (not equal)
+    const cardNeq = buildGate({
+      id: 'Q-08',
+      type: 'quality_threshold',
+      description: 'lint issues neq check',
+      metric: 'lint_issues',
+      threshold: 0,
+      operator: 'neq',
+    });
+    const resultNeq = await ev.evaluate(cardNeq, state);
+    expect(resultNeq.results[0].status).toBe('pass');
+  });
+
+  it('quality_threshold fails with invalid operator', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    state.data.global_state.quality_metrics = { coverage: 85 };
+
+    const card = buildGate({
+      id: 'Q-09',
+      type: 'quality_threshold',
+      description: 'invalid operator test',
+      metric: 'coverage',
+      threshold: 80,
+      operator: 'invalid-op',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].reason).toMatch(/unsupported operator/);
+  });
+
+  it('quality_threshold can read metrics from source file', async () => {
+    const ev = new GateEvaluator(tmpRoot);
+    const state = await freshState(join(tmpRoot, 'no-such.yaml'));
+
+    writeFileSync(
+      join(tmpRoot, 'metrics.json'),
+      JSON.stringify({ test_coverage: 90, lint_issues: 2 }),
+      'utf-8'
+    );
+
+    const card = buildGate({
+      id: 'Q-10',
+      type: 'quality_threshold',
+      description: 'test coverage from file',
+      source: 'metrics.json',
+      metric: 'test_coverage',
+      threshold: 85,
+      operator: 'gte',
+    });
+
+    const result = await ev.evaluate(card, state);
+    expect(result.all_pass).toBe(true);
+    expect(result.results[0].status).toBe('pass');
   });
 });

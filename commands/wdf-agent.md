@@ -11,7 +11,20 @@ handoffs:
     command: /wdf-start
     prompt: "Resume phase execution with agents"
 scripts:
-  sh: "echo 'wdf-method agent — managing sub-agents'"
+  sh: |
+    cd "$WDF_PROJECT_ROOT"
+    SUBCMD="${1:-status}"
+    case "$SUBCMD" in
+      status|dispatch|list)
+        node "$WDF_SKILL_ROOT/orchestrator/bin/wdf.js" agent "$SUBCMD" "${@:2}"
+        ;;
+      *)
+        echo "Usage: /wdf-agent [status|dispatch]"
+        echo "  status    Show sub-agent states (default)"
+        echo "  dispatch  Manually dispatch an agent"
+        exit 1
+        ;;
+    esac
 ---
 
 # /wdf-agent — Agent Management
@@ -39,11 +52,7 @@ View active sub-agents, manually dispatch an agent, or check agent communication
    - Ask: which sub-phase or story to dispatch?
    - Load agent definition from `{skill-root}/references/agents/{role}.md`
    - Load prompt template from `{skill-root}/references/prompt-templates/phase-0N-prompts.md`
-   - Dispatch sub-agent with clean context per SKILL.md sub-agent context table
-
-## Full Spec
-
-See `SKILL.md` section "## Sub-Agent Clean Context Specification" and "## BMAD Skill Invocation Map".
+   - Dispatch sub-agent with a clean context window (no inherited conversation state)
 
 ## Example
 

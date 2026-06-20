@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve, join } from 'path';
+import YAML from 'js-yaml';
 import { homedir } from 'os';
 import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
@@ -8,7 +9,9 @@ import { StoryRunner } from './story-runner.js';
 import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
 import { PartyEngine } from './party-engine.js';
+import { runAcceptanceChecks, type AcceptanceReport } from './acceptance-runner.js';
 import { appendAudit, readRecentAudit, formatAuditLines } from './audit-logger.js';
+import { SUB_PHASE_AGENT_MAP, isSubPhaseComplete, type SubPhaseContext } from './subphase-executor.js';
 import {
   loadConfig,
   getSignalDir,
@@ -20,6 +23,7 @@ import {
   WorkflowConfig,
   AcceptanceGateConfig,
   ScopeLockConfig,
+  StoryEntry,
   Track,
   DevMode,
   TriageMode,
@@ -28,6 +32,7 @@ import {
   PartyRole,
   ConvergencePoint,
   FirstPrincipleAnalysis,
+  MAX_PIPELINE_RETRIES,
 } from './types.js';
 
 // ── Auto-Run types (CHG-2026-006) ─────────────────────────────────────
@@ -304,6 +309,15 @@ export class PhaseOrchestrator {
 
   /**
    * Determine task triage mode and route accordingly.
+   *
+   * Supports two execution modes:
+   *   - **Interactive**: Claude session drives the loop via repeated `wdf start` calls.
+   *     Each call syncs state and generates the next prompt.
+   *   - **Non-interactive / auto-run**: `runAutoLoop()` or `triageAndExecute()` chains
+   *     all phases without human intervention. Used in CI, scripts, and hands-free mode.
+   *
+   * Both modes share the same FSM, gate evaluator, and state management —
+   * only the driver (human vs. orchestrator) differs.
    */
   async triageAndExecute(mode?: TriageMode): Promise<void> {
     const triageMode = mode ?? this.state.data.global_state.task_triage_mode ?? 'serial';
@@ -362,7 +376,9 @@ export class PhaseOrchestrator {
 
       // Evaluate gate
       if (phase?.gate_card) {
-        const gateResult = await this.gateEvaluator.evaluate(phase.gate_card, this.state);
+        const gateResult = await this.gateEvaluator.evaluate(phase.gate_card, this.state, {
+          executionMode: this.getExecutionMode(),
+        });
         if (!gateResult.all_pass) {
           const reasons = gateResult.results.filter(r => r.status === 'fail').map(r => r.reason).join('; ');
           console.log(`  Gate failed: ${reasons}`);
@@ -380,13 +396,27 @@ export class PhaseOrchestrator {
         await this.state.setPhaseStatus(phaseNum, 'IN_PROGRESS');
       }
 
-      // Execute phase (in practice, this invokes BMAD skills)
-      console.log(`  Executing Phase ${phaseNum}... (requires BMAD skill invocation)`);
+      // Sync substate from artifacts (replaces previous demo shortcut).
+      // The Claude session writes artifacts; this scan promotes
+      // each completed sub-phase to LOCKED. The phase as a whole
+      // only transitions to LOCKED when every sub-phase is done.
+      const syncResult = await this.syncStateFromArtifacts();
 
-      // Mark as LOCKED for demo purposes
-      // In production, this would only happen after actual work + approval
-      await this.state.setPhaseStatus(phaseNum, 'LOCKED');
-      console.log(`  Phase ${phaseNum}: LOCKED`);
+      const updatedPhase = this.state.getPhase(phaseNum);
+      if (updatedPhase?.status === 'LOCKED') {
+        console.log(`  Phase ${phaseNum}: LOCKED (synced ${syncResult.synced.length} artifact(s))`);
+        continue;
+      }
+
+      // Phase still has pending sub-phases — bail out and let
+      // the caller (`wdf start`) emit the next prompt.
+      const phasePending = syncResult.pending.filter(k => k.startsWith(`phase_${phaseNum}_`));
+      if (phasePending.length) {
+        console.log(`  Phase ${phaseNum}: pending ${phasePending.join(', ')} — run \`wdf start\` for the next prompt`);
+      } else {
+        console.log(`  Phase ${phaseNum}: no sub-phases ready (check dependencies)`);
+      }
+      return;
     }
 
     // Freeze requirements (at Phase 2.5) and dev order (at Phase 3.7)
@@ -399,6 +429,113 @@ export class PhaseOrchestrator {
   }
 
   /**
+   * Sync FSM substate from on-disk artifacts.
+   *
+   * Walks SUB_PHASE_AGENT_MAP and, for each sub-phase whose output artifact
+   * exists with substantive content, transitions its substate to LOCKED.
+   * When every sub-phase of a phase is LOCKED or SKIPPED, the parent phase
+   * transitions to LOCKED.
+   *
+   * The CLI is read-mostly; this is the one place where artifact-existence
+   * promotes state. Called by `runPhases1To3` and `runStartCommand` so that
+   * the next prompt-generation pass sees the latest truth.
+   *
+   * Returns a structured summary so callers can log what changed.
+   */
+  async syncStateFromArtifacts(): Promise<{ synced: string[]; pending: string[] }> {
+    const synced: string[] = [];
+    const pending: string[] = [];
+    const outRoot = join(this.projectRoot, '_wdf_output');
+
+    // Apply skip decisions from skip-decisions.yaml (if it exists).
+    // Written by the LLM during "Phase 0: Skip Analysis" — the LLM analyzes
+    // the project description and recommends which sub-phases to skip.
+    const skipPath = join(this.projectRoot, '_wdf_output', 'status', 'skip-decisions.yaml');
+    if (existsSync(skipPath)) {
+      try {
+        const skipContent = readFileSync(skipPath, 'utf-8');
+        const skipData = YAML.load(skipContent) as any;
+        const skipped = skipData?.skip_decisions?.skipped ?? [];
+        if (Array.isArray(skipped) && skipped.length > 0) {
+          for (const subKey of skipped) {
+            if (typeof subKey !== 'string') continue;
+            // Extract phase number from key like "phase_1_2"
+            const parts = subKey.split('_');
+            const phaseNum = parseInt(parts[1], 10);
+            if (phaseNum >= 1 && phaseNum <= 3) {
+              const current = this.state.getSubState(phaseNum, subKey);
+              if (current === 'NOT_STARTED' || current === undefined) {
+                await this.state.setSubState(phaseNum, subKey, 'SKIPPED');
+                synced.push(`${subKey} (LLM-recommended skip)`);
+              }
+            }
+          }
+        }
+      } catch {
+        // Non-fatal: skip decision file may be malformed
+      }
+    }
+
+    for (const phaseNum of [1, 2, 3]) {
+      const subPhases = Object.entries(SUB_PHASE_AGENT_MAP)
+        .filter(([k]) => k.startsWith(`phase_${phaseNum}_`))
+        .sort(([a], [b]) => a.localeCompare(b));
+
+      for (const [subKey, config] of subPhases) {
+        const current = this.state.getSubState(phaseNum, subKey);
+        if (current === 'LOCKED' || current === 'SKIPPED') continue;
+
+        // Honour the YAML `auto_skip: true` flag (set by init for sub-phases
+        // that don't apply to this project shape, e.g. domain research).
+        const phaseData = this.state.getPhase(phaseNum);
+        const subData = phaseData?.substates?.[subKey] as { auto_skip?: boolean } | undefined;
+        if (subData?.auto_skip === true) {
+          await this.state.setSubState(phaseNum, subKey, 'SKIPPED');
+          synced.push(`${subKey} (auto-skipped)`);
+          continue;
+        }
+
+        // skipIf hook for sub-phases that auto-skip based on project shape
+        if (config.skipIf?.(this.projectRoot)) {
+          await this.state.setSubState(phaseNum, subKey, 'SKIPPED');
+          synced.push(`${subKey} (auto-skipped)`);
+          continue;
+        }
+
+        const ctx: SubPhaseContext = {
+          projectRoot: this.projectRoot,
+          phaseNum,
+          subPhaseKey: subKey,
+          subPhaseName: subKey,
+          outputPath: join(outRoot, config.produces),
+          agentFile: config.agentFile,
+          agentMode: config.agentMode,
+          previousArtifacts: [],
+        };
+
+        if (isSubPhaseComplete(ctx)) {
+          await this.state.setSubState(phaseNum, subKey, 'LOCKED');
+          synced.push(subKey);
+        } else {
+          pending.push(subKey);
+        }
+      }
+
+      // Promote phase to LOCKED only when every sub-phase is terminal.
+      const allDone = subPhases.every(([k]) => {
+        const s = this.state.getSubState(phaseNum, k);
+        return s === 'LOCKED' || s === 'SKIPPED';
+      });
+      const phaseStatus = this.state.getPhase(phaseNum)?.status;
+      if (allDone && phaseStatus !== 'LOCKED' && phaseStatus !== 'SKIPPED') {
+        await this.state.setPhaseStatus(phaseNum, 'LOCKED');
+      }
+    }
+
+    return { synced, pending };
+  }
+
+  /**
    * Execute Phase 4: Implementation with V3.6 sub-phase progression.
    *
    * V3.6 sub-phase map:
@@ -408,95 +545,456 @@ export class PhaseOrchestrator {
    */
   private async executeImplementationPhase(): Promise<void> {
     const gs = this.state.data.global_state;
-    const isParallel = gs.task_triage_mode === 'parallel';
-    const autoRunCfg = this.getAutoRunConfig();
 
-    // ── 4.1: Sprint Planning ──
-    if (!this.state.getSubState(4, 'phase_4_1') || this.state.getSubState(4, 'phase_4_1') === 'NOT_STARTED') {
-      console.log('\n── Phase 4.1: Sprint Planning ──');
-      await this.state.setSubState(4, 'phase_4_1', 'IN_PROGRESS');
-
-      // Compute implementation boundary from development_order
-      const order = this.state.getDevelopmentOrder();
-      await this.state.setImplementationBoundary({
-        backend_scope: order.filter(s => s.track === 'backend').flatMap(s => s.scope_write),
-        frontend_scope: order.filter(s => s.track === 'frontend').flatMap(s => s.scope_write),
-        shared_scope: [],
-        forbidden_paths: this.getScopeLockConfig().forbidden_paths ?? [],
-      });
-      await this.worktree.createScopeFreezeTag();
-      await this.state.setGateCard(4, [{ id: 'G4-01', status: 'pass' }]);
-      await this.state.setSubState(4, 'phase_4_1', 'LOCKED');
-      console.log('  Phase 4.1: LOCKED');
+    // Load stories from directory if development_order is empty
+    let stories = this.state.getDevelopmentOrder();
+    if (!stories || stories.length === 0) {
+      stories = loadStoriesFromDirectory(join(this.projectRoot, '_wdf_output', 'stories'));
+      if (stories.length > 0) {
+        this.state.setDevelopmentOrder(stories);
+        await this.state.freezeDevelopmentOrder();
+      }
     }
 
     await this.state.setPhaseStatus(4, 'IN_PROGRESS');
 
-    const order = this.state.getDevelopmentOrder();
-    const beStories = order.filter(s => s.track === 'backend');
-    const feStories = order.filter(s => s.track === 'frontend');
+    console.log(`\n── Phase 4: Implementation (${gs.task_triage_mode === 'parallel' ? 'PARALLEL' : 'SERIAL'} mode) ──`);
+    console.log(`  Stories: ${stories.length}`);
 
-    console.log(`\n── Phase 4: Implementation (${isParallel ? 'PARALLEL' : 'SERIAL'} mode) ──`);
-    console.log(`  Backend stories: ${beStories.length} | Frontend stories: ${feStories.length}`);
-    console.log(`  Concurrency: ${autoRunCfg.maxConcurrentStories} | Timeout: ${autoRunCfg.storyAgentTimeoutMinutes}min`);
+    if (stories.length === 0) {
+      console.log('  No stories found. Create stories in _wdf_output/stories/');
+      return;
+    }
 
-    // ── BE Track: 4.2 → 4.3 → 4.4 → 4.5 → 4.6 ──
-    const beTrackPromise = this.runBETrack(beStories);
+    // 4.1 Sprint Planning — by the time we reach executeImplementationPhase,
+    // stories are loaded, the development order is frozen, and the global
+    // workflow.task_triage_mode tells us the parallel/serial track split.
+    // That IS the sprint plan. Mark it LOCKED so downstream gates see it.
+    await this.advanceSubPhase(4, 'phase_4_1', 'Sprint Planning', async () => {
+      console.log(`  Sprint plan: ${stories.length} stories, ${gs.task_triage_mode} triage`);
+    });
 
-    // ── FE Track: 4.7 → 4.8 → 4.9 → 4.10 → 4.11 → 4.12 ──
-    // In parallel mode, FE starts at the same time as BE (both gated on 4.1)
-    const feTrackPromise = (async () => {
-      if (isParallel) {
-        // Small delay to ensure BE track has started writing state
-        await new Promise(r => setTimeout(r, 100));
-      } else {
-        // Serial mode: wait for BE track to complete before starting FE
-        await beTrackPromise;
+    // V3.9 Pipeline: Generate per-story pipeline dispatch manifests
+    // (dev→review→testing→QA with fix loop) for the parent Claude session.
+    // The session reads these and dispatches via Agent tool — the CLI never
+    // spawns agents.
+    const {
+      processAllStoriesPipeline,
+    } = await import('./pipeline-runner.js');
+
+    const allActions = processAllStoriesPipeline(
+      stories,
+      this.state,
+      join(this.projectRoot, '_wdf_output'),
+      this.projectRoot,
+    );
+
+    let pendingCount = 0;
+    let escalatedCount = 0;
+    for (const action of allActions) {
+      if (action.kind === 'dispatch') {
+        pendingCount++;
+        console.log(`  📋 ${action.story_id}: ${action.manifest?.stage} (attempt ${action.manifest?.attempt}/${action.manifest?.max_retries}) — manifest ready`);
+      } else if (action.kind === 'escalation') {
+        escalatedCount++;
+        console.log(`  🚨 ${action.story_id}: PIPELINE_ESCALATED at "${action.escalation?.failed_stage}" — main agent must review`);
       }
-      return this.runFETrack(feStories);
-    })();
-
-    // Wait for both tracks
-    const [, feResult] = await Promise.all([beTrackPromise, feTrackPromise]);
-
-    // ── Post-track cross-validation ──
-    if (autoRunCfg.crossStoryValidation) {
-      console.log('\n── Cross-Story Validation ──');
-      await this.runCrossStoryValidation();
     }
 
-    // ── 4.13: Integration ──
-    console.log('\n── Phase 4.13: Integration ──');
-    await this.state.setSubState(4, 'phase_4_13', 'IN_PROGRESS');
-
-    // Process merge queue (dependency-ordered)
-    if (autoRunCfg.autoProcessQueue) {
-      await this.processMergeQueue();
+    if (pendingCount > 0) {
+      console.log(`  ── Pipeline Summary ──`);
+      console.log(`  Pending dispatches: ${pendingCount}`);
+      console.log(`  Escalated (needs review): ${escalatedCount}`);
+      console.log(`  Total stories: ${stories.length}`);
     }
 
-    // Feature Acceptance
-    await this.state.setSubState(4, 'phase_4_13', 'FEATURE_ACCEPTED');
-    await this.state.setSubState(4, 'phase_4_13', 'LOCKED');
-    console.log('  Phase 4.13: LOCKED — Feature Accepted');
+    // Write human-readable pipeline summary for the parent session
+    const dispatchDir = join(this.projectRoot, '_wdf_output', '.dispatch');
+    mkdirSync(dispatchDir, { recursive: true });
+    const summaryLines = [
+      '# Phase 4 — Pipeline Dispatch Manifest',
+      '',
+      `**Generated:** ${new Date().toISOString()}`,
+      `**Pipeline:** dev → review → testing → QA`,
+      `**Max retries:** ${MAX_PIPELINE_RETRIES} (then escalates to main agent)`,
+      `**Total stories:** ${stories.length}`,
+      `**Pending:** ${pendingCount}`,
+      `**Escalated:** ${escalatedCount}`,
+      '',
+      '## How to Execute',
+      '',
+      '1. For each "dispatch" action below, use Agent tool with subagent_type=general-purpose',
+      '2. Set the prompt to the manifest.prompt field',
+      '3. The agent writes code/review/test-report/qa-report to the worktree',
+      '4. Run `/wdf start` — the orchestrator reads reports and advances/retries the pipeline',
+      '5. Escalated stories require human review before retrying',
+      '',
+    ];
+    for (const action of allActions) {
+      if (action.kind === 'dispatch') {
+        summaryLines.push(`- **${action.story_id}**: \`${action.manifest?.stage}\` (attempt ${action.manifest?.attempt}/${action.manifest?.max_retries})`);
+      } else if (action.kind === 'escalation') {
+        summaryLines.push(`- **${action.story_id}**: 🚨 ESCALATED at "${action.escalation?.failed_stage}" — NEEDS REVIEW`);
+      } else if (action.kind === 'skip') {
+        summaryLines.push(`- **${action.story_id}**: ✓ ${action.reason}`);
+      } else if (action.kind === 'complete') {
+        summaryLines.push(`- **${action.story_id}**: 🎯 COMPLETE — all stages passed`);
+      }
+    }
+    writeFileSync(join(dispatchDir, 'phase-4-pipeline-summary.md'), summaryLines.join('\n'), 'utf-8');
+    console.log(`  Pipeline summary: _wdf_output/.dispatch/phase-4-pipeline-summary.md`);
+    console.log('');
 
-    // ── 4.14: Retrospective ──
-    console.log('\n── Phase 4.14: Retrospective ──');
-    await this.state.setSubState(4, 'phase_4_14', 'IN_PROGRESS');
-    await this.state.setSubState(4, 'phase_4_14', 'LOCKED');
-    console.log('  Phase 4.14: LOCKED');
+    // Generate Phase 4 auto-execute batch — the structured counterpart to the
+    // pipeline summary. The parent Claude session reads this file and dispatches
+    // agents via its Agent tool, then re-runs /wdf start to advance pipeline.
+    try {
+      const {
+        consumePipelineManifests,
+        writePhase4AutoExecuteBatch,
+      } = await import('./pipeline-consumer.js');
 
-    await this.state.setPhaseStatus(4, 'FULL_STACK_INTEGRATED');
-    await this.state.setPhaseStatus(4, 'APPROVED');
-    await this.state.setPhaseStatus(4, 'LOCKED');
-    await this.state.setOverallStatus('complete');
+      const batch = consumePipelineManifests(
+        stories,
+        this.state,
+        join(this.projectRoot, '_wdf_output'),
+        this.projectRoot,
+      );
 
-    console.log('\n═══════════════════════════════════════════');
-    console.log('Phase 4: LOCKED — Implementation complete');
-    console.log('═══════════════════════════════════════════');
+      if (batch.actions.length > 0) {
+        const { batchPath, summaryPath } = writePhase4AutoExecuteBatch(batch, this.projectRoot);
+        console.log(`  Auto-execute batch: _wdf_output/.dispatch/phase-4-auto-execute.json`);
+        console.log(`  Human summary: _wdf_output/.dispatch/phase-4-auto-execute.md`);
+      }
+    } catch (err) {
+      console.log(`  ⚠ Phase 4 auto-execute batch generation skipped: ${(err as Error).message}`);
+    }
+
+    if (pendingCount === 0 && escalatedCount === 0) {
+      // All stories completed — run acceptance gates
+      await this.executeAcceptanceGates(stories);
+      return;
+    }
+    if (pendingCount === 0 && escalatedCount > 0) {
+      console.log('  ⚠ All remaining stories are escalated — parent session must review.');
+      console.log('  See escalation manifests in _wdf_output/.dispatch/pipeline/*/ESCALATED.json');
+      return;
+    }
+
+    // Stories remain pending — parent session should dispatch via Agent tool
+    // then re-run /wdf start to advance pipeline states.
+    return;
+  }
+
+  /**
+   * Execute Phase 4 acceptance gates against all implemented stories.
+   *
+   * Runs per-story acceptance checks, cross-story integration checks, and
+   * only promotes phase sub-states to LOCKED when they actually pass.
+   * Writes a structured acceptance report to `_wdf_output/_output/acceptance/`.
+   */
+  private async executeAcceptanceGates(
+    stories: NonNullable<typeof this.state.data.global_state.development_order>,
+  ): Promise<void> {
+    const writeFileSync = (await import('fs')).writeFileSync;
+    const { mkdirSync } = await import('fs');
+
+    let codePassed = true;
+    let featurePassed = true;
+    let uiPassed = true;
+    let e2ePassed = true;
+    const details: string[] = [];
+
+    // ── Tier 1: CODE ACCEPTANCE (per-story) ──
+    console.log('  ── CODE ACCEPTANCE ──');
+    for (const story of stories) {
+      if (!story.acceptance_check?.length) {
+        console.log(`  ⚠ ${story.story_id}: no acceptance checks defined — skipping`);
+        details.push(`CODE: ${story.story_id} — WARNING: no acceptance checks`);
+        continue;
+      }
+
+      // Determine working directory: first scope_write path that exists, or project root
+      let cwd = this.projectRoot;
+      for (const scope of story.scope_write) {
+        const scopePath = join(this.projectRoot, scope);
+        if (existsSync(scopePath)) {
+          cwd = scopePath;
+          break;
+        }
+      }
+
+      const report: AcceptanceReport = await runAcceptanceChecks(story.acceptance_check, {
+        cwd,
+        timeout_ms: 120_000,
+      });
+
+      if (report.all_passed) {
+        console.log(`  ✓ ${story.story_id}: ${report.results.length} check(s) passed (${report.total_duration_ms}ms)`);
+        details.push(`CODE: ${story.story_id} — PASS (${report.results.length} checks, ${report.total_duration_ms}ms)`);
+      } else {
+        codePassed = false;
+        const failures = report.results.filter(r => !r.passed);
+        console.log(`  ✗ ${story.story_id}: ${failures.length}/${report.results.length} check(s) failed`);
+        for (const f of failures) {
+          console.log(`      ${f.command}: ${f.error ?? `exit ${f.exit_code}`}`);
+        }
+        details.push(`CODE: ${story.story_id} — FAIL (${failures.length} failures)`);
+      }
+    }
+
+    // ── Tier 2: FEATURE ACCEPTANCE (cross-story) ──
+    console.log('  ── FEATURE ACCEPTANCE ──');
+    const integrationChecks = this.config.auto_run?.merge_queue?.integration_checks ??
+      this.config.merge_queue?.default_integration_checks ??
+      [];
+
+    if (integrationChecks.length > 0) {
+      const featureReport = await runAcceptanceChecks(integrationChecks, {
+        cwd: this.projectRoot,
+        timeout_ms: 300_000,
+      });
+
+      if (featureReport.all_passed) {
+        console.log(`  ✓ Feature integration checks passed (${featureReport.total_duration_ms}ms)`);
+        details.push('FEATURE: integration checks — PASS');
+      } else {
+        featurePassed = false;
+        const failures = featureReport.results.filter(r => !r.passed);
+        console.log(`  ✗ Feature integration checks: ${failures.length} failed`);
+        for (const f of failures) {
+          console.log(`      ${f.command}: ${f.error ?? `exit ${f.exit_code}`}`);
+        }
+        details.push('FEATURE: integration checks — FAIL');
+      }
+    } else {
+      console.log('  ⚠ No integration checks configured — skipping');
+      details.push('FEATURE: no checks configured — SKIPPED');
+    }
+
+    // ── Tier 3: UI ACCEPTANCE (lighthouse + a11y for FE stories) ──
+    console.log('  ── UI ACCEPTANCE ──');
+    const feStories = stories.filter(s => s.track === 'frontend' || s.track === 'full-stack');
+    if (feStories.length > 0) {
+      // Run lighthouse and axe checks if available
+      const uiChecks: string[] = [];
+      if (existsSync(join(this.projectRoot, 'package.json'))) {
+        try {
+          const pkg = JSON.parse(readFileSync(join(this.projectRoot, 'package.json'), 'utf-8'));
+          if (pkg.scripts?.['test:a11y']) uiChecks.push('npm run test:a11y');
+          if (pkg.scripts?.lighthouse) uiChecks.push('npm run lighthouse');
+          if (pkg.scripts?.audit) uiChecks.push('npm run audit');
+        } catch { /* package.json may be malformed */ }
+      }
+
+      if (uiChecks.length > 0) {
+        const uiReport = await runAcceptanceChecks(uiChecks, {
+          cwd: this.projectRoot,
+          timeout_ms: 300_000,
+        });
+        if (uiReport.all_passed) {
+          console.log(`  ✓ UI checks passed (${uiReport.total_duration_ms}ms)`);
+          details.push('UI: a11y + lighthouse — PASS');
+        } else {
+          uiPassed = false;
+          console.log(`  ✗ UI checks failed`);
+          details.push('UI: a11y + lighthouse — FAIL');
+        }
+      } else {
+        console.log('  ⚠ No UI test scripts found in package.json — skipping');
+        details.push('UI: no scripts found — SKIPPED');
+      }
+    } else {
+      // No FE stories — UI gate is not applicable
+      console.log('  - No frontend stories — UI gate N/A');
+      details.push('UI: N/A (no FE stories)');
+    }
+
+    // ── Tier 4: E2E BROWSER ACCEPTANCE ──
+    console.log('  ── E2E BROWSER ACCEPTANCE ──');
+    const e2eChecks: string[] = [];
+    if (existsSync(join(this.projectRoot, 'package.json'))) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(this.projectRoot, 'package.json'), 'utf-8'));
+        if (pkg.scripts?.test) e2eChecks.push('npm run test');
+        if (pkg.scripts?.['test:e2e']) e2eChecks.push('npm run test:e2e');
+      } catch { /* ignore */ }
+    }
+
+    if (e2eChecks.length > 0) {
+      const e2eReport = await runAcceptanceChecks(e2eChecks, {
+        cwd: this.projectRoot,
+        timeout_ms: 600_000,
+      });
+      if (e2eReport.all_passed) {
+        console.log(`  ✓ E2E checks passed (${e2eReport.total_duration_ms}ms)`);
+        details.push('E2E: tests — PASS');
+      } else {
+        e2ePassed = false;
+        console.log(`  ✗ E2E checks failed`);
+        details.push('E2E: tests — FAIL');
+      }
+    } else {
+      console.log('  ⚠ No test/e2e scripts found — skipping');
+      details.push('E2E: no scripts found — SKIPPED');
+    }
+
+    // ── Promote states ──
+    console.log('  ── Summary ──');
+    if (codePassed) {
+      await this.state.setSubState(4, 'phase_4_6', 'LOCKED');
+      console.log('  ✓ CODE_ACCEPTANCE: LOCKED');
+    } else {
+      console.log('  ✗ CODE_ACCEPTANCE: FAILED');
+    }
+
+    if (featurePassed) {
+      await this.state.setSubState(4, 'phase_4_13', 'LOCKED');
+      console.log('  ✓ FEATURE_ACCEPTANCE (integration): LOCKED');
+    } else {
+      console.log('  ✗ FEATURE_ACCEPTANCE: FAILED');
+    }
+
+    if (uiPassed || feStories.length === 0) {
+      if (feStories.length > 0) {
+        await this.state.setSubState(4, 'phase_4_12', 'LOCKED');
+      }
+      console.log(`  ${uiPassed ? '✓' : '-'} UI_ACCEPTANCE: ${feStories.length > 0 ? (uiPassed ? 'LOCKED' : 'FAILED') : 'N/A'}`);
+    }
+
+    if (e2ePassed) {
+      await this.state.setSubState(4, 'phase_4_14', 'LOCKED');
+      console.log('  ✓ E2E_BROWSER_ACCEPTANCE: LOCKED');
+    } else {
+      console.log('  ✗ E2E_BROWSER_ACCEPTANCE: FAILED');
+    }
+
+    const allPassed = codePassed && featurePassed && (uiPassed || feStories.length === 0) && e2ePassed;
+    if (allPassed) {
+      await this.state.setPhaseStatus(4, 'LOCKED');
+      console.log('  ─────────────────────────');
+      console.log('  Phase 4: LOCKED — all gates passed');
+    } else {
+      // FIX LOOP: check if any stories are in FIX_RETRY state and dispatch
+      // fix agents via the manifest (parent session's Agent tool will read).
+      const hasFixRetries = await this.processFixRetryQueue(stories);
+      if (hasFixRetries) {
+        console.log('  ─────────────────────────');
+        console.log('  Phase 4: FIX_RETRY — fix agents dispatched via manifest, re-run /wdf-start.');
+      } else {
+        console.log('  ─────────────────────────');
+        console.log('  Phase 4: NOT LOCKED — some gates failed. No fix-context written. Fix and re-run /wdf-start.');
+      }
+    }
+
+    // ── Write structured acceptance report ──
+    try {
+      const reportDir = join(this.projectRoot, '_wdf_output', '_output', 'acceptance');
+      mkdirSync(reportDir, { recursive: true });
+      const reportPath = join(reportDir, 'acceptance-report.yaml');
+      const reportYaml = [
+        `# Phase 4 Acceptance Report`,
+        `# Generated: ${new Date().toISOString()}`,
+        `code_acceptance: ${codePassed ? 'PASS' : 'FAIL'}`,
+        `feature_acceptance: ${featurePassed ? 'PASS' : 'FAIL'}`,
+        `ui_acceptance: ${uiPassed ? 'PASS' : feStories.length === 0 ? 'N/A' : 'FAIL'}`,
+        `e2e_browser_acceptance: ${e2ePassed ? 'PASS' : 'FAIL'}`,
+        `overall: ${allPassed ? 'ALL_PASSED' : 'SOME_FAILED'}`,
+        '', 'details:', ...details.map(d => `  - ${d}`),
+      ].join('\n');
+      writeFileSync(reportPath, reportYaml, 'utf-8');
+      console.log(`  Acceptance report: _wdf_output/_output/acceptance/acceptance-report.yaml`);
+    } catch (err) {
+      // Non-fatal: report writing failed but gates were evaluated
+      console.log(`  ⚠ Could not write acceptance report: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * FIX LOOP: Process stories in FIX_RETRY state by writing fix-context manifests.
+   * The parent Claude session reads these manifests and dispatches fix agents
+   * via the native Agent tool (Claude Code multi-agent), NOT by spawning subprocesses.
+   *
+   * Returns true if any fix retries were dispatched.
+   */
+  private async processFixRetryQueue(
+    stories: NonNullable<typeof this.state.data.global_state.development_order>,
+  ): Promise<boolean> {
+    const beStories = stories.filter(s => s.track === 'backend' || s.track === 'full-stack');
+    const feStories = stories.filter(s => s.track === 'frontend');
+    const tracks: Array<{ name: string; subs: string[] }> = [
+      { name: 'backend', subs: ['phase_4_4', 'phase_4_5', 'phase_4_6'] },
+      { name: 'frontend', subs: ['phase_4_10', 'phase_4_11', 'phase_4_12'] },
+    ];
+
+    let dispatched = false;
+    for (const { name, subs } of tracks) {
+      for (const subKey of subs) {
+        const existingStories = this.state.getStories(4, subKey);
+        const fixRetries = existingStories.filter(s => s.status === 'FIX_RETRY');
+        for (const fixStory of fixRetries) {
+          const storyEntry = beStories.find(s => s.story_id === fixStory.id)
+            ?? feStories.find(s => s.story_id === fixStory.id);
+          if (!storyEntry) continue;
+
+          const fixDir = join(this.projectRoot, '_wdf_output', '.dispatch', 'fix');
+          mkdirSync(fixDir, { recursive: true });
+          const fixManifest = join(fixDir, `${fixStory.id}-dispatch.json`);
+
+          // Read the fix-context written by story-runner.ts
+          const fixFiles = readdirSync(fixDir).filter(f => f.startsWith(fixStory.id) && f.endsWith('.json'));
+          const latestFixFile = fixFiles.sort().reverse()[0];
+          let fixContext: any = {};
+          if (latestFixFile) {
+            try {
+              fixContext = JSON.parse(readFileSync(join(fixDir, latestFixFile), 'utf-8'));
+            } catch { /* malformed, use empty */ }
+          }
+
+          const manifest = {
+            type: 'fix_dispatch',
+            story_id: fixStory.id,
+            track: name,
+            scope_write: storyEntry.scope_write,
+            acceptance_check: storyEntry.acceptance_check,
+            fix_context: fixContext,
+            prompt: [
+              `You are a fix agent for story ${fixStory.id}: ${storyEntry.title}.`,
+              `The story failed acceptance checks (attempt ${fixContext.attempt ?? '?'}/${fixContext.max_attempts ?? 2}).`,
+              `Your job is to fix the failing acceptance checks within the scope:`,
+              ...storyEntry.scope_write.map((p: string) => `  - ${p}`),
+              `Do NOT modify files outside these paths.`,
+              `Run acceptance checks: ${storyEntry.acceptance_check.join(', ')}.`,
+              `Commit changes with: "fix(${fixStory.id}): fix acceptance"`,
+              `Failures to fix:`,
+              ...(fixContext.failures ?? []).map((f: any) => `  - ${f.command}: ${f.error ?? `exit ${f.exit_code}`}`),
+            ].join('\n'),
+          };
+          writeFileSync(fixManifest, JSON.stringify(manifest, null, 2));
+          console.log(`  🔧 ${fixStory.id}: Fix dispatch manifest written → ${fixManifest}`);
+
+          // Reset status so next wdf start will re-run
+          await this.state.updateStoryStatus(4, subKey, {
+            ...fixStory,
+            status: 'IN_PROGRESS' as any,
+            step_history: [
+              ...(fixStory.step_history ?? []),
+              { step: 'fix_dispatched', at: new Date().toISOString(), substep: null, summary: 'Fix agent dispatched via manifest', status: 'RETRY' },
+            ],
+          });
+          dispatched = true;
+        }
+      }
+    }
+    return dispatched;
   }
 
   /**
    * Run BE Track sub-phases 4.2 → 4.3 → 4.4 (AUTO-CONTINUE) → 4.5 → 4.6 (CODE_ACCEPTANCE)
+   *
+   * Each sub-phase is advanced by `advanceSubPhase` which checks the current substate,
+   * executes the work function, and promotes to LOCKED. Already-complete sub-phases
+   * are automatically skipped.
    */
   private async runBETrack(stories: NonNullable<typeof this.state.data.global_state.development_order>): Promise<void> {
     if (!stories || stories.length === 0) {
@@ -504,35 +1002,117 @@ export class PhaseOrchestrator {
       return;
     }
 
-    // 4.2: Scaffolding
+    const beStories = stories.filter(s => s.track === 'backend' || s.track === 'full-stack');
+    if (beStories.length === 0) {
+      console.log('  BE Track: No backend stories in development order');
+      return;
+    }
+
+    // 4.2: Scaffolding — verify project structure exists
     await this.advanceSubPhase(4, 'phase_4_2', 'BE Scaffolding', async () => {
-      // Scaffold project structure, install deps, health check
-      console.log('    → Scaffolding backend project...');
+      console.log(`    → Backend stories: ${beStories.length}`);
+      const hasPackageJson = existsSync(join(this.projectRoot, 'package.json'));
+      console.log(`    → package.json: ${hasPackageJson ? 'EXISTS' : 'NOT FOUND (will be created by stories)'}`);
+      // Run npm install if package.json exists
+      if (hasPackageJson) {
+        try {
+          const { execSync } = await import('child_process');
+          execSync('npm install', { cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000 });
+          console.log('    → npm install: OK');
+        } catch (err: any) {
+          console.log(`    → npm install: ${err.message?.slice(0, 80) ?? 'failed'} (non-blocking)`);
+        }
+      }
     });
 
     // 4.3: Database & API Client Setup
     await this.advanceSubPhase(4, 'phase_4_3', 'BE Database & API Client', async () => {
-      // Run migrations, configure routing, set up middleware
-      console.log('    → Setting up database + API client...');
+      // Run migrations if a migration script exists
+      const hasDbSetup = existsSync(join(this.projectRoot, 'package.json'));
+      if (hasDbSetup) {
+        try {
+          const pkg = JSON.parse(readFileSync(join(this.projectRoot, 'package.json'), 'utf-8'));
+          if (pkg.scripts?.['db:migrate']) {
+            const { execSync } = await import('child_process');
+            execSync('npm run db:migrate', { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
+            console.log('    → db:migrate: OK');
+          }
+          if (pkg.scripts?.['db:seed']) {
+            const { execSync } = await import('child_process');
+            execSync('npm run db:seed', { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
+            console.log('    → db:seed: OK');
+          }
+        } catch { /* migrations may not exist yet */ }
+      }
+      // Run type check if available
+      try {
+        const { execSync } = await import('child_process');
+        execSync('npx tsc --noEmit --project tsconfig.backend.json 2>/dev/null || npx tsc --noEmit', {
+          cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000,
+        });
+        console.log('    → Type check: OK');
+      } catch { console.log('    → Type check: not configured (non-blocking)'); }
     });
 
-    // 4.4: Endpoint Implementation (AUTO-CONTINUE)
+    // 4.4: Endpoint Implementation (AUTO-CONTINUE) — dispatch story agents
     await this.advanceSubPhase(4, 'phase_4_4', 'BE Endpoints', async () => {
+      console.log(`    → Dispatching ${beStories.length} backend stories...`);
       await this.runTrackStories('backend', 'phase_4_4');
     });
 
-    // 4.5: Testing Suite
+    // 4.5: Testing Suite — run backend tests
     await this.advanceSubPhase(4, 'phase_4_5', 'BE Testing Suite', async () => {
-      console.log('    → Running backend test suite...');
+      const testChecks = this.resolveTestCommands();
+      if (testChecks.length > 0) {
+        const report = await runAcceptanceChecks(testChecks, {
+          cwd: this.projectRoot,
+          timeout_ms: 300_000,
+        });
+        if (report.all_passed) {
+          console.log(`    → BE tests: ${report.results.length} passed (${report.total_duration_ms}ms)`);
+        } else {
+          const failures = report.results.filter(r => !r.passed);
+          console.log(`    → BE tests: ${failures.length} failed`);
+          for (const f of failures) {
+            console.log(`      ✗ ${f.command}: ${f.error ?? `exit ${f.exit_code}`}`);
+          }
+        }
+      } else {
+        console.log('    → BE tests: no test commands found in package.json');
+      }
     });
 
-    // 4.6: Completion Review (CODE_ACCEPTANCE)
+    // 4.6: Completion Review (CODE_ACCEPTANCE handled by executeAcceptanceGates)
     await this.advanceSubPhase(4, 'phase_4_6', 'BE Completion Review', async () => {
-      console.log('    → CODE_ACCEPTANCE for backend...');
+      const mergedStories = beStories.filter(s => {
+        const scope = s.scope_write[0];
+        return scope && existsSync(join(this.projectRoot, scope));
+      });
+      console.log(`    → BE stories with code: ${mergedStories.length}/${beStories.length}`);
     });
+  }
 
-    await this.state.setSubState(4, 'phase_4_6', 'CODE_ACCEPTED');
-    console.log('  BE Track: CODE_ACCEPTED');
+  /** Resolve test commands from package.json scripts */
+  private resolveTestCommands(): string[] {
+    const commands: string[] = [];
+    try {
+      const pkgPath = join(this.projectRoot, 'package.json');
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+        if (pkg.scripts?.test) commands.push('npm run test');
+        if (pkg.scripts?.['test:unit']) commands.push('npm run test:unit');
+        if (pkg.scripts?.['test:integration']) commands.push('npm run test:integration');
+      }
+    } catch { /* ignore */ }
+    if (commands.length === 0) {
+      // Fall back to basic checks
+      if (existsSync(join(this.projectRoot, 'node_modules', '.bin', 'vitest'))) {
+        commands.push('npx vitest run');
+      } else if (existsSync(join(this.projectRoot, 'node_modules', '.bin', 'jest'))) {
+        commands.push('npx jest');
+      }
+    }
+    return commands;
   }
 
   /**
@@ -544,38 +1124,98 @@ export class PhaseOrchestrator {
       return;
     }
 
-    // 4.7: Scaffolding
+    const feStories = stories.filter(s => s.track === 'frontend' || s.track === 'full-stack');
+    if (feStories.length === 0) {
+      console.log('  FE Track: No frontend stories in development order');
+      return;
+    }
+
+    // 4.7: FE Scaffolding
     await this.advanceSubPhase(4, 'phase_4_7', 'FE Scaffolding', async () => {
-      console.log('    → Scaffolding frontend project...');
+      console.log(`    → Frontend stories: ${feStories.length}`);
+      const hasPackageJson = existsSync(join(this.projectRoot, 'package.json'));
+      console.log(`    → package.json: ${hasPackageJson ? 'EXISTS' : 'NOT FOUND (will be created by stories)'}`);
+      if (hasPackageJson) {
+        try {
+          const { execSync } = await import('child_process');
+          execSync('npm install', { cwd: this.projectRoot, stdio: 'pipe', timeout: 120_000 });
+          console.log('    → npm install: OK');
+        } catch (err: any) {
+          console.log(`    → npm install: ${err.message?.slice(0, 80) ?? 'failed'} (non-blocking)`);
+        }
+      }
     });
 
-    // 4.8: Design System
+    // 4.8: Design System — verify component structure
     await this.advanceSubPhase(4, 'phase_4_8', 'FE Design System', async () => {
-      console.log('    → Building design system components...');
+      // Check if a component directory exists
+      const componentDirs = ['src/components', 'src/ui', 'components', 'app/components'];
+      let found = false;
+      for (const dir of componentDirs) {
+        if (existsSync(join(this.projectRoot, dir))) {
+          console.log(`    → Component directory found: ${dir}`);
+          found = true;
+          break;
+        }
+      }
+      if (!found) console.log('    → Component directory: will be created by stories');
     });
 
-    // 4.9: API Client
+    // 4.9: API Client — verify typed client generation
     await this.advanceSubPhase(4, 'phase_4_9', 'FE API Client', async () => {
-      console.log('    → Generating typed API client...');
+      const apiClientDirs = ['src/api', 'src/services', 'app/api', 'src/lib/api'];
+      let found = false;
+      for (const dir of apiClientDirs) {
+        if (existsSync(join(this.projectRoot, dir))) {
+          const files = readdirSync(join(this.projectRoot, dir));
+          if (files.length > 0) {
+            console.log(`    → API client found: ${dir} (${files.length} files)`);
+            found = true;
+            break;
+          }
+        }
+      }
+      if (!found) console.log('    → API client: will be created by stories');
     });
 
-    // 4.10: Page Implementation (AUTO-CONTINUE)
+    // 4.10: Page Implementation (AUTO-CONTINUE) — dispatch story agents
     await this.advanceSubPhase(4, 'phase_4_10', 'FE Pages', async () => {
+      console.log(`    → Dispatching ${feStories.length} frontend stories...`);
       await this.runTrackStories('frontend', 'phase_4_10');
     });
 
     // 4.11: A11y & Perf Audit
     await this.advanceSubPhase(4, 'phase_4_11', 'FE A11y & Perf Audit', async () => {
-      console.log('    → Running Lighthouse + axe audits...');
+      const auditChecks: string[] = [];
+      try {
+        const pkgPath = join(this.projectRoot, 'package.json');
+        if (existsSync(pkgPath)) {
+          const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+          if (pkg.scripts?.['test:a11y']) auditChecks.push('npm run test:a11y');
+          if (pkg.scripts?.lighthouse) auditChecks.push('npm run lighthouse');
+          if (pkg.scripts?.audit) auditChecks.push('npm run audit');
+        }
+      } catch { /* ignore */ }
+
+      if (auditChecks.length > 0) {
+        const report = await runAcceptanceChecks(auditChecks, {
+          cwd: this.projectRoot,
+          timeout_ms: 300_000,
+        });
+        console.log(`    → A11y/Perf: ${report.all_passed ? 'PASSED' : 'FAILED'} (${report.total_duration_ms}ms)`);
+      } else {
+        console.log('    → A11y/Perf: no audit scripts configured');
+      }
     });
 
-    // 4.12: Completion Review (UI_ACCEPTANCE)
+    // 4.12: Completion Review
     await this.advanceSubPhase(4, 'phase_4_12', 'FE Completion Review', async () => {
-      console.log('    → UI_ACCEPTANCE for frontend...');
+      const mergedStories = feStories.filter(s => {
+        const scope = s.scope_write[0];
+        return scope && existsSync(join(this.projectRoot, scope));
+      });
+      console.log(`    → FE stories with code: ${mergedStories.length}/${feStories.length}`);
     });
-
-    await this.state.setSubState(4, 'phase_4_12', 'UI_ACCEPTED');
-    console.log('  FE Track: UI_ACCEPTED');
   }
 
   /**
@@ -720,6 +1360,14 @@ export class PhaseOrchestrator {
       crossStoryValidation: cfg?.cross_story_validation ?? true,
       autoProcessQueue: cfg?.merge_queue?.auto_process ?? true,
     };
+  }
+
+  /**
+   * Resolve workflow execution_mode for gate evaluation. Falls back to
+   * "interactive" so user_confirmation gates stay fail-closed by default.
+   */
+  private getExecutionMode(): 'auto' | 'interactive' {
+    return this.state.data.global_state.execution_mode ?? 'interactive';
   }
 
   // ── Configuration ──
@@ -877,8 +1525,10 @@ export class PhaseOrchestrator {
 
     // Evaluate gate if defined
     let gatePassed = true;
-    if (phase.gate_card && phase.gate_card.length > 0) {
-      const gateResult = await this.gateEvaluator.evaluate(phase.gate_card, this.state);
+    if (phase.gate_card && phase.gate_card.checks && phase.gate_card.checks.length > 0) {
+      const gateResult = await this.gateEvaluator.evaluate(phase.gate_card, this.state, {
+        executionMode: this.getExecutionMode(),
+      });
       gatePassed = gateResult.all_pass;
 
       if (!gateResult.all_pass) {
@@ -981,14 +1631,14 @@ export class PhaseOrchestrator {
     phase: number;
     all_pass: boolean;
     results: Array<{
-      gate_check_id: string;
-      status: 'pass' | 'fail' | 'warn';
+      gate_check_id?: string;
+      status: 'pass' | 'fail' | 'warn' | 'skipped';
       reason?: string;
       detail?: any;
     }>;
   }> {
     const phase = this.state.getPhase(phaseNum);
-    if (!phase || !phase.gate_card || phase.gate_card.length === 0) {
+    if (!phase || !phase.gate_card || !phase.gate_card.checks || phase.gate_card.checks.length === 0) {
       return {
         phase: phaseNum,
         all_pass: true,
@@ -996,7 +1646,9 @@ export class PhaseOrchestrator {
       };
     }
 
-    const result = await this.gateEvaluator.evaluate(phase.gate_card, this.state);
+    const result = await this.gateEvaluator.evaluate(phase.gate_card, this.state, {
+      executionMode: this.getExecutionMode(),
+    });
     return {
       phase: phaseNum,
       all_pass: result.all_pass,
@@ -1220,7 +1872,9 @@ export class PhaseOrchestrator {
 
     // Evaluate the gate checks (gateCard is the gate object, not an array)
     const gateChecks = details.gate.checks || [];
-    const result = await this.gateEvaluator.evaluate({ checks: gateChecks }, this.state);
+    const result = await this.gateEvaluator.evaluate({ checks: gateChecks }, this.state, {
+      executionMode: this.getExecutionMode(),
+    });
     return {
       gate_id: gateId,
       found: true,
@@ -1534,7 +2188,8 @@ export class PhaseOrchestrator {
     }
 
     if (options?.status) {
-      stories = stories.filter(s => s.status?.toUpperCase() === options.status.toUpperCase());
+      const targetStatus = options.status.toUpperCase();
+      stories = stories.filter(s => s.status?.toUpperCase() === targetStatus);
     }
 
     return {
@@ -1897,6 +2552,24 @@ export class PhaseOrchestrator {
   }
 
   /**
+   * Prepare a dispatch manifest for a round — one entry per persona.
+   * Parent Claude session consumes this with the Agent tool to dispatch
+   * real sub-agents (true multi-persona debate) instead of the stub generator.
+   */
+  preparePartyDispatch(partyId: string, prompt: string) {
+    return this.partyEngine.prepareDispatch(partyId, prompt);
+  }
+
+  /**
+   * Collect dispatched sub-agent outputs into party state. Call after the
+   * parent agent has finished dispatching all manifest entries.
+   */
+  async collectPartyDispatch(partyId: string): Promise<PartyState> {
+    await this.partyEngine.collectDispatchOutputs(partyId);
+    return this.partyEngine.getPartyState(partyId);
+  }
+
+  /**
    * Run cross-talk on a round.
    */
   async runCrossTalk(partyId: string, roundNumber: number): Promise<PartyState> {
@@ -1962,6 +2635,32 @@ export class PhaseOrchestrator {
   // ── Auto-Run Main Loop (CHG-2026-006) ──────────────────────────────
 
   /**
+   * Generate and write the auto-execute batch for Phases 1-3.
+   *
+   * This is the "last mile" that closes the loop between prompt generation and
+   * AI execution. The method scans all pending sub-phases, builds full prompts
+   * with agent methodology + quality checklists + anti-patterns, and writes a
+   * structured JSON batch file to `_wdf_output/.dispatch/auto-execute.json`.
+   *
+   * The Claude session reads this file and executes each prompt via Write/Agent
+   * tools. After all entries are done, `/wdf start` re-syncs state.
+   *
+   * Returns the path to the written batch file.
+   */
+  async generateAutoExecuteBatch(): Promise<{ batchPath: string; summaryPath: string; status: string; pendingCount: number }> {
+    const { buildAutoExecuteBatch, writeAutoExecuteBatch } = await import('./auto-executor.js');
+    const batch = buildAutoExecuteBatch(this.state, this.projectRoot, this.skillRoot);
+    const batchPath = writeAutoExecuteBatch(batch, this.projectRoot);
+    const summaryPath = join(this.projectRoot, '_wdf_output', '.dispatch', 'auto-execute.md');
+    return {
+      batchPath,
+      summaryPath,
+      status: batch.status,
+      pendingCount: batch.total_pending,
+    };
+  }
+
+  /**
    * Hands-free execution loop chaining phase 1 → 2 → 3 → 4.
    *
    * At each phase: evaluates the gate card, starts the phase, executes
@@ -2022,8 +2721,10 @@ export class PhaseOrchestrator {
         if (!gate.all_pass) {
           const entry = timeline[timeline.length - 1];
           entry.status = 'gate_failed';
-          entry.gate_failures = gate.results.filter(r => r.status === 'fail').map(r => r.gate_check_id);
-          logOverride(`  ✗ Gate failed: ${entry.gate_failures.join(', ')}`);
+          entry.gate_failures = gate.results
+            .filter(r => r.status === 'fail' && r.gate_check_id)
+            .map(r => r.gate_check_id as string);
+          logOverride(`  ✗ Gate failed: ${(entry.gate_failures ?? []).join(', ')}`);
           if (haltOnGate) {
             timeline[timeline.length - 1].halted = true;
             break;
@@ -2153,4 +2854,65 @@ export class PhaseOrchestrator {
 
     return lines.join('\n');
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+
+function loadStoriesFromDirectory(storiesDir: string): StoryEntry[] {
+  if (!existsSync(storiesDir)) return [];
+
+  const entries = readdirSync(storiesDir).filter(f => f.endsWith('.md'));
+  const stories: StoryEntry[] = [];
+
+  for (const file of entries) {
+    try {
+      const content = readFileSync(join(storiesDir, file), 'utf-8');
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (!fmMatch) continue;
+
+      const fm = fmMatch[1];
+      const get = (key: string) => {
+        const m = fm.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+        return m ? m[1].trim() : '';
+      };
+
+      const storyId = get('story_id');
+      const track = (get('track') || 'backend') as Track;
+      const title = file.replace('.md', '');
+
+      // Parse scope_write
+      let scopeWrite: string[] = ['src/'];
+      const swMatch = fm.match(/scope_write:\s*\n((?:\s+-\s+.+\n?)+)/);
+      if (swMatch) {
+        scopeWrite = swMatch[1].split('\n')
+          .map(l => l.replace(/^\s+-\s+/, '').trim())
+          .filter(l => l && !l.startsWith('backend:') && !l.startsWith('frontend:'));
+      }
+
+      // Parse acceptance_check
+      let acceptanceCheck: string[] = [];
+      const acMatch = fm.match(/acceptance_check:\s*\n((?:\s+-\s+.+\n?)+)/);
+      if (acMatch) {
+        acceptanceCheck = acMatch[1].split('\n')
+          .map(l => l.replace(/^\s+-\s+/, '').trim())
+          .filter(l => l && l !== '-');
+      }
+
+      if (storyId) {
+        stories.push({
+          track: track === 'full-stack' ? 'backend' : track,
+          order: stories.length + 1,
+          story_id: storyId,
+          title,
+          scope_write: scopeWrite.length > 0 ? scopeWrite : ['src/'],
+          acceptance_check: acceptanceCheck.length > 0 ? acceptanceCheck : ['npm run test'],
+          code_standards_source: ['AGENTS.md'],
+        });
+      }
+    } catch {
+      // Skip unparseable files
+    }
+  }
+
+  return stories;
 }

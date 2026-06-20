@@ -9,6 +9,7 @@ import {
   dispatchStoryAgent,
   AgentDispatcher,
   validateAgentDispatchResult,
+  detectAgentProvider,
 } from './agent-dispatcher.js';
 import { AGENT_RESULT_RELPATH, agentResultPath } from '../agent/write-result.js';
 import { writeResult } from '../agent/write-result.js';
@@ -44,12 +45,12 @@ function makeFakeSpawn(handler: (worktreePath: string) => {
   hang?: boolean;
 }): {
   spawn: typeof RealSpawn;
-  invocations: Array<{ args: readonly string[]; cwd: string }>;
+  invocations: Array<{ cmd: string; args: readonly string[]; cwd: string }>;
 } {
-  const invocations: Array<{ args: readonly string[]; cwd: string }> = [];
+  const invocations: Array<{ cmd: string; args: readonly string[]; cwd: string }> = [];
 
   const fakeSpawn = ((_cmd: string, args: readonly string[], opts: any) => {
-    invocations.push({ args, cwd: opts.cwd });
+    invocations.push({ cmd: _cmd, args, cwd: opts.cwd });
 
     const child = new EventEmitter() as any;
     child.stdout = new EventEmitter();
@@ -88,6 +89,8 @@ let outputDir: string;
 let worktreePath: string;
 
 beforeEach(() => {
+  // Spawn guard opt-in: production code cannot spawn agents; tests can.
+  process.env.WDF_ALLOW_SPAWN = '1';
   tmpRoot = mkdtempSync(join(tmpdir(), 'agent-dispatch-test-'));
   projectRoot = join(tmpRoot, 'project');
   storiesDir = join(projectRoot, 'stories');
@@ -106,6 +109,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.WDF_ALLOW_SPAWN;
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
@@ -194,6 +198,23 @@ describe('writeResult / readResult roundtrip', () => {
     expect(() =>
       writeResult({ status: 'nope' as any, story_id: 'X' } as any, { worktreePath }),
     ).toThrow(/invalid payload/);
+  });
+});
+
+describe('dispatchStoryAgent — spawn guard', () => {
+  it('throws by default to enforce "CLI never spawns agents" contract', async () => {
+    delete process.env.WDF_ALLOW_SPAWN;
+    await expect(
+      dispatchStoryAgent(makeStory(), {
+        worktreePath,
+        track: 'backend',
+        timeoutMinutes: 1,
+        maxRetries: 1,
+        projectRoot,
+        storiesDir,
+        outputDir,
+      }),
+    ).rejects.toThrow(/disabled by default/);
   });
 });
 
@@ -506,5 +527,38 @@ describe('AgentDispatcher legacy wrapper', () => {
     expect(typeof legacy.durationMs).toBe('number');
     // Reference fakeSpawn so the linter doesn't flag it as unused.
     void fakeSpawn;
+  });
+});
+
+describe('AgentProvider — command field', () => {
+  it('every provider exposes a non-empty command binary', () => {
+    // detectAgentProvider always returns a registered provider; we walk through
+    // the live one to assert .command is wired (regression for hardcoded
+    // 'claude' literal removed in P0-3).
+    const p = detectAgentProvider();
+    expect(typeof p.command).toBe('string');
+    expect(p.command.length).toBeGreaterThan(0);
+  });
+
+  it('uses provider.command (not hardcoded "claude") when spawning', async () => {
+    // Spawn a story with a fake provider whose command !== 'claude' would
+    // ideally be testable here, but currentAgentProvider is module-level. We
+    // assert the property the production fix relies on: the module exports a
+    // command field, and the spawn site reads provider.command. This test
+    // covers the wiring; integration is covered by mock spawn capturing cmd.
+    const { spawn: fakeSpawn, invocations } = makeFakeSpawn(() => ({ exitCode: 0 }));
+    await dispatchStoryAgent(makeStory(), {
+      worktreePath,
+      track: 'backend',
+      timeoutMinutes: 1,
+      maxRetries: 1,
+      projectRoot,
+      storiesDir,
+      outputDir,
+      spawnImpl: fakeSpawn,
+    });
+    expect(invocations.length).toBeGreaterThan(0);
+    // cmd must equal the live provider's command, never a hardcoded literal.
+    expect(invocations[0].cmd).toBe(detectAgentProvider().command);
   });
 });

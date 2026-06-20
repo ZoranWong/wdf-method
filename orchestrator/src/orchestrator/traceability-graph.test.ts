@@ -271,8 +271,9 @@ describe('analyzeImpact', () => {
       ],
     });
     expect(anchors).toHaveLength(2);
-    expect(anchors[0]).toEqual({ file: 'a.toml', section: undefined, path: 'x.y' });
-    expect(anchors[1]).toEqual({ file: 'b.md', section: '## H', path: undefined });
+    // Semantic (ADDED/MODIFIED/REMOVED) is carried through for impact reports.
+    expect(anchors[0]).toEqual({ file: 'a.toml', section: undefined, path: 'x.y', semantic: 'modified' });
+    expect(anchors[1]).toEqual({ file: 'b.md', section: '## H', path: undefined, semantic: 'modified' });
   });
 
   it('formatImpactReport renders kinds + unmapped section', () => {
@@ -356,10 +357,10 @@ describe('StoryRefsRequiredRule', () => {
     const file = {
       path: '_wdf_output/stories/STORY-001.md',
       content: `---\nstory_id: STORY-001\nrefs: [REQ-1, EPIC-1]\n---\nbody`,
-      lines: [],
+      lines: [] as string[],
     };
     file.lines = file.content.split('\n');
-    const r = StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
+    const r = await StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
     expect(r).toEqual([]);
   });
 
@@ -368,10 +369,10 @@ describe('StoryRefsRequiredRule', () => {
     const file = {
       path: '_wdf_output/stories/STORY-002.md',
       content: `---\nstory_id: STORY-002\ntitle: x\n---\n`,
-      lines: [],
+      lines: [] as string[],
     };
     file.lines = file.content.split('\n');
-    const r = StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
+    const r = await StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
     expect(r).toHaveLength(1);
     expect(r[0].message).toMatch(/missing refs:/);
   });
@@ -381,10 +382,10 @@ describe('StoryRefsRequiredRule', () => {
     const file = {
       path: '_wdf_output/stories/STORY-003.md',
       content: `---\nstory_id: S\nrefs: []\n---\n`,
-      lines: [],
+      lines: [] as string[],
     };
     file.lines = file.content.split('\n');
-    const r = StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
+    const r = await StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
     expect(r).toHaveLength(1);
     expect(r[0].message).toMatch(/empty refs/);
   });
@@ -396,7 +397,7 @@ describe('StoryRefsRequiredRule', () => {
       content: `# readme`,
       lines: ['# readme'],
     };
-    const r = StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
+    const r = await StoryRefsRequiredRule.check({ projectRoot: '/r', files: [file], config: {} });
     expect(r).toEqual([]);
   });
 });

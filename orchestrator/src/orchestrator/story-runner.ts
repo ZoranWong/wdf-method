@@ -4,8 +4,10 @@ import simpleGit from 'simple-git';
 import { SprintStatusManager } from './sprint-status.js';
 import { WorktreeManager } from './worktree.js';
 import { GateEvaluator } from './gate-evaluator.js';
-import { AgentDispatcher, AgentDispatchConfig } from './agent-dispatcher.js';
-import { StoryEntry, Track, PhaseStatus, StoryStatus, ScopeLockConfig } from './types.js';
+// AgentDispatcher was previously instantiated here to spawn sub-agents.
+// Removed per the "CLI never spawns agents" rule — manifest-based dispatch
+// in pipeline-runner.ts is the canonical path.
+import { StoryEntry, Track, PhaseStatus, StoryStatus, ScopeLockConfig, StoryExecutionResult, PipelineContext } from './types.js';
 import { evaluateStoryReadyGate } from './story-ready-gate.js';
 import { runAcceptanceChecks, AcceptanceReport } from './acceptance-runner.js';
 import {
@@ -14,6 +16,11 @@ import {
   applyEnforcementMode,
   summarizeViolations,
 } from './scope-lock.js';
+import {
+  processStoryPipeline,
+  PipelineAction,
+  initPipelineContext,
+} from './pipeline-runner.js';
 
 /**
  * Sub-step ID mapping for BE and FE stories.
@@ -44,9 +51,9 @@ export class StoryRunner {
   private state: SprintStatusManager;
   private worktree: WorktreeManager;
   private gateEvaluator: GateEvaluator;
-  private agentDispatcher: AgentDispatcher;
   private storiesDir: string;
   private outputDir: string;
+  private projectRoot: string;
   private protectedPaths: string[];
   private scopeLockConfig: ScopeLockConfig | null;
 
@@ -62,9 +69,9 @@ export class StoryRunner {
     this.state = state;
     this.worktree = worktree;
     this.gateEvaluator = gateEvaluator;
-    this.agentDispatcher = new AgentDispatcher(projectRoot, storiesDir, outputDir);
     this.storiesDir = storiesDir;
     this.outputDir = outputDir;
+    this.projectRoot = projectRoot;
     this.scopeLockConfig = options.scopeLockConfig ?? null;
     // Default protected paths (V3.6) — overridden by config when provided.
     this.protectedPaths = options.protectedPaths && options.protectedPaths.length > 0
@@ -173,11 +180,38 @@ export class StoryRunner {
     };
     await this.state.updateStoryStatus(4, subKey, storyStatus);
 
-    // Execute story steps
+    // Execute story steps (pipeline stage driver)
     const result = await this.executeStorySteps(story, worktreePath, subKey, isFE);
 
+    // Pipeline needs an agent dispatch — signal to parent session
+    if (result.needsDispatch && result.dispatchManifestPath) {
+      const stage = existing?.pipeline?.stage ?? 'dev';
+      console.log(`    📤 ${story.story_id}: Dispatch manifest written — ${result.dispatchManifestPath} (stage: ${stage})`);
+      return {
+        storyId: story.story_id,
+        status: 'NEEDS_DISPATCH',
+        serial_only: gateResult.serial_only,
+      };
+    }
+
+    // Pipeline escalation
+    if (result.escalated) {
+      console.log(`    ✗ ${story.story_id}: Pipeline escalated`);
+      await this.state.updateStoryStatus(4, subKey, {
+        ...storyStatus,
+        status: 'PIPELINE_ESCALATED' as PhaseStatus,
+        last_completed_substep: result.lastSubstep ?? undefined,
+      });
+      return null;
+    }
+
+    // Story was skipped (already merged)
+    if (result.skipped) {
+      return null;
+    }
+
     if (result.success) {
-      // Verify acceptance checks via the safe execution engine before
+      // Pipeline complete — verify acceptance checks via the safe execution engine before
       // recording CODE_ACCEPTED. This is a belt-and-braces guard: the
       // dispatched agent has already self-attested, but we re-run the
       // declared `acceptance_check` commands here under the validated
@@ -195,12 +229,33 @@ export class StoryRunner {
         console.log(
           `    ✗ ${story.story_id}: Acceptance verification failed — ${failures}`,
         );
-        await this.state.updateStoryStatus(4, subKey, {
-          ...storyStatus,
-          status: 'BLOCKED',
-          last_completed_substep: isFE ? '4h' : '4g',
-        });
-        return null;
+
+        // FIX LOOP: record failure context so the parent Claude session's
+        // Agent tool can re-dispatch a fix agent. The orchestrator does NOT
+        // spawn sub-processes — it writes a fix-context manifest that the
+        // parent session reads and dispatches via the native Agent tool
+        // (Claude Code / Codex multi-agent).
+        const maxFixRetries = 2;
+        const fixAttempts = this.countFixAttempts(story, storyStatus);
+        if (fixAttempts < maxFixRetries) {
+          console.log(`    🔧 ${story.story_id}: Writing fix-context for Agent tool retry (${fixAttempts + 1}/${maxFixRetries})`);
+          await this.writeFixContext(story, worktreePath, acceptanceReport, fixAttempts + 1, maxFixRetries);
+          // Mark as FIX_RETRY so the parent session's Agent tool picks it up
+          await this.state.updateStoryStatus(4, subKey, {
+            ...storyStatus,
+            status: 'FIX_RETRY' as PhaseStatus,
+            last_completed_substep: isFE ? '4h' : '4g',
+          });
+          return { storyId: story.story_id, status: 'FIX_RETRY', serial_only: gateResult.serial_only };
+        } else {
+          console.log(`    ✗ ${story.story_id}: Fix retry budget exhausted (${maxFixRetries}/${maxFixRetries})`);
+          await this.state.updateStoryStatus(4, subKey, {
+            ...storyStatus,
+            status: 'BLOCKED',
+            last_completed_substep: isFE ? '4h' : '4g',
+          });
+          return null;
+        }
       }
 
       // Commit CODE_ACCEPTED state
@@ -404,38 +459,55 @@ export class StoryRunner {
   }
 
   /**
-   * Execute story implementation by dispatching a Claude Code agent to the story worktree.
-   * The agent performs all steps (4c → 4j/4k) autonomously and returns CODE_ACCEPTED or failure.
+   * Execute story implementation through the per-stage pipeline
+   * (dev→review→testing→QA). Each invocation processes ONE pipeline stage.
+   * The returned StoryExecutionResult signals whether the parent session
+   * needs to dispatch an agent via its Agent tool.
    */
   private async executeStorySteps(
     story: StoryEntry,
     worktreePath: string,
     subKey: string,
     isFE: boolean
-  ): Promise<{ success: boolean; lastSubstep?: string }> {
-    const config: AgentDispatchConfig = {
-      worktreePath,
-      storyId: story.story_id,
-      track: story.track as Track,
-      timeoutMinutes: 30,
-      maxRetries: 2,
-    };
+  ): Promise<StoryExecutionResult> {
+    const action = processStoryPipeline(
+      story,
+      this.state,
+      this.outputDir,
+      this.projectRoot,
+    );
 
-    console.log(`    → Dispatching agent to implement ${story.story_id}...`);
-    const result = await this.agentDispatcher.dispatchStoryAgent(story, config);
+    switch (action.kind) {
+      case 'dispatch': {
+        const stage = action.manifest?.stage ?? 'dev';
+        console.log(`    → Pipeline stage "${stage}" (attempt ${action.manifest?.attempt ?? 1}) for ${story.story_id}`);
+        return {
+          success: false,
+          needsDispatch: true,
+          dispatchManifestPath: action.manifest_path,
+          lastSubstep: stage === 'dev' ? '4c' : stage === 'review' ? '4h' : stage === 'testing' ? '4g' : '4j',
+        };
+      }
 
-    if (result.status === 'CODE_ACCEPTED') {
-      console.log(`    ✓ ${story.story_id}: Agent returned CODE_ACCEPTED (${(result.durationMs / 1000).toFixed(1)}s)`);
-      return { success: true };
+      case 'complete': {
+        console.log(`    ✓ ${story.story_id}: Pipeline complete — all stages passed`);
+        return { success: true, lastSubstep: isFE ? '4k' : '4j' };
+      }
+
+      case 'skip': {
+        console.log(`    ⊘ ${story.story_id}: ${action.reason ?? 'skipped'}`);
+        return { success: true, skipped: true };
+      }
+
+      case 'escalation': {
+        console.log(`    ✗ ${story.story_id}: PIPELINE_ESCALATED — ${action.escalation?.reason ?? 'retry budget exhausted'}`);
+        return { success: false, escalated: true, lastSubstep: isFE ? '4k' : '4j' };
+      }
+
+      default: {
+        throw new Error(`Unknown pipeline action: ${(action as any).kind}`);
+      }
     }
-
-    if (result.status === 'BLOCKED_BY_DEPENDENCY') {
-      console.log(`    🔒 ${story.story_id}: BLOCKED_BY_DEPENDENCY — will retry later`);
-      return { success: false, lastSubstep: '4a' };
-    }
-
-    console.log(`    ✗ ${story.story_id}: Agent failed — ${result.summary}`);
-    return { success: false, lastSubstep: isFE ? '4k' : '4j' };
   }
 
   private async executeStoryStepsFrom(
@@ -444,9 +516,10 @@ export class StoryRunner {
     startStep: string,
     subKey: string,
     isFE: boolean
-  ): Promise<{ success: boolean; lastSubstep?: string }> {
-    // Resume from interruption — re-dispatch the agent to continue from the last completed substep
-    console.log(`    → Re-dispatching agent for ${story.story_id} from step ${startStep}...`);
+  ): Promise<StoryExecutionResult> {
+    // Resume from interruption — the pipeline context in story status
+    // determines which stage to resume from.
+    console.log(`    ↻ ${story.story_id}: Resuming pipeline from step ${startStep}`);
     return this.executeStorySteps(story, worktreePath, subKey, isFE);
   }
 
@@ -581,5 +654,64 @@ export class StoryRunner {
       // 5 minutes is a sensible upper bound for any single one.
       timeout_ms: 5 * 60_000,
     });
+  }
+
+  /**
+   * Count how many fix attempts have been recorded for this story.
+   * Reads from the story's step_history for entries with step='fix_attempt'.
+   */
+  private countFixAttempts(story: StoryEntry, status: any): number {
+    const history = status.step_history ?? [];
+    return history.filter((s: any) => s.step === 'fix_attempt').length;
+  }
+
+  /**
+   * Write a fix-context manifest for the parent Claude session's Agent tool.
+   * The parent session reads this file and dispatches a fix agent via its
+   * native Agent tool (Claude Code multi-agent), NOT by spawning a subprocess.
+   *
+   * This is the canonical wdf-method fix loop: orchestrator detects failure →
+   * writes context → parent session re-dispatches via Agent tool → fix agent
+   * writes code → orchestrator re-verifies.
+   */
+  private async writeFixContext(
+    story: StoryEntry,
+    worktreePath: string,
+    acceptanceReport: AcceptanceReport,
+    attempt: number,
+    maxAttempts: number,
+  ): Promise<void> {
+    const fixDir = join(this.outputDir, '.dispatch', 'fix');
+    mkdirSync(fixDir, { recursive: true });
+    const fixContext = {
+      story_id: story.story_id,
+      title: story.title,
+      track: story.track,
+      attempt,
+      max_attempts: maxAttempts,
+      worktree_path: worktreePath,
+      scope_write: story.scope_write,
+      acceptance_check: story.acceptance_check,
+      failures: acceptanceReport.results
+        .filter((r) => !r.passed)
+        .map((r) => ({
+          command: r.command,
+          exit_code: r.exit_code,
+          error: r.error ?? null,
+          stdout: r.stdout?.slice(-2000) ?? null,
+          stderr: r.stderr?.slice(-2000) ?? null,
+        })),
+      instructions: [
+        `Story ${story.story_id} failed acceptance checks.`,
+        `Fix the issues within the scope_write paths: ${story.scope_write.join(', ')}.`,
+        `Do NOT modify files outside these paths.`,
+        `Run acceptance checks: ${story.acceptance_check.join(', ')}.`,
+        `Commit changes with message: "fix(${story.story_id}): fix acceptance (attempt ${attempt})"`,
+      ].join('\n'),
+      created_at: new Date().toISOString(),
+    };
+    const fixFile = join(fixDir, `${story.story_id}-fix-${attempt}.json`);
+    writeFileSync(fixFile, JSON.stringify(fixContext, null, 2));
+    console.log(`      📝 Fix context written to ${fixFile}`);
   }
 }

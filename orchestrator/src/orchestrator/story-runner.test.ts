@@ -174,12 +174,8 @@ describe('StoryRunner — Story Ready Gate integration', () => {
       total_duration_ms: 0,
     });
 
-    const dispatcher = (runner as any).agentDispatcher;
-    vi.spyOn(dispatcher, 'dispatchStoryAgent').mockResolvedValue({
-      status: 'CODE_ACCEPTED',
-      summary: 'ok',
-      durationMs: 10,
-    });
+    // Note: StoryRunner uses manifest-based dispatch (no spawn). The
+    // SRG-only assertions below don't depend on a dispatch result.
 
     const story = makeStory({ scope_write: ['schema/migration'] });
     const result = await (runner as any).tryRunStory(story);
@@ -209,13 +205,6 @@ describe('StoryRunner — Story Ready Gate integration', () => {
       all_passed: true,
       results: [],
       total_duration_ms: 0,
-    });
-
-    const dispatcher = (runner as any).agentDispatcher;
-    vi.spyOn(dispatcher, 'dispatchStoryAgent').mockResolvedValue({
-      status: 'CODE_ACCEPTED',
-      summary: 'ok',
-      durationMs: 10,
     });
 
     const result = await (runner as any).tryRunStory(story);

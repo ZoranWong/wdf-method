@@ -12,7 +12,8 @@ import { rebuildStatusCommand } from './rebuild-status.js';
 import { statusCommand, renderStatus } from './status.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { runDoctor, formatDoctorReport } from './doctor.js';
-import { applyDelta, summarizePlan, unifiedDiff, loadDelta, planApply } from './cr-applier.js';
+import { applyDelta, summarizePlan, unifiedDiff, loadDelta, planApply, archiveAndRewrite, resolveCrDir } from './cr-applier.js';
+import { verifyCrConsistency, formatReport as formatCrVerifyReport } from './cr-verify.js';
 import { renameSync, readdirSync, statSync } from 'fs';
 
 async function main() {
@@ -31,19 +32,44 @@ async function main() {
     return;
   }
 
+  // Constitution check operates on the framework root or any project
+  // directory — does not require _wdf_output/ to exist.
+  if (command === 'constitution') {
+    const rootFlag = args.find(a => a.startsWith('--root='));
+    const root = resolve(rootFlag ? rootFlag.slice(7) : process.cwd());
+    await runConstitutionCommand(args, root);
+    return;
+  }
+
   if (command === 'init') {
     await runInitCommand(args);
     return;
   }
 
-  // Proposal-level CR ops (cr apply / cr archive) work on changes/<CHG-id>/
-  // and do NOT require an initialized project; treat cwd as project root.
+  // Proposal-level CR ops (cr apply / cr archive / cr verify) work on
+  // changes/<CHG-id>/ and do NOT require an initialized project; treat cwd
+  // as project root.
   if (command === 'cr' && (args[1] === 'apply' || args[1] === 'archive')) {
     await runCrProposalCommand(args, process.cwd());
     return;
   }
+  if (command === 'cr' && args[1] === 'verify') {
+    await runCrVerifyCommand(args, process.cwd());
+    return;
+  }
 
-  const projectRoot = resolve(args[1] ?? process.cwd());
+  // Trace command uses cwd as project root (the ID is args[1])
+  if (command === 'trace') {
+    await runTraceCommand(args, process.cwd());
+    return;
+  }
+
+  // project root: --root= flag takes priority, else cwd.
+  // NOTE: positional args (phase numbers, story ids, etc.) must NOT be
+  // interpreted as project root — historically args[1] was treated as a path,
+  // which broke every command that takes a positional argument (e.g. `phase 3`).
+  const rootFlag = args.find(a => a.startsWith('--root='));
+  const projectRoot = resolve(rootFlag ? rootFlag.slice(7) : process.cwd());
 
   if (!existsSync(projectRoot)) {
     console.error(`Project root not found: ${projectRoot}`);
@@ -54,7 +80,18 @@ async function main() {
   const statusDir = join(projectRoot, '_wdf_output', 'status');
   const initialized = existsSync(join(statusDir, 'global.yaml'));
 
-  if (!initialized && !['status', 'help', 'rebuild-status'].includes(command)) {
+  // Check if project is initialized for commands that need it.
+  // Framework-level commands (workspace, template, preset, coverage, schema,
+  // provider, review, retro) operate on the skill root or temp dirs and do
+  // NOT require an initialized WDF project at cwd.
+  const FRAMEWORK_LEVEL_COMMANDS = new Set([
+    'status', 'help', 'rebuild-status',
+    'workspace', 'template', 'preset', 'coverage',
+    'schema', 'provider', 'review', 'retro', 'retrospective',
+    'health', 'doctor', 'pre-check', 'lint',
+  ]);
+
+  if (!initialized && !FRAMEWORK_LEVEL_COMMANDS.has(command)) {
     console.error('WDF project not initialized. Run `wdf init` first.');
     process.exit(1);
   }
@@ -134,6 +171,18 @@ async function main() {
       await runQueueCommand(args, projectRoot, orchestrator);
       break;
 
+    case 'agent':
+      await runAgentCommand(args, projectRoot);
+      break;
+
+    case 'report':
+      if (!orchestrator) {
+        console.error('WDF project not initialized. Run `wdf init` first.');
+        process.exit(1);
+      }
+      await runReportCommand(args, projectRoot, orchestrator);
+      break;
+
     case 'party':
       if (!orchestrator) {
         console.error('WDF project not initialized. Run `wdf init` first.');
@@ -150,54 +199,61 @@ async function main() {
       await runDoctorCommand(args, projectRoot);
       break;
 
-    case 'run':
-      if (!orchestrator) {
-        console.error('WDF project not initialized. Run `wdf init` first.');
-        process.exit(1);
-      }
-      const mode = args[2] as 'light' | 'serial' | 'parallel' | undefined;
-      await orchestrator.triageAndExecute(mode);
+    case 'schema':
+      await runSchemaCommand(args, projectRoot);
       break;
 
-    case 'run-track': {
-      if (!orchestrator) {
-        console.error('WDF project not initialized. Run `wdf init` first.');
-        process.exit(1);
-      }
-      const track = args[2] as 'backend' | 'frontend' | undefined;
-      if (!track) {
-        console.error('Usage: orchestrator run-track <backend|frontend>');
-        process.exit(1);
-      }
-      console.log(`Running ${track} track...`);
-      await orchestrator.triageAndExecute('serial');
+    case 'provider':
+      await runProviderCommand(args);
       break;
-    }
 
-    case 'auto-run':
-    case 'autorun':
-    case 'run-loop': {
+    case 'review':
+      await runReviewCommand(args, projectRoot);
+      break;
+
+    case 'retro':
+    case 'retrospective':
+      await runRetroCommand(args, projectRoot);
+      break;
+
+    case 'preset':
+      await runPresetCommand(args, projectRoot);
+      break;
+
+    case 'template':
+      await runTemplateCommand(args, projectRoot);
+      break;
+
+    case 'workspace':
+      await runWorkspaceCommand(args, projectRoot);
+      break;
+
+    case 'coverage':
+      await runCoverageCommand(args, projectRoot);
+      break;
+
+    case 'check':
+      await runCheckCommand(args, projectRoot);
+      break;
+
+    case 'validate':
+      // Alias for check — validates status files, config files, and artifacts
+      await runCheckCommand(args, projectRoot);
+      break;
+
+    case 'snapshot':
+      await runSnapshotCommand(args, projectRoot);
+      break;
+
+    case 'start':
       if (!orchestrator) {
         console.error('WDF project not initialized. Run `wdf init` first.');
         process.exit(1);
       }
-      const verbose = args.includes('--verbose') || args.includes('-v');
-      const maxIter = parseOptInt(args, '--max-iter', 50);
-      const result = await orchestrator.runAutoLoop({ verbose, maxIterations: maxIter });
-      if (!verbose) {
-        console.log(JSON.stringify({
-          all_done: result.all_phases_complete,
-          phases: result.phases_executed,
-          paused: result.paused,
-          iterations: result.iterations,
-        }, null, 2));
-      }
-      if (result.paused && !verbose) {
-        console.log(`⏸  Paused: ${result.pause_reason ?? '(unknown)'}. Resume: wdf resume`);
-      }
-      process.exit(result.all_phases_complete ? 0 : 1);
-    }
+      await runStartCommand(args, projectRoot, orchestrator);
+      break;
 
+    case 'check':
     case 'merge-queue':
       if (!orchestrator) {
         console.error('WDF project not initialized. Run `wdf init` first.');
@@ -271,7 +327,7 @@ async function main() {
     case 'help':
     default:
       console.log(`
-web-dev-flow orchestrator v3.6.0
+web-dev-flow orchestrator v3.8.0
 
 Core Commands:
   wdf pre-check [--json]                  Run environment pre-flight checks
@@ -297,6 +353,7 @@ CR Commands:
   wdf cr resolve <cr-id>                  Mark CR as resolved
   wdf cr apply <CHG-id> [--dry-run]       Apply delta.yaml from changes/<CHG-id>/
   wdf cr archive <CHG-id>                 Move proposal to changes/_archive/
+  wdf cr verify [--json]                  Verify INDEX.md ↔ proposal.md status consistency
 
 Workflow Commands:
   wdf run [mode]                          Execute workflow from current state
@@ -354,11 +411,16 @@ async function runPreCheckCommand(args: string[]) {
 }
 
 async function runInitCommand(args: string[]) {
+  // Accept project path as first non-flag argument, or default to cwd
+  const pathArg = args.find(a => !a.startsWith('--') && a !== 'init');
+  const projectRoot = pathArg ? resolve(pathArg) : process.cwd();
+
   const options: any = {
-    projectRoot: process.cwd(),
+    projectRoot,
     complexity: 'standard',
     devMode: 'separated',
     triageMode: 'parallel',
+    executionMode: 'interactive',
     frontend: 'react',
     backend: 'express',
     database: 'postgresql',
@@ -371,6 +433,19 @@ async function runInitCommand(args: string[]) {
     const arg = args[i];
     if (arg === '--yes') options.yes = true;
     else if (arg === '--json') options.json = true;
+    else if (arg === '--from-existing') options.fromExisting = true;
+    else if (arg === '--mode' && args[i + 1]) {
+      const mode = args[++i].toLowerCase();
+      if (mode === 'auto' || mode === 'interactive') {
+        options.executionMode = mode;
+      } else {
+        console.error(`Error: --mode must be "auto" or "interactive", got "${mode}".`);
+        process.exit(1);
+      }
+    }
+    else if (arg === '--template' && args[i + 1]) {
+      options.template = args[++i];
+    }
     else if (arg.startsWith('--') && args[i + 1]) {
       const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       options[key] = args[++i];
@@ -388,6 +463,35 @@ async function runInitCommand(args: string[]) {
     process.exit(1);
   }
 
+  // If --template was specified, pull its tech_stack + quality.toml into options.
+  if (options.template) {
+    const skillRoot = process.env.WDF_ROOT ?? resolve(projectRoot, '..');
+    const { loadTemplate, validateTemplate } = await import('./template-loader.js');
+    const tpl = loadTemplate(skillRoot, options.template);
+    if (!tpl) {
+      console.error(`Error: template "${options.template}" not found at ${skillRoot}/templates/`);
+      console.error('Run `wdf template list` to see available templates.');
+      process.exit(1);
+    }
+    const issues = validateTemplate(tpl);
+    if (issues.length > 0) {
+      console.error(`Error: template "${options.template}" has issues:\n  - ${issues.join('\n  - ')}`);
+      process.exit(1);
+    }
+    // Apply tech stack defaults (CLI args still override).
+    const ts = tpl.tech_stack ?? {};
+    if (ts.frontend && !args.includes('--frontend')) options.frontend = ts.frontend;
+    if (ts.backend && !args.includes('--backend')) options.backend = ts.backend;
+    if (ts.database && !args.includes('--database')) options.database = ts.database;
+    if (ts.api_style && !args.includes('--api-style')) options.apiStyle = ts.api_style;
+    if (ts.auth && !args.includes('--auth-method')) options.authMethod = ts.auth;
+    if (ts.deployment && !args.includes('--deployment')) options.deployment = ts.deployment;
+    // Stash template metadata so initCommand can copy quality.toml + story patterns.
+    options._templatePath = tpl.directory;
+    options._templateName = tpl.name;
+    console.log(`📦 Using template: ${tpl.name} v${tpl.version} — ${tpl.description}`);
+  }
+
   try {
     const result = await initCommand(options);
     if (options.json) {
@@ -397,6 +501,9 @@ async function runInitCommand(args: string[]) {
       console.log(`   Project: ${result.projectName}`);
       console.log(`   Root: ${result.projectRoot}`);
       console.log(`   Files created: ${result.filesCreated.length}`);
+      if (options.template) {
+        console.log(`   Template: ${options.template}`);
+      }
     }
     process.exit(0);
   } catch (err: any) {
@@ -445,6 +552,290 @@ async function runDoctorCommand(args: string[], projectRoot: string) {
   }
 
   process.exit(report.overall === 'fail' ? 1 : 0);
+}
+
+async function runStartCommand(args: string[], projectRoot: string, orchestrator: PhaseOrchestrator) {
+  const { generatePrompt } = await import('./prompt-generator.js');
+  const json = args.includes('--json');
+  const autoMode = args.includes('auto') || args.includes('--auto');
+
+  // Check execution mode from global state (set by wdf init --mode auto|interactive)
+  const gs = (orchestrator as any)['state']?.data?.global_state;
+  const executionMode = gs?.execution_mode ?? 'interactive';
+  const isExecutionAuto = autoMode || executionMode === 'auto';
+
+  // Sync FSM state from on-disk artifacts before generating the prompt.
+  // This is what makes "produce artifact → next wdf start advances" work.
+  const sync = await orchestrator.syncStateFromArtifacts();
+  if (!json && sync.synced.length > 0) {
+    console.log(`✓ Synced ${sync.synced.length} sub-phase(s): ${sync.synced.join(', ')}`);
+  }
+
+  const result = generatePrompt(orchestrator['state'], projectRoot);
+
+  // Generate auto-execute batch only when execution mode is "auto"
+  // (project initialized with `wdf init --mode auto`).
+  let batchInfo: { batchPath: string; summaryPath: string; status: string; pendingCount: number } | null = null;
+  if (isExecutionAuto && result.pending.length > 0) {
+    try {
+      batchInfo = await orchestrator.generateAutoExecuteBatch();
+    } catch (err) {
+      // Non-fatal — auto-execute batch is an optimisation, not a requirement
+      if (!json) console.log(`  ⚠ Auto-execute batch generation skipped: ${(err as Error).message}`);
+    }
+  }
+
+  if (json) {
+    console.log(JSON.stringify({
+      ...result,
+      synced: sync.synced,
+      auto_execute: batchInfo ? { batch_path: batchInfo.batchPath, status: batchInfo.status, pending: batchInfo.pendingCount } : null,
+    }, null, 2));
+  } else {
+    console.log('');
+    console.log('══ WDF Status ══');
+    console.log(`  Target: ${result.target}`);
+    console.log(`  Status: ${result.status}`);
+    console.log('');
+    if (result.completed.length > 0) {
+      console.log('  ✓ Completed:');
+      for (const c of result.completed.slice(-5)) console.log(`    ${c}`);
+      if (result.completed.length > 5) console.log(`    ... +${result.completed.length - 5} more`);
+    }
+    if (result.pending.length > 0) {
+      console.log('');
+      console.log('  ⏳ Pending:');
+      for (const p of result.pending) console.log(`    ${p}`);
+    }
+    console.log('');
+    console.log('── Prompt ──');
+    console.log(result.prompt);
+    console.log('');
+
+    if (batchInfo && batchInfo.status === 'ready') {
+      console.log('── Auto-Execute Batch ──');
+      console.log(`  Batch file: _wdf_output/.dispatch/auto-execute.json`);
+      console.log(`  Summary:    _wdf_output/.dispatch/auto-execute.md`);
+      console.log(`  Pending:    ${batchInfo.pendingCount} sub-phase(s) ready to execute`);
+      console.log('');
+      console.log('  To auto-execute all pending sub-phases:');
+      console.log('    1. Read _wdf_output/.dispatch/auto-execute.json');
+      console.log('    2. For each entry, write the artifact to the output path');
+      console.log('    3. Run /wdf start to re-sync state');
+    }
+
+    console.log(`  Next: ${result.nextCommand}`);
+    console.log('');
+  }
+}
+
+async function runCheckCommand(args: string[], projectRoot: string) {
+  const { checkArtifact, formatCheckResults } = await import('./artifact-checker.js');
+  const json = args.includes('--json');
+  const artifact = args.find(a => a.startsWith('--artifact='))?.split('=')[1];
+  const phaseArg = args.find(a => a.startsWith('--phase='));
+  const phase = phaseArg ? parseInt(phaseArg.split('=')[1], 10) : undefined;
+  const story = args.find(a => a.startsWith('--story='))?.split('=')[1];
+
+  if (!artifact && !phase && !story) {
+    // Check all artifacts
+    console.log('Checking all artifacts...');
+  }
+
+  const results = checkArtifact({ projectRoot, artifact, phase, story });
+
+  if (json) {
+    console.log(JSON.stringify(results, null, 2));
+  } else {
+    console.log(formatCheckResults(results));
+  }
+
+  const hasErrors = results.some(r => !r.passed);
+  process.exit(hasErrors ? 1 : 0);
+}
+
+async function runTraceCommand(args: string[], projectRoot: string) {
+  const id = args[1];
+  if (!id || id === '--help' || id === '-h') {
+    console.error('Usage: wdf trace <id> [--format=text|mermaid] [--rebuild]');
+    console.error('');
+    console.error('Trace a node through the full JTBD→REQ→EPIC→STORY→API/DB→TEST→COMMIT chain.');
+    console.error('');
+    console.error('Options:');
+    console.error('  --format=text     Human-readable output (default)');
+    console.error('  --format=mermaid  Mermaid.js flowchart for embedding in markdown');
+    console.error('  --rebuild         Force rebuild the traceability graph');
+    console.error('');
+    console.error('Examples:');
+    console.error('  wdf trace REQ-7');
+    console.error('  wdf trace STORY-001 --format=mermaid');
+    console.error('  wdf trace API:GET /todos --rebuild');
+    process.exit(id === '--help' || id === '-h' ? 0 : 1);
+  }
+
+  const { traceCommand } = await import('./trace-cmd.js');
+  const formatArg = args.find(a => a.startsWith('--format='));
+  const format = (formatArg?.split('=')[1] ?? 'text') as 'text' | 'mermaid';
+  const rebuild = args.includes('--rebuild');
+
+  const result = await traceCommand({ id, projectRoot, format, rebuild });
+  console.log(result.formatted);
+
+  if (!result.found) {
+    console.error(`\nNode "${id}" not found in the traceability graph.`);
+    process.exit(1);
+  }
+}
+
+async function runSnapshotCommand(args: string[], projectRoot: string) {
+  const subCommand = args[1];
+  const json = args.includes('--json');
+
+  const {
+    listSnapshots,
+    createSnapshot,
+    restoreSnapshot,
+    replaySnapshot,
+    pruneSnapshots,
+  } = await import('./snapshot.js');
+
+  switch (subCommand) {
+    case 'list': {
+      const items = listSnapshots(projectRoot);
+      if (json) {
+        console.log(JSON.stringify(items, null, 2));
+      } else if (items.length === 0) {
+        console.log('No snapshots found.');
+        console.log('Snapshots are created automatically at Phase boundaries and on gate failures.');
+        console.log('Use `wdf snapshot create --label <name>` to create one manually.');
+      } else {
+        console.log('Snapshots (newest first):\n');
+        for (const item of items) {
+          const date = new Date(item.created_at).toLocaleString();
+          const phase = item.phase ? `Phase ${item.phase}` : 'N/A';
+          console.log(`  ${item.name}`);
+          console.log(`    Reason:  ${item.reason}`);
+          console.log(`    Phase:   ${phase}`);
+          console.log(`    Created: ${date}`);
+          console.log(`    Git:     ${item.git_head_short}`);
+          console.log();
+        }
+      }
+      break;
+    }
+
+    case 'create': {
+      const labelArg = args.find(a => a.startsWith('--label='));
+      const label = labelArg?.split('=')[1];
+      if (!label) {
+        console.error('Usage: wdf snapshot create --label <name>');
+        console.error('Example: wdf snapshot create --label "before-refactor"');
+        process.exit(1);
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const name = `manual-${label}-${timestamp}`;
+      const dir = createSnapshot(name, `Manual: ${label}`, projectRoot);
+      console.log(`Snapshot created: ${name}`);
+      console.log(`Location: ${dir}`);
+      break;
+    }
+
+    case 'restore': {
+      const nameOrLabel = args[2];
+      if (!nameOrLabel) {
+        console.error('Usage: wdf snapshot restore <name>');
+        console.error('Use `wdf snapshot list` to see available snapshots.');
+        process.exit(1);
+      }
+      const dryRun = args.includes('--dry-run');
+      const force = args.includes('--yes') || args.includes('--force');
+
+      if (!force) {
+        console.log(`About to restore snapshot "${nameOrLabel}".`);
+        console.log('This will:');
+        console.log('  1. git stash any uncommitted changes');
+        console.log('  2. git checkout the snapshot commit');
+        console.log('  3. Restore status files from the snapshot');
+        console.log('');
+        console.log('Add --yes to skip this confirmation.');
+        process.exit(0);
+      }
+
+      const result = restoreSnapshot(nameOrLabel, projectRoot, { dryRun, force });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Restored from snapshot "${result.snapshotName}"`);
+        console.log(`Git: ${result.gitHeadBefore.slice(0, 7)} → ${result.gitHeadAfter.slice(0, 7)}`);
+        console.log(`Files restored: ${result.filesRestored.length}`);
+        for (const w of result.warnings) {
+          console.log(`⚠ ${w}`);
+        }
+      }
+      break;
+    }
+
+    case 'prune': {
+      const keepArg = args.find(a => a.startsWith('--keep='));
+      const keep = keepArg ? parseInt(keepArg.split('=')[1], 10) : 10;
+      const result = pruneSnapshots(projectRoot, { keepRecent: keep });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Pruned ${result.removed.length} old snapshot(s).`);
+        console.log(`Keeping ${result.kept.length} snapshot(s).`);
+        if (result.removed.length > 0) {
+          console.log('Removed:');
+          for (const name of result.removed) {
+            console.log(`  - ${name}`);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'replay': {
+      const nameOrLabel = args[2];
+      if (!nameOrLabel) {
+        console.error('Usage: wdf snapshot replay <name>');
+        console.error('Restores FSM state from the snapshot WITHOUT touching git HEAD.');
+        console.error('Use this to inspect/retry from a past checkpoint while keeping current code.');
+        process.exit(1);
+      }
+      const force = args.includes('--yes') || args.includes('--force');
+      if (!force) {
+        console.log(`About to replay snapshot "${nameOrLabel}" (state-only).`);
+        console.log('This restores status files from the snapshot but leaves git HEAD untouched.');
+        console.log('Add --yes to proceed.');
+        process.exit(0);
+      }
+      const result = replaySnapshot(nameOrLabel, projectRoot, { force: true });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Replayed snapshot "${result.snapshotName}" (state-only)`);
+        console.log(`Files restored: ${result.filesRestored.length}`);
+        for (const w of result.warnings) console.log(`⚠ ${w}`);
+        console.log('');
+        console.log('Run `wdf start` to see the next prompt from this state.');
+      }
+      break;
+    }
+
+    default:
+      console.log('Usage: wdf snapshot <list|create|restore|replay|prune> [options]');
+      console.log('');
+      console.log('Commands:');
+      console.log('  list                      List all snapshots');
+      console.log('  create --label <name>     Create a named snapshot');
+      console.log('  restore <name> [--yes]    Restore a snapshot (requires confirmation)');
+      console.log('  prune [--keep=N]          Prune old snapshots (default: keep 10)');
+      console.log('');
+      console.log('Options:');
+      console.log('  --json                    JSON output');
+      console.log('  --dry-run                 Show what would happen without making changes');
+      break;
+  }
 }
 
 async function runPhaseCommand(args: string[], projectRoot: string, orchestrator: PhaseOrchestrator) {
@@ -735,6 +1126,48 @@ async function runLintCommand(args: string[]) {
 }
 
 // ============================================================
+// Constitution Command Handler
+// ============================================================
+
+/**
+ * `wdf constitution` — validate the project against constitution.yaml only.
+ *
+ * Thin wrapper over the linter that runs exclusively the
+ * CONSTITUTION_THRESHOLDS rule. Useful in CI when you want a fast
+ * constitution gate without paying for the full lint pass.
+ *
+ * Exits non-zero on any blocking assertion failure.
+ */
+async function runConstitutionCommand(args: string[], projectRoot: string) {
+  let projectRootPath = projectRoot;
+  const json = args.includes('--json');
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith('-')) {
+      projectRootPath = resolve(arg);
+    }
+  }
+  if (!existsSync(projectRootPath)) {
+    console.error(`Project root not found: ${projectRootPath}`);
+    process.exit(1);
+  }
+
+  const linter = new SpecLinter(projectRootPath);
+  linter.registerRules(BUILTIN_RULES);
+  const report = await linter.lint({ onlyRules: ['CONSTITUTION_THRESHOLDS'] });
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log('\n╔══════════════════════════════════════════════════╗');
+    console.log('║         wdf-method Constitution Check           ║');
+    console.log('╚══════════════════════════════════════════════════╝\n');
+    console.log(linter.formatReport(report));
+  }
+  process.exit(report.errors > 0 ? 1 : 0);
+}
+
+// ============================================================
 // Story Command Handler
 // ============================================================
 
@@ -1010,6 +1443,64 @@ async function runPartyCommand(args: string[], projectRoot: string, orchestrator
       break;
     }
 
+    case 'dispatch': {
+      // Prepare a dispatch manifest. The parent Claude session then consumes
+      // it via the Agent tool — one sub-agent per persona, parallel. After all
+      // sub-agents write their outputs, run `wdf party collect <id>` to fold
+      // them into party state and proceed to crosstalk.
+      if (!partyId || args.length < 4) {
+        console.error('Usage: wdf party dispatch <party-id> "<prompt>"');
+        console.error('');
+        console.error('This writes a dispatch manifest. The parent Claude session');
+        console.error('must then use the Agent tool to dispatch one sub-agent per');
+        console.error('persona listed in the manifest. After sub-agents finish, run:');
+        console.error('  wdf party collect <party-id>');
+        process.exit(1);
+      }
+      const prompt = args[3];
+      const result = orchestrator.preparePartyDispatch(partyId, prompt);
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`📋 Dispatch manifest written: ${result.manifest_path}`);
+        console.log(`   ${result.entries.length} persona(s) to dispatch in parallel:`);
+        for (const e of result.entries) {
+          console.log(`   • ${e.name} (${e.role}) → ${e.output_path}`);
+        }
+        console.log('');
+        console.log('🤖 PARENT AGENT: use the Agent tool to dispatch one sub-agent per');
+        console.log('   entry above (subagent_type=general-purpose, run in parallel).');
+        console.log('   Each sub-agent adopts the persona + perspectives, answers the');
+        console.log('   prompt, and writes its full markdown response to output_path.');
+        console.log('');
+        console.log(`   After all sub-agents finish, run: wdf party collect ${partyId}`);
+      }
+      break;
+    }
+
+    case 'collect': {
+      if (!partyId) {
+        console.error('Usage: wdf party collect <party-id>');
+        process.exit(1);
+      }
+      const state = await orchestrator.collectPartyDispatch(partyId);
+      const lastRound = state.rounds[state.rounds.length - 1];
+      if (json) {
+        console.log(JSON.stringify(state, null, 2));
+      } else {
+        console.log(orchestrator.formatPartyState(state));
+        console.log('');
+        const collected = Object.values(lastRound?.agent_outputs ?? {}).filter(v => v && !v.includes('no sub-agent dispatched')).length;
+        const total = Object.keys(lastRound?.agent_outputs ?? {}).length;
+        console.log(`✅ Collected ${collected}/${total} dispatched responses.`);
+        if (collected < total) {
+          console.log(`   ${(total - collected)} fallback(s) used (sub-agent did not write output).`);
+        }
+        console.log('   Next: wdf party crosstalk ' + partyId + ' ' + (lastRound?.round_number ?? 1));
+      }
+      break;
+    }
+
     case 'crosstalk':
     case 'cross-talk': {
       if (!partyId) {
@@ -1206,14 +1697,20 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
   const id = args[2];
   const json = args.includes('--json');
 
-  if (!id || !/^CHG-\d{4}-\d{3}$/.test(id)) {
+  // Accept both bare 'CHG-YYYY-NNN' and slug-suffixed 'CHG-YYYY-NNN-<slug>'.
+  // Directory resolution (resolveCrDir) handles finding the actual proposal
+  // dir; this regex just gates obvious garbage early.
+  if (!id || !/^CHG-\d{4}-\d{3}(-[a-z0-9][a-z0-9-]*)?$/.test(id)) {
     console.error(`Usage: wdf cr ${sub} <CHG-YYYY-NNN> [options]`);
     process.exit(1);
   }
 
-  const proposalDir = join(projectRoot, 'changes', id);
-  if (!existsSync(proposalDir)) {
-    console.error(`Proposal directory not found: changes/${id}`);
+  const changesDir = join(projectRoot, 'changes');
+  let proposalDir: string;
+  try {
+    proposalDir = resolveCrDir(changesDir, id);
+  } catch (e) {
+    console.error((e as Error).message);
     process.exit(1);
   }
 
@@ -1266,23 +1763,29 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
   }
 
   if (sub === 'archive') {
-    const archiveRoot = join(projectRoot, 'changes', '_archive');
-    const target = join(archiveRoot, id);
-    if (existsSync(target) && !args.includes('--force')) {
-      console.error(`Already archived: changes/_archive/${id} (use --force to overwrite)`);
-      process.exit(1);
-    }
-    mkdirSync(archiveRoot, { recursive: true });
-    if (existsSync(target)) {
-      // --force: remove existing target via shutil-like recursive remove
-      const { rmSync } = require('fs') as typeof import('fs');
-      rmSync(target, { recursive: true, force: true });
-    }
-    renameSync(proposalDir, target);
-    if (json) {
-      console.log(JSON.stringify({ change_id: id, archived_to: relative(projectRoot, target) }, null, 2));
-    } else {
-      console.log(`✅ Archived changes/${id} → changes/_archive/${id}`);
+    const force = args.includes('--force');
+    const dryRun = args.includes('--dry-run');
+    const noRewrite = args.includes('--no-rewrite');
+    try {
+      const result = await archiveAndRewrite(id, projectRoot, { dryRun, noRewrite });
+      if (json) {
+        console.log(JSON.stringify({ change_id: id, ...result }, null, 2));
+      } else {
+        const patchedPart = result.patched.length ? ` — patched ${result.patched.length} canonical spec(s): ${result.patched.join(', ')}` : '';
+        console.log(`✅ ${dryRun ? '[DRY RUN] ' : ''}Archived changes/${id} → ${result.archived}${patchedPart}`);
+      }
+    } catch (err: any) {
+      if (err.message?.includes('Already archived') && force) {
+        // remove existing
+        const { rmSync } = require('fs') as typeof import('fs');
+        const existing = join(projectRoot, 'changes', '_archive', id);
+        rmSync(existing, { recursive: true, force: true });
+        const result = await archiveAndRewrite(id, projectRoot, { dryRun, noRewrite });
+        console.log(`✅ [FORCE] Archived changes/${id} → ${result.archived}`);
+      } else {
+        console.error(`❌ ${err.message}`);
+        process.exit(1);
+      }
     }
     return;
   }
@@ -1298,5 +1801,1001 @@ function parseOptInt(args: string[], flag: string, defaultVal: number): number {
   if (idx === -1 || idx + 1 >= args.length) return defaultVal;
   const n = Number(args[idx + 1]);
   return Number.isFinite(n) ? n : defaultVal;
+}
+
+/**
+ * Handles `wdf cr verify [--json]`.
+ *
+ * Cross-checks `changes/INDEX.md` against `changes/CHG-NNN/proposal.md` Status
+ * fields, and ensures every IMPLEMENTED CR has at least one matching source
+ * artifact in `orchestrator/src`. Exits non-zero on any inconsistency.
+ *
+ * Run from the wdf-method repo root (or pass repo root as cwd).
+ */
+async function runCrVerifyCommand(args: string[], projectRoot: string) {
+  const json = args.includes('--json');
+  const report = verifyCrConsistency(projectRoot);
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(formatCrVerifyReport(report));
+  }
+  process.exit(report.ok ? 0 : 1);
+}
+
+// ============================================================
+// Agent Command — sub-agent status & dispatch info
+// ============================================================
+
+async function runAgentCommand(args: string[], _projectRoot: string) {
+  const sub = args[1] ?? 'status';
+  const json = args.includes('--json');
+
+  // Lazy import to avoid paying init cost when unused.
+  const { DeadAgentDetector, SignalManager, cleanupStale } = await import('./signal-manager.js');
+
+  if (sub === 'status' || sub === 'list') {
+    const detector = new DeadAgentDetector();
+    const all = detector.listAllStatuses();
+    const running = all.filter(a => a.status === 'running');
+    const dead = all.filter(a => a.status === 'dead');
+
+    if (json) {
+      console.log(JSON.stringify({
+        total: all.length,
+        running: running.length,
+        dead: dead.length,
+        agents: all,
+        paused: SignalManager.isPaused(),
+      }, null, 2));
+      return;
+    }
+
+    console.log('═══════════════════════════════════════════');
+    console.log('WDF Sub-Agent Status');
+    console.log('═══════════════════════════════════════════');
+    console.log();
+    if (SignalManager.isPaused()) {
+      console.log('  ⏸  All agents PAUSED');
+      console.log();
+    }
+    if (all.length === 0) {
+      console.log('  No active sub-agents. Agents spawn during Phase 4 story execution.');
+      console.log('  Run `/wdf-start` to enter Phase 4.');
+      return;
+    }
+    console.log(`  Total: ${all.length}  |  Running: ${running.length}  |  Dead: ${dead.length}`);
+    console.log();
+    for (const a of all) {
+      const icon = a.status === 'running' ? '✅' : a.status === 'dead' ? '❌' : '⏳';
+      console.log(`  ${icon} ${a.agent_id}`);
+      if (a.story_id) console.log(`     story:     ${a.story_id}`);
+      if (a.track)   console.log(`     track:     ${a.track}`);
+      if (a.current_substep) console.log(`     substep:   ${a.current_substep}`);
+      console.log(`     heartbeat: ${a.heartbeat_at}`);
+      console.log();
+    }
+    if (dead.length > 0) {
+      console.log(`⚠  ${dead.length} dead agent(s) detected. Run \`/wdf-agent cleanup\` or review escalation manifest.`);
+    }
+    return;
+  }
+
+  if (sub === 'cleanup') {
+    const removed = cleanupStale();
+    console.log(`✓ Cleaned up ${removed} stale agent signal(s).`);
+    return;
+  }
+
+  if (sub === 'pause') {
+    SignalManager.pauseAll(args[2] ?? 'manual');
+    console.log('⏸  All agents paused. They will check the pause flag before next dispatch.');
+    return;
+  }
+
+  if (sub === 'resume') {
+    SignalManager.resumeAll();
+    console.log('▶  All agents resumed.');
+    return;
+  }
+
+  if (sub === 'dispatch') {
+    console.error('dispatch subcommand is reserved for orchestrator-internal use.');
+    console.error('To dispatch a story agent, use `wdf start` to enter the Phase 4 pipeline.');
+    process.exit(1);
+  }
+
+  console.error(`Unknown agent subcommand: ${sub}`);
+  console.error('Usage: wdf agent <status|cleanup|pause|resume>');
+  process.exit(1);
+}
+
+// ============================================================
+// Report Command — human-readable progress report
+// ============================================================
+
+async function runReportCommand(
+  args: string[],
+  projectRoot: string,
+  _orchestrator: PhaseOrchestrator,
+) {
+  const json = args.includes('--json');
+
+  const status = await statusCommand(projectRoot);
+
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
+
+  // Summary metrics
+  const phases = status.phases ?? [];
+  const totalSubphases = phases.reduce((n, p) => n + (p.sub_phases?.length ?? 0), 0);
+  const lockedSubphases = phases.reduce(
+    (n, p) => n + (p.sub_phases?.filter(s => s.status === 'LOCKED').length ?? 0), 0);
+  const inProgress = phases.reduce(
+    (n, p) => n + (p.sub_phases?.filter(s => s.status === 'IN_PROGRESS').length ?? 0), 0);
+  const blocked = phases.reduce(
+    (n, p) => n + (p.sub_phases?.filter(s => s.status === 'BLOCKED').length ?? 0), 0);
+
+  const completion = totalSubphases > 0
+    ? Math.round((lockedSubphases / totalSubphases) * 100)
+    : 0;
+
+  console.log('═══════════════════════════════════════════');
+  console.log(`WDF Progress Report — ${status.project.name}`);
+  console.log('═══════════════════════════════════════════');
+  console.log();
+  console.log(`  Generated:    ${new Date().toISOString()}`);
+  console.log(`  Created:      ${status.project.created_at}`);
+  console.log(`  Updated:      ${status.project.updated_at ?? 'n/a'}`);
+  console.log();
+  console.log('── Completion ──────────────────────────');
+  console.log(`  Sub-phases:   ${lockedSubphases}/${totalSubphases} LOCKED (${completion}%)`);
+  console.log(`  In Progress:  ${inProgress}`);
+  console.log(`  Blocked:      ${blocked}`);
+  console.log();
+  console.log('── Phase Summary ───────────────────────');
+  for (const p of phases) {
+    const icon = p.status === 'LOCKED' ? '✓' :
+                 p.status === 'IN_PROGRESS' ? '→' :
+                 p.status === 'NOT_STARTED' ? '○' :
+                 p.status === 'NOT_STARTED' ? '○' : '⚠';
+    console.log(`  ${icon} Phase ${p.phase}: ${p.title} — ${p.status} (${p.progress_pct}%)`);
+  }
+  console.log();
+  console.log('── Quality Gates ───────────────────────');
+  const gates = status.quality_gates;
+  if (gates && Object.keys(gates).length > 0) {
+    for (const [k, v] of Object.entries(gates)) {
+      console.log(`  ${k}: ${v}`);
+    }
+  } else {
+    console.log('  (no quality gate data)');
+  }
+  console.log();
+  console.log('── Counts ──────────────────────────────');
+  const c = status.counts;
+  console.log(`  Stories:      ${c.stories_done}/${c.stories_total} done, ${c.stories_in_progress} in progress`);
+  console.log(`  CRs:          ${c.crs_open} open, ${c.crs_resolved} resolved`);
+  console.log(`  Merge Queue:  ${c.queue_queued} queued, ${c.queue_merged} merged`);
+  console.log();
+  console.log('── Next Action ─────────────────────────');
+  console.log('  Run `/wdf-start` to advance the next sub-phase.');
+}
+
+// ============================================================
+// Schema Command — view / fork / validate the gate-check schema
+// ============================================================
+
+async function runSchemaCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'list';
+  const json = args.includes('--json');
+
+  const {
+    loadSchema,
+    getBaselineSchema,
+    initSchema,
+    forkSchema,
+    validateSchema,
+    schemaFilePaths,
+  } = await import('./schema-loader.js');
+
+  if (sub === 'list' || sub === 'show') {
+    const schema = loadSchema(projectRoot);
+    const paths = schemaFilePaths(projectRoot);
+    const source = existsSync(paths.local_fork)
+      ? `local fork (${paths.local_fork})`
+      : `baseline (no local fork)`;
+    if (json) {
+      console.log(JSON.stringify({ schema, source, paths }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('WDF Schema');
+    console.log('═══════════════════════════════════════════');
+    console.log(`  Version:    ${schema.version}`);
+    console.log(`  Source:     ${source}`);
+    console.log();
+    console.log(`  Check Types (${schema.check_types.length}):`);
+    for (const t of schema.check_types) {
+      console.log(`    • ${t.id.padEnd(28)} ${t.description}`);
+    }
+    console.log();
+    console.log(`  Dependency Fields (${schema.dependency_fields.length}):`);
+    for (const f of schema.dependency_fields) {
+      console.log(`    • ${f.id.padEnd(28)} ${f.description}`);
+    }
+    console.log();
+    console.log('── Schema Files ───────────────────────────');
+    console.log(`  Reference: ${paths.baseline_reference} ${existsSync(paths.baseline_reference) ? '(exists)' : '(not initialized — run: wdf schema init)'}`);
+    console.log(`  Local fork: ${paths.local_fork} ${existsSync(paths.local_fork) ? '(exists)' : '(not forked)'}`);
+    return;
+  }
+
+  if (sub === 'init') {
+    const path = initSchema(projectRoot);
+    console.log(`✓ Wrote baseline schema reference: ${path}`);
+    console.log('  This file is read-only. To customize, run: wdf schema fork');
+    return;
+  }
+
+  if (sub === 'fork') {
+    const noteIdx = args.indexOf('--note');
+    const note = noteIdx >= 0 ? args[noteIdx + 1] : undefined;
+    const path = forkSchema(projectRoot, note);
+    console.log(`✓ Created local schema fork: ${path}`);
+    console.log('  Edit this file to add project-specific check types / fields.');
+    console.log('  Run `wdf schema validate` to verify compatibility with baseline.');
+    return;
+  }
+
+  if (sub === 'validate') {
+    const schema = loadSchema(projectRoot);
+    const report = validateSchema(schema);
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log('═══════════════════════════════════════════');
+      console.log('Schema Validation');
+      console.log('═══════════════════════════════════════════');
+      console.log(`  Overall:    ${report.ok ? '✅ PASS' : '❌ FAIL'}`);
+      console.log();
+      if (report.missing_check_types.length > 0) {
+        console.log(`  ❌ Missing baseline check types (must restore):`);
+        for (const c of report.missing_check_types) console.log(`     • ${c}`);
+        console.log();
+      }
+      if (report.missing_dependency_fields.length > 0) {
+        console.log(`  ❌ Missing baseline dependency fields (must restore):`);
+        for (const f of report.missing_dependency_fields) console.log(`     • ${f}`);
+        console.log();
+      }
+      if (report.added_check_types.length > 0) {
+        console.log(`  ➕ Added check types (custom):`);
+        for (const c of report.added_check_types) console.log(`     • ${c}`);
+        console.log();
+      }
+      if (report.added_dependency_fields.length > 0) {
+        console.log(`  ➕ Added dependency fields (custom):`);
+        for (const f of report.added_dependency_fields) console.log(`     • ${f}`);
+        console.log();
+      }
+      if (report.ok && report.added_check_types.length === 0 && report.added_dependency_fields.length === 0) {
+        console.log('  Schema is identical to baseline. Run `wdf schema fork` to customize.');
+      }
+    }
+    process.exit(report.ok ? 0 : 1);
+  }
+
+  console.error(`Unknown schema subcommand: ${sub}`);
+  console.error('Usage: wdf schema <list|init|fork|validate>');
+  process.exit(1);
+}
+
+// ============================================================
+// Provider Command — inspect multi-IDE agent dispatch providers
+// ============================================================
+
+async function runProviderCommand(args: string[]) {
+  const sub = args[1] ?? 'list';
+  const json = args.includes('--json');
+
+  if (sub === 'list' || sub === 'show' || sub === 'detect') {
+    const { detectAgentProvider, PROVIDERS } = await import('./agent-dispatcher.js');
+    const detected = detectAgentProvider();
+    if (json) {
+      const report = {
+        detected: { tool: detected.tool, name: detected.name, command: detected.command },
+        available: PROVIDERS.filter(p => p.detect()).map(p => ({ tool: p.tool, name: p.name })),
+        all: PROVIDERS.map(p => ({
+          tool: p.tool,
+          name: p.name,
+          command: p.command,
+          available: p.detect(),
+        })),
+      };
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('WDF Agent Providers');
+    console.log('═══════════════════════════════════════════');
+    console.log(`  Detected: ${detected.name} (${detected.tool})`);
+    console.log();
+    console.log('  All providers:');
+    // PROVIDERS is private — re-detect each via the same array we expose.
+    const { PROVIDERS: list } = await import('./agent-dispatcher.js');
+    for (const p of list) {
+      const icon = p.tool === detected.tool ? '🎯' : p.detect() ? '✅' : '⬜';
+      console.log(`  ${icon} ${p.tool.padEnd(14)} ${p.name.padEnd(28)} cmd: ${p.command}`);
+    }
+    console.log();
+    console.log('Legend: 🎯 = active   ✅ = available   ⬜ = not detected');
+    console.log('Set WDF_FORCE_PROVIDER=<tool> to override detection.');
+    return;
+  }
+
+  console.error(`Unknown provider subcommand: ${sub}`);
+  console.error('Usage: wdf provider <list|detect>');
+  process.exit(1);
+}
+
+// ============================================================
+// Review Command — Phase 1-3 artifact review loop
+// ============================================================
+
+async function runReviewCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'status';
+  const json = args.includes('--json');
+
+  const {
+    prepareArtifactReview,
+    collectArtifactReview,
+    listPendingReviews,
+  } = await import('./planning-reviewer.js');
+
+  if (sub === 'prepare' || sub === 'dispatch') {
+    const artifactArg = args[2];
+    if (!artifactArg) {
+      console.error('Usage: wdf review prepare <artifact-path> [--focus "..."]');
+      console.error('  Artifact path is relative to project root, e.g. _wdf_output/prd.md');
+      process.exit(1);
+    }
+    const focusIdx = args.indexOf('--focus');
+    const focus = focusIdx >= 0 ? args[focusIdx + 1] : undefined;
+    const abs = resolve(projectRoot, artifactArg);
+    const manifest = prepareArtifactReview(projectRoot, abs, focus);
+    if (json) {
+      console.log(JSON.stringify(manifest, null, 2));
+      return;
+    }
+    console.log(`📋 Review manifest written for "${manifest.artifact_id}"`);
+    console.log(`   Artifact: ${manifest.artifact_rel_path}`);
+    if (manifest.review_focus) console.log(`   Focus:    ${manifest.review_focus}`);
+    console.log(`   Manifest: ${join(projectRoot, '_wdf_output', '.dispatch', 'review', `${manifest.artifact_id}-manifest.json`)}`);
+    console.log(`   Output:   ${manifest.output_path}`);
+    console.log('');
+    console.log('🤖 PARENT AGENT: dispatch one review sub-agent via the Agent tool');
+    console.log('   (subagent_type=general-purpose). The sub-agent reads the artifact,');
+    console.log('   evaluates it against the focus + standard quality dimensions');
+    console.log('   (traceability, completeness, clarity, consistency), and writes a');
+    console.log(`   JSON report to the output path. Then run:`);
+    console.log(`     wdf review collect ${manifest.artifact_id}`);
+    return;
+  }
+
+  if (sub === 'collect') {
+    const artifactId = args[2];
+    if (!artifactId) {
+      console.error('Usage: wdf review collect <artifact-id>');
+      process.exit(1);
+    }
+    const result = collectArtifactReview(projectRoot, artifactId);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log('═══════════════════════════════════════════');
+      console.log(`Review Result — ${artifactId}`);
+      console.log('═══════════════════════════════════════════');
+      console.log(`  Verdict:   ${result.verdict}`);
+      if (result.report) {
+        if (typeof result.report.score === 'number') {
+          console.log(`  Score:     ${result.report.score}/100`);
+        }
+        console.log(`  Reviewer:  ${result.report.reviewer_agent ?? '(unspecified)'}`);
+        console.log('');
+        console.log('  Summary:');
+        console.log(`    ${result.report.summary}`);
+        if (result.report.issues && result.report.issues.length > 0) {
+          console.log('');
+          console.log(`  Issues (${result.report.issues.length}):`);
+          for (const iss of result.report.issues) {
+            const icon = iss.severity === 'blocker' ? '🚨' :
+                         iss.severity === 'major' ? '⚠️ ' :
+                         iss.severity === 'minor' ? '💡' : '📝';
+            console.log(`    ${icon} [${iss.severity}] ${iss.message}`);
+            if (iss.location) console.log(`       at: ${iss.location}`);
+            if (iss.suggested_fix) console.log(`       fix: ${iss.suggested_fix}`);
+          }
+        }
+      } else {
+        console.log('  (no report found at expected path — did the sub-agent write it?)');
+      }
+      if (result.should_trigger_party) {
+        console.log('');
+        console.log('🎉 RECOMMENDED: trigger Party Mode to patch this artifact:');
+        console.log(`   wdf party create --topic "Patch ${artifactId} after review" --agents analyst,product_manager,architect`);
+      } else {
+        console.log('');
+        console.log('✅ Artifact passed review. Safe to advance to next subphase.');
+      }
+    }
+    process.exit(result.verdict === 'pass' ? 0 : 1);
+  }
+
+  if (sub === 'status' || sub === 'list') {
+    const pending = listPendingReviews(projectRoot);
+    if (json) {
+      console.log(JSON.stringify({ reviews: pending }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('Planning Reviews');
+    console.log('═══════════════════════════════════════════');
+    if (pending.length === 0) {
+      console.log('  No reviews in progress.');
+      console.log('  Start one: wdf review prepare _wdf_output/prd.md');
+      return;
+    }
+    for (const p of pending) {
+      const icon = p.report_exists ? '✅' : '⏳';
+      console.log(`  ${icon} ${p.artifact_id.padEnd(20)} ${p.report_exists ? 'report ready' : 'awaiting sub-agent'}`);
+    }
+    return;
+  }
+
+  console.error(`Unknown review subcommand: ${sub}`);
+  console.error('Usage: wdf review <prepare|collect|status>');
+  process.exit(1);
+}
+
+// ============================================================
+// Retro Command — harvest action items + inject into next sprint
+// ============================================================
+
+async function runRetroCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'list';
+  const json = args.includes('--json');
+
+  const {
+    harvestRetrospectiveItems,
+    loadRetrospectiveItems,
+    buildInjectionPrompt,
+  } = await import('./retrospective-loader.js');
+
+  if (sub === 'harvest' || sub === 'parse') {
+    const collection = harvestRetrospectiveItems(projectRoot);
+    if (json) {
+      console.log(JSON.stringify(collection, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('Retrospective Action Items — Harvested');
+    console.log('═══════════════════════════════════════════');
+    console.log(`  Sources:   ${collection.source_retrospectives.length} file(s)`);
+    for (const s of collection.source_retrospectives) console.log(`    • ${s}`);
+    console.log(`  Total:     ${collection.items.length} action item(s)`);
+    const byPri = { P0: 0, P1: 0, P2: 0 };
+    for (const it of collection.items) byPri[it.priority]++;
+    console.log(`  Priority:  ${byPri.P0} P0, ${byPri.P1} P1, ${byPri.P2} P2`);
+    console.log('');
+    console.log(`  Persisted: ${join(projectRoot, '_wdf_output', 'retrospective-action-items.yaml')}`);
+    return;
+  }
+
+  if (sub === 'list' || sub === 'show') {
+    let collection = loadRetrospectiveItems(projectRoot);
+    if (!collection) {
+      collection = harvestRetrospectiveItems(projectRoot);
+    }
+    if (json) {
+      console.log(JSON.stringify(collection, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('Retrospective Action Items');
+    console.log('═══════════════════════════════════════════');
+    if (collection.items.length === 0) {
+      console.log('  No action items found.');
+      console.log('  Run `wdf retro harvest` after Phase 4.14 to capture them.');
+      return;
+    }
+    const byCat: Record<string, typeof collection.items> = {};
+    for (const it of collection.items) (byCat[it.category] ??= []).push(it);
+    for (const cat of Object.keys(byCat).sort()) {
+      console.log('');
+      console.log(`  [${cat}] (${byCat[cat].length}):`);
+      for (const it of byCat[cat]) {
+        const icon = it.priority === 'P0' ? '🚨' :
+                     it.priority === 'P1' ? '⚠️ ' : '📝';
+        console.log(`    ${icon} ${it.id} [${it.priority}] ${it.action}`);
+      }
+    }
+    return;
+  }
+
+  if (sub === 'inject') {
+    // Build a Phase 1.1 Brainstorming injection prompt from historical
+    // retrospectives. Supports `--from <path>` to inject from a different
+    // project's learnings (e.g. a portfolio-level lessons-learned repo).
+    const fromIdx = args.indexOf('--from');
+    const fromPath = fromIdx >= 0 ? resolve(args[fromIdx + 1]) : undefined;
+    const result = buildInjectionPrompt(projectRoot, fromPath);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.item_count === 0) {
+      console.log('No historical action items to inject. Run Phase 4.14 first to capture them.');
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('Phase 1.1 Brainstorming Injection');
+    console.log('═══════════════════════════════════════════');
+    console.log(`  Items:           ${result.item_count}`);
+    console.log(`  High priority:   ${result.high_priority_count} (P0)`);
+    if (fromPath) console.log(`  Source project:  ${fromPath}`);
+    console.log('');
+    console.log('── Injection Prompt (paste into Phase 1.1 Brainstorming) ──');
+    console.log('');
+    console.log(result.prompt);
+    return;
+  }
+
+  console.error(`Unknown retro subcommand: ${sub}`);
+  console.error('Usage: wdf retro <harvest|list|inject>');
+  process.exit(1);
+}
+
+// ============================================================
+// Preset Command — apply / list / clear configuration presets
+// ============================================================
+
+async function runPresetCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'list';
+  const json = args.includes('--json');
+
+  const {
+    listPresets,
+    loadPreset,
+    getActivePreset,
+    applyPreset,
+    clearPreset,
+  } = await import('./preset-loader.js');
+
+  // Resolve skillRoot from env or default to project root's parent (framework).
+  const skillRoot = process.env.WDF_ROOT ?? projectRoot;
+
+  if (sub === 'list' || sub === 'show') {
+    const all = listPresets(skillRoot);
+    const active = getActivePreset(projectRoot);
+    if (json) {
+      console.log(JSON.stringify({ active: active?.preset ?? null, presets: all }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('WDF Configuration Presets');
+    console.log('═══════════════════════════════════════════');
+    if (active?.preset) {
+      console.log(`  Active: 🎯 ${active.preset} (applied ${active.applied_at})`);
+      console.log('');
+    }
+    if (all.length === 0) {
+      console.log('  No presets available. Create one at: {skill-root}/presets/<name>.toml');
+      return;
+    }
+    console.log(`  Available (${all.length}):`);
+    for (const p of all) {
+      const icon = p.name === active?.preset ? '🎯' : '  ';
+      console.log(`  ${icon} ${p.name.padEnd(15)} [${p.category ?? 'uncategorized'}] ${p.description}`);
+      if (p.requires_env && p.requires_env.length > 0) {
+        console.log(`                  requires env: ${p.requires_env.join(', ')}`);
+      }
+    }
+    return;
+  }
+
+  if (sub === 'apply') {
+    const name = args[2];
+    if (!name) {
+      console.error('Usage: wdf preset apply <name>');
+      process.exit(1);
+    }
+    const result = applyPreset(projectRoot, skillRoot, name);
+    if (!result.ok) {
+      console.error(`❌ ${result.error}`);
+      process.exit(1);
+    }
+    if (json) {
+      console.log(JSON.stringify({ ok: true, preset: result.preset }, null, 2));
+      return;
+    }
+    console.log(`✓ Activated preset: ${name}`);
+    console.log(`  ${result.preset?.description}`);
+    console.log(`  Persisted: ${join(projectRoot, '_wdf_output', 'active-preset.yaml')}`);
+    console.log('');
+    console.log('  Subsequent `wdf` commands will include this preset\'s overrides.');
+    console.log('  Layer precedence: project > preset > skill-base > defaults');
+    return;
+  }
+
+  if (sub === 'clear' || sub === 'reset') {
+    const cleared = clearPreset(projectRoot);
+    if (json) {
+      console.log(JSON.stringify({ cleared }, null, 2));
+      return;
+    }
+    if (cleared) {
+      console.log('✓ Cleared active preset. Configuration now uses only:');
+      console.log('  defaults < skill-base customize.toml < project overrides');
+    } else {
+      console.log('No active preset to clear.');
+    }
+    return;
+  }
+
+  if (sub === 'active' || sub === 'current') {
+    const active = getActivePreset(projectRoot);
+    if (!active?.preset) {
+      console.log('No active preset.');
+      return;
+    }
+    const preset = loadPreset(skillRoot, active.preset);
+    if (json) {
+      console.log(JSON.stringify({ active, preset }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log(`Active Preset: ${active.preset}`);
+    console.log('═══════════════════════════════════════════');
+    console.log(`  Applied: ${active.applied_at}`);
+    console.log(`  Source:  ${active.source}`);
+    if (preset) {
+      console.log(`  Path:    ${preset.path}`);
+      console.log(`  Version: ${preset.version}`);
+      console.log(`  Category: ${preset.category ?? 'uncategorized'}`);
+    }
+    return;
+  }
+
+  console.error(`Unknown preset subcommand: ${sub}`);
+  console.error('Usage: wdf preset <list|apply|clear|active>');
+  process.exit(1);
+}
+
+// ============================================================
+// Template Command — list/show industry templates, applied via init
+// ============================================================
+
+async function runTemplateCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'list';
+  const json = args.includes('--json');
+
+  const {
+    listTemplates,
+    loadTemplate,
+    validateTemplate,
+    formatTemplateList,
+  } = await import('./template-loader.js');
+
+  const skillRoot = process.env.WDF_ROOT ?? projectRoot;
+
+  if (sub === 'list' || sub === 'ls') {
+    const all = listTemplates(skillRoot);
+    if (json) {
+      console.log(JSON.stringify({ templates: all }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('WDF Project Templates');
+    console.log('═══════════════════════════════════════════');
+    console.log(formatTemplateList(all));
+    return;
+  }
+
+  if (sub === 'show' || sub === 'info' || sub === 'cat') {
+    const name = args[2];
+    if (!name) {
+      console.error('Usage: wdf template show <name>');
+      process.exit(1);
+    }
+    const tpl = loadTemplate(skillRoot, name);
+    if (!tpl) {
+      console.error(`❌ Template "${name}" not found.`);
+      console.error('Run `wdf template list` to see available templates.');
+      process.exit(1);
+    }
+    if (json) {
+      console.log(JSON.stringify(tpl, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log(`Template: ${tpl.name} (v${tpl.version})`);
+    console.log('═══════════════════════════════════════════');
+    console.log(`  ${tpl.description}`);
+    console.log('');
+    console.log(`  Category:        ${tpl.category}`);
+    console.log(`  Path:            ${tpl.path}`);
+    if (tpl.compatible_wdf) console.log(`  Compatible WDF:  ${tpl.compatible_wdf}`);
+    if (tpl.source_project) console.log(`  Source project:  ${tpl.source_project}`);
+    if (tpl.tech_stack) {
+      console.log('');
+      console.log('  Tech stack:');
+      for (const [k, v] of Object.entries(tpl.tech_stack)) {
+        console.log(`    ${k.padEnd(14)} ${v}`);
+      }
+    }
+    if (tpl.story_patterns && tpl.story_patterns.length > 0) {
+      console.log('');
+      console.log(`  Story patterns (${tpl.story_patterns.length}):`);
+      for (const sp of tpl.story_patterns) {
+        console.log(`    • ${sp}`);
+      }
+    }
+    const issues = validateTemplate(tpl);
+    if (issues.length > 0) {
+      console.log('');
+      console.log('  ⚠ Validation issues:');
+      for (const issue of issues) console.log(`    - ${issue}`);
+    } else {
+      console.log('');
+      console.log('  ✓ Validation: passed');
+    }
+    console.log('');
+    console.log(`  Apply with:  wdf init <path> --template ${tpl.name}`);
+    return;
+  }
+
+  console.error(`Unknown template subcommand: ${sub}`);
+  console.error('Usage: wdf template <list|show>');
+  console.error('Templates are applied via: wdf init <path> --template <name>');
+  process.exit(1);
+}
+
+// ============================================================
+// Workspace Command — multi-project portfolio coordination
+// ============================================================
+
+async function runWorkspaceCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'show';
+  const json = args.includes('--json');
+
+  const {
+    findWorkspaceRoot,
+    loadWorkspace,
+    initWorkspace,
+    addProject,
+    removeProject,
+    listProjects,
+    validateWorkspace,
+    formatWorkspaceReport,
+    topologicalSort,
+  } = await import('./workspace-manager.js');
+
+  // For init/create: use cwd as the workspace root.
+  // For other subcommands: walk up to find existing workspace.yaml.
+  const explicitRoot = args.find(a => a.startsWith('--root='))?.slice(7);
+  const wsRoot = explicitRoot
+    ? resolve(explicitRoot)
+    : (sub === 'init' || sub === 'create' ? projectRoot : findWorkspaceRoot(projectRoot) ?? projectRoot);
+
+  if (sub === 'init' || sub === 'create') {
+    const name = args[2];
+    if (!name) {
+      console.error('Usage: wdf workspace init <name> [description]');
+      process.exit(1);
+    }
+    const description = args.slice(3).find(a => !a.startsWith('--'));
+    const result = initWorkspace(wsRoot, name, description);
+    if (!result.ok) {
+      console.error(`❌ ${result.error}`);
+      process.exit(1);
+    }
+    if (json) {
+      console.log(JSON.stringify({ ok: true, manifest: result.manifest }, null, 2));
+      return;
+    }
+    console.log(`✓ Workspace initialized: ${name}`);
+    console.log(`  Root: ${wsRoot}`);
+    console.log(`  Manifest: ${join(wsRoot, 'workspace.yaml')}`);
+    return;
+  }
+
+  // All other subcommands require an existing workspace.
+  const manifest = loadWorkspace(wsRoot);
+  if (!manifest) {
+    console.error(`❌ No workspace found at (or above) ${projectRoot}`);
+    console.error('Initialize one with: wdf workspace init <name>');
+    process.exit(1);
+  }
+
+  if (sub === 'list' || sub === 'ls') {
+    const entries = listProjects(wsRoot);
+    if (json) {
+      console.log(JSON.stringify({ workspace: manifest.name, projects: entries }, null, 2));
+      return;
+    }
+    console.log(formatWorkspaceReport(wsRoot));
+    return;
+  }
+
+  if (sub === 'show' || sub === 'status' || sub === 'info') {
+    if (json) {
+      console.log(JSON.stringify(manifest, null, 2));
+      return;
+    }
+    console.log(formatWorkspaceReport(wsRoot));
+    return;
+  }
+
+  if (sub === 'add' || sub === 'register') {
+    const pathArg = args[2];
+    if (!pathArg) {
+      console.error('Usage: wdf workspace add <path> [--name <name>] [--template <name>] [--tag <t>]...');
+      process.exit(1);
+    }
+    const opts: any = {};
+    for (let i = 3; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--name' && args[i + 1]) opts.name = args[++i];
+      else if (a === '--template' && args[i + 1]) opts.template = args[++i];
+      else if (a === '--description' && args[i + 1]) opts.description = args[++i];
+      else if (a === '--status' && args[i + 1]) opts.status = args[++i];
+      else if (a === '--tag' && args[i + 1]) {
+        opts.tags = opts.tags ?? [];
+        opts.tags.push(args[++i]);
+      }
+      else if (a === '--depends-on' && args[i + 1]) {
+        opts.dependsOn = args[++i].split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+    const result = addProject(wsRoot, pathArg, opts);
+    if (!result.ok) {
+      console.error(`❌ ${result.error}`);
+      process.exit(1);
+    }
+    if (json) {
+      console.log(JSON.stringify({ ok: true, project: result.project }, null, 2));
+      return;
+    }
+    console.log(`✓ Added project: ${result.project!.name}`);
+    console.log(`  Path: ${result.project!.path}`);
+    if (result.project!.template) console.log(`  Template: ${result.project!.template}`);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm' || sub === 'unregister') {
+    const name = args[2];
+    if (!name) {
+      console.error('Usage: wdf workspace remove <name>');
+      process.exit(1);
+    }
+    const result = removeProject(wsRoot, name);
+    if (!result.ok) {
+      console.error(`❌ ${result.error}`);
+      process.exit(1);
+    }
+    if (json) {
+      console.log(JSON.stringify({ ok: true, removed: name }, null, 2));
+      return;
+    }
+    console.log(`✓ Removed project: ${name}`);
+    return;
+  }
+
+  if (sub === 'validate' || sub === 'check') {
+    const result = validateWorkspace(wsRoot);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(result.ok ? 0 : 1);
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log(`Workspace validation: ${result.ok ? '✅ PASS' : '❌ FAIL'}`);
+    console.log('═══════════════════════════════════════════');
+    if (result.errors.length > 0) {
+      console.log('\nErrors:');
+      for (const e of result.errors) console.log(`  ❌ ${e}`);
+    }
+    if (result.warnings.length > 0) {
+      console.log('\nWarnings:');
+      for (const w of result.warnings) console.log(`  ⚠️  ${w}`);
+    }
+    if (result.errors.length === 0 && result.warnings.length === 0) {
+      console.log('  All projects registered, paths exist, dependencies valid.');
+    }
+    process.exit(result.ok ? 0 : 1);
+    return;
+  }
+
+  if (sub === 'graph' || sub === 'topology') {
+    const { order, cycles } = topologicalSort(wsRoot);
+    if (json) {
+      console.log(JSON.stringify({ order, cycles, projects: manifest.projects.map(p => ({
+        name: p.name,
+        depends_on: p.depends_on ?? [],
+      })) }, null, 2));
+      return;
+    }
+    console.log('═══════════════════════════════════════════');
+    console.log('Dependency Graph (topological order)');
+    console.log('═══════════════════════════════════════════');
+    if (order.length === 0) {
+      console.log('  (no projects in workspace)');
+      return;
+    }
+    order.forEach((name, i) => {
+      const p = manifest.projects.find(x => x.name === name);
+      const deps = p?.depends_on?.length ? `  ← ${p.depends_on.join(', ')}` : '';
+      console.log(`  ${i + 1}. ${name}${deps}`);
+    });
+    if (cycles.length > 0) {
+      console.log('');
+      console.log(`  ⚠ ${cycles.length} cycle(s) detected:`);
+      for (const c of cycles) console.log(`    ${c.join(' → ')}`);
+    }
+    return;
+  }
+
+  console.error(`Unknown workspace subcommand: ${sub}`);
+  console.error('Usage: wdf workspace <init|list|add|remove|show|validate|graph>');
+  process.exit(1);
+}
+
+// ============================================================
+// Coverage Command — enforce constitution §4.1 coverage threshold
+// ============================================================
+
+async function runCoverageCommand(args: string[], projectRoot: string) {
+  const sub = args[1] ?? 'check';
+  const json = args.includes('--json');
+
+  const { checkCoverage, formatCoverageReport } = await import('./coverage-checker.js');
+
+  if (sub === 'check' || sub === 'gate' || sub === 'verify') {
+    const result = checkCoverage(projectRoot);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(formatCoverageReport(result));
+    }
+    process.exit(result.ok ? 0 : 1);
+  }
+
+  if (sub === 'run') {
+    // Convenience: run vitest --coverage first, then check.
+    const { spawnSync } = await import('child_process');
+    console.log('Running: cd orchestrator && npx vitest run --coverage ...');
+    const r = spawnSync(
+      process.platform === 'win32' ? 'npx.cmd' : 'npx',
+      ['vitest', 'run', '--coverage'],
+      { cwd: join(projectRoot, 'orchestrator'), stdio: 'inherit' },
+    );
+    if (r.status !== 0) {
+      console.error(`vitest --coverage failed (exit ${r.status})`);
+      process.exit(r.status ?? 1);
+    }
+    const result = checkCoverage(projectRoot);
+    console.log(formatCoverageReport(result));
+    process.exit(result.ok ? 0 : 1);
+  }
+
+  console.error(`Unknown coverage subcommand: ${sub}`);
+  console.error('Usage: wdf coverage <check|run>');
+  console.error('  check — verify existing coverage report against constitution');
+  console.error('  run   — run vitest --coverage then check');
+  process.exit(1);
 }
 

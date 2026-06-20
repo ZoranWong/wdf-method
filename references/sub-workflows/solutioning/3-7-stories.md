@@ -21,6 +21,10 @@ bmad_skill: "/bmad-create-story"
 
 **Duration:** Iterative — runs per story or per epic. User may return to this sub-phase for additional stories until all P0 stories are designed.
 
+**Agent Templates:**
+- For deep story design (full AC, scope, contract freeze): use `references/agents/story-planner.md` with `/bmad-create-story`.
+- For bulk auto-generation (one stub story per epic as a starting scaffold): use `references/agents/story-slicer.md`. Output is a draft that must be refined by story-planner before the Contract Freeze Gate.
+
 ---
 
 ## FSM State Transition Table

@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import YAML from 'js-yaml';
 import { GateCard, GateCheck, Track } from './types.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { resolve } from 'path';
 import { appendAudit } from './audit-logger.js';
+import { evaluateTraceabilityGate, formatTraceabilityResult } from './traceability-gate.js';
 
 /**
  * Known check types — must be kept in sync with the workflow spec.
@@ -14,21 +16,27 @@ import { appendAudit } from './audit-logger.js';
 export type KnownCheckType =
   | 'artifact_exists'
   | 'artifact_metadata'
+  | 'artifact_checksum'
   | 'dependency_status'
   | 'user_confirmation'
   | 'all_stories_complete'
   | 'scope_boundary'
+  | 'quality_threshold'
   | 'field_exists'
+  | 'traceability_complete'
   | 'custom_check';
 
 const KNOWN_CHECK_TYPES = new Set<string>([
   'artifact_exists',
   'artifact_metadata',
+  'artifact_checksum',
   'dependency_status',
   'user_confirmation',
   'all_stories_complete',
   'scope_boundary',
+  'quality_threshold',
   'field_exists',
+  'traceability_complete',
   'custom_check',
 ]);
 
@@ -51,8 +59,13 @@ const SUPPORTED_DEPENDENCY_FIELDS: ReadonlyArray<SupportedDependencyField> = [
 
 export type CheckResult = {
   id: string;
-  status: 'pass' | 'fail' | 'skipped';
+  status: 'pass' | 'fail' | 'warn' | 'skipped';
   reason?: string;
+  // Alias for `id` — older callers (orchestrator.ts) used `gate_check_id`.
+  // Kept for backward compat during the field rename.
+  gate_check_id?: string;
+  // Optional structured detail for failing checks.
+  detail?: any;
 };
 
 /**
@@ -86,7 +99,7 @@ export class GateEvaluator {
   async evaluate(
     gateCard: GateCard,
     state: SprintStatusManager,
-    options?: { storyId?: string; track?: Track }
+    options?: { storyId?: string; track?: Track; executionMode?: 'auto' | 'interactive' }
   ): Promise<{ all_pass: boolean; results: CheckResult[] }> {
     const results = await Promise.all(
       gateCard.checks.map(check => this.evaluateCheck(check, state, options))
@@ -109,7 +122,7 @@ export class GateEvaluator {
   private async evaluateCheck(
     check: GateCheck,
     state: SprintStatusManager,
-    options?: { storyId?: string; track?: Track }
+    options?: { storyId?: string; track?: Track; executionMode?: 'auto' | 'interactive' }
   ): Promise<CheckResult> {
     try {
       // Reject unknown check types up-front. No silent pass.
@@ -130,21 +143,39 @@ export class GateEvaluator {
         case 'artifact_metadata':
           return this.checkArtifactMetadata(check);
 
+        case 'artifact_checksum':
+          return this.checkArtifactChecksum(check);
+
         case 'dependency_status':
           return this.checkDependencyStatus(check, state);
 
-        case 'user_confirmation':
-          // Fail-closed: an explicit user-confirmation gate cannot pass
-          // automatically. Auto-mode degradation (where configured to do so)
-          // must be wired in by the orchestrator before this branch is
-          // reached. Until then, every user_confirmation check fails with
-          // an explicit reason instead of silently passing.
+        case 'user_confirmation': {
+          // Auto-degrade path: when a check is explicitly marked
+          // `allow_auto_degrade: true` AND the workflow execution_mode is
+          // "auto", the confirmation passes without an interactive prompt.
+          // Critical confirmations (default) stay fail-closed.
+          const autoDegradeOK =
+            check.allow_auto_degrade === true &&
+            options?.executionMode === 'auto';
+          if (autoDegradeOK) {
+            return {
+              id: check.id,
+              status: 'pass',
+              reason:
+                'Auto-degraded (allow_auto_degrade=true, execution_mode=auto) — interactive confirmation waived',
+            };
+          }
+          // Fail-closed default: every user_confirmation without an explicit
+          // authorization record fails instead of silently passing. This is
+          // the contract that lets production gates stay interactive.
           return {
             id: check.id,
             status: 'fail',
-            reason:
-              'User confirmation required and no explicit authorization was provided',
+            reason: options?.executionMode === 'auto'
+              ? `User confirmation required — gate is not marked allow_auto_degrade=true, so auto-mode cannot waive it`
+              : 'User confirmation required and no explicit authorization was provided',
           };
+        }
 
         case 'all_stories_complete':
           return this.checkAllStoriesComplete(state, options);
@@ -152,8 +183,14 @@ export class GateEvaluator {
         case 'scope_boundary':
           return this.checkScopeBoundary(check, state, options);
 
+        case 'quality_threshold':
+          return this.checkQualityThreshold(check, state);
+
         case 'field_exists':
           return this.checkFieldExists(check);
+
+        case 'traceability_complete':
+          return this.checkTraceabilityComplete(check);
 
         case 'custom_check':
           return this.checkCustom(check);
@@ -499,6 +536,178 @@ export class GateEvaluator {
     }
 
     return { id: check.id, status: 'pass' };
+  }
+
+  /**
+   * artifact_checksum verifies file integrity by comparing cryptographic hashes.
+   * Supports md5, sha1, sha256, sha512 algorithms.
+   */
+  private checkArtifactChecksum(check: GateCheck): CheckResult {
+    const source = check.target ?? check.source ?? '';
+    const expected = check.expected;
+    const algorithm = (check.algorithm as string) || 'sha256';
+
+    if (!source) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: 'artifact_checksum: no target/source specified',
+      };
+    }
+    if (!expected) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: 'artifact_checksum: no expected hash provided',
+      };
+    }
+
+    const validAlgorithms = ['md5', 'sha1', 'sha256', 'sha512'];
+    if (!validAlgorithms.includes(algorithm)) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: `artifact_checksum: unsupported algorithm "${algorithm}". Valid: ${validAlgorithms.join(', ')}`,
+      };
+    }
+
+    const path = resolve(this.projectRoot, source);
+    if (!existsSync(path)) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: `artifact_checksum: file not found: ${source}`,
+      };
+    }
+
+    const content = readFileSync(path);
+    const actual = createHash(algorithm).update(content).digest('hex');
+
+    const pass = actual.toLowerCase() === String(expected).toLowerCase();
+    return {
+      id: check.id,
+      status: pass ? 'pass' : 'fail',
+      reason: pass
+        ? undefined
+        : `artifact_checksum: ${source} hash mismatch (${algorithm}). Expected: ${expected}, Actual: ${actual}`,
+    };
+  }
+
+  /**
+   * quality_threshold validates numeric quality metrics against thresholds.
+   * Supports test coverage, lint issues, type errors, bundle size, etc.
+   */
+  private checkQualityThreshold(
+    check: GateCheck,
+    state: SprintStatusManager
+  ): CheckResult {
+    const metric = check.metric as string;
+    const threshold = check.threshold as number;
+    const operator = (check.operator as string) || 'gte';
+
+    if (!metric) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: 'quality_threshold: no metric specified',
+      };
+    }
+    if (threshold === undefined || threshold === null) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: 'quality_threshold: no threshold value specified',
+      };
+    }
+
+    // Try to get metric value from state or fall back to reading from file
+    let actual: number | null = null;
+    const metrics = state.data.global_state.quality_metrics as Record<string, number> | undefined;
+
+    if (metrics && metrics[metric] !== undefined) {
+      actual = metrics[metric];
+    } else if (check.source) {
+      // Try reading from a metrics JSON/YAML file
+      const path = resolve(this.projectRoot, check.source);
+      if (existsSync(path)) {
+        try {
+          const content = readFileSync(path, 'utf-8');
+          const data = JSON.parse(content) as Record<string, unknown>;
+          if (data[metric] !== undefined && typeof data[metric] === 'number') {
+            actual = data[metric] as number;
+          }
+        } catch {
+          // Fall through to null handling
+        }
+      }
+    }
+
+    if (actual === null) {
+      return {
+        id: check.id,
+        status: 'fail',
+        reason: `quality_threshold: metric "${metric}" not found in state or source file`,
+      };
+    }
+
+    let pass = false;
+    switch (operator) {
+      case 'gte':
+        pass = actual >= threshold;
+        break;
+      case 'gt':
+        pass = actual > threshold;
+        break;
+      case 'lte':
+        pass = actual <= threshold;
+        break;
+      case 'lt':
+        pass = actual < threshold;
+        break;
+      case 'eq':
+        pass = actual === threshold;
+        break;
+      case 'neq':
+        pass = actual !== threshold;
+        break;
+      default:
+        return {
+          id: check.id,
+          status: 'fail',
+          reason: `quality_threshold: unsupported operator "${operator}". Valid: gte, gt, lte, lt, eq, neq`,
+        };
+    }
+
+    return {
+      id: check.id,
+      status: pass ? 'pass' : 'fail',
+      reason: pass
+        ? undefined
+        : `quality_threshold: ${metric} = ${actual} ${operator} ${threshold} failed`,
+    };
+  }
+
+  /**
+   * Cross-artifact traceability gate. Builds the project-wide
+   * JTBD→REQ→STORY→TEST graph and asserts every STORY links back to a
+   * REQ, every REQ is covered by ≥1 STORY, and every STORY has ≥1
+   * covering TEST. This is the entry gate for Phase 4 (no implementation
+   * may begin until traceability is complete).
+   */
+  private checkTraceabilityComplete(check: GateCheck): CheckResult {
+    const result = evaluateTraceabilityGate(this.projectRoot);
+    if (result.ok) {
+      return {
+        id: check.id,
+        status: 'pass',
+        reason: `${result.totals.requirements} REQ / ${result.totals.stories} STORY / ${result.totals.tests} TEST — fully linked`,
+      };
+    }
+    return {
+      id: check.id,
+      status: 'fail',
+      reason: formatTraceabilityResult(result),
+    };
   }
 
   /**

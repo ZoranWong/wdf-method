@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'fs';
 import { join, basename, extname, relative } from 'path';
 import { createHash } from 'crypto';
+import { execSync } from 'child_process';
 import { scanTestsForAcBindings, type TestBinding } from './ac-test-binding.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -143,6 +144,7 @@ export function buildTraceabilityGraph(opts: BuildOptions): TraceabilityGraph {
   parseDbSchema(b, outRoot);
   parseJtbd(b, outRoot);
   parseTests(b, testRoots, root);
+  parseCommits(b, root);
 
   return b.build(root, sourceHash);
 }
@@ -408,6 +410,61 @@ export function parseTests(b: GraphBuilder, testRoots: string[], projectRoot: st
   }
 }
 
+/**
+ * Parse git log for COMMIT nodes and link them to STORY nodes.
+ *
+ * Recognises the WDF commit convention `{story_id}: {title}` (e.g.
+ * `S-AUTH-01: login form — IMPLEMENTED`). Each matching commit becomes a
+ * COMMIT node with a `references` edge from STORY → COMMIT.
+ *
+ * Silently no-ops when the project is not a git repo (execSync throws) —
+ * the graph still builds without commit history.
+ */
+export function parseCommits(b: GraphBuilder, projectRoot: string): void {
+  const storyIds = new Set<string>();
+  for (const node of b['nodes'].values()) {
+    if (node.kind === 'STORY') storyIds.add(node.id);
+  }
+  if (storyIds.size === 0) return;
+
+  let raw: string;
+  try {
+    // %x09 is a tab separator. We only need hash + subject; bodies are noise.
+    raw = execSync('git log --no-merges --format="%H%x09%s"', {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    });
+  } catch {
+    return; // not a git repo, or git missing — skip silently
+  }
+
+  // Story IDs look like S-AUTH-01, S-TODO-001, STORY-001, etc.
+  // Match longest first so S-AUTH-001 wins over S-AUTH-01 when both appear.
+  const known = Array.from(storyIds).sort((a, b2) => b2.length - a.length);
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines) {
+    const sep = line.indexOf('\t');
+    if (sep < 0) continue;
+    const hash = line.slice(0, sep);
+    const subject = line.slice(sep + 1);
+    if (!hash || !subject) continue;
+
+    const matched = known.find(id => subject.includes(id));
+    if (!matched) continue;
+
+    const commitId = `COMMIT:${hash.slice(0, 12)}`;
+    b.addNode({
+      id: commitId, kind: 'COMMIT',
+      title: subject.slice(0, 120),
+      source: hash,
+      meta: { story_id: matched },
+    });
+    b.addEdge({ from: matched, to: commitId, kind: 'references' });
+  }
+}
+
 // ─── Persistence ─────────────────────────────────────────────────────
 
 export function saveGraph(graph: TraceabilityGraph, outputRoot: string): string {
@@ -477,4 +534,168 @@ export function downstream(
     }
   }
   return visited;
+}
+
+/**
+ * BFS upstream — given a seed set, return every node reachable by following
+ * derives_from / belongs_to / implements edges *forward* (i.e. parents).
+ *
+ * STORY --derives_from--> REQ. So from STORY-001, upstream follows the edge
+ * direction and finds REQ-7, EPIC-3, JTBD-1. From REQ-7, upstream finds JTBD-2.
+ */
+export function upstream(
+  index: AdjacencyIndex,
+  seedIds: Iterable<string>,
+): Set<string> {
+  const visited = new Set<string>();
+  const queue: string[] = [];
+  for (const s of seedIds) { visited.add(s); queue.push(s); }
+
+  while (queue.length) {
+    const cur = queue.shift()!;
+    // Parents via outgoing derives_from / belongs_to / implements
+    const outgoing = index.out.get(cur) ?? [];
+    for (const e of outgoing) {
+      if (
+        e.kind === 'derives_from' ||
+        e.kind === 'belongs_to' ||
+        e.kind === 'implements'
+      ) {
+        if (!visited.has(e.to)) {
+          visited.add(e.to);
+          queue.push(e.to);
+        }
+      }
+    }
+  }
+  return visited;
+}
+
+/**
+ * Full bidirectional trace from a node ID.
+ * Returns { upstream, downstream, node } for rendering.
+ */
+export function trace(
+  index: AdjacencyIndex,
+  seedId: string,
+): { node: TraceNode | undefined; upstream: Set<string>; downstream: Set<string> } {
+  return {
+    node: index.byId.get(seedId),
+    upstream: upstream(index, [seedId]),
+    downstream: downstream(index, [seedId]),
+  };
+}
+
+/**
+ * Format a trace result as human-readable text.
+ */
+export function formatTraceText(
+  index: AdjacencyIndex,
+  seedId: string,
+): string {
+  const result = trace(index, seedId);
+  const lines: string[] = [];
+
+  const node = result.node;
+  if (!node) {
+    return `No node found with ID "${seedId}".\n\nTry one of: ${Array.from(index.byId.keys()).slice(0, 20).join(', ')}...`;
+  }
+
+  lines.push(`╔══════════════════════════════════════════╗`);
+  lines.push(`║  Trace: ${node.id.padEnd(34)}║`);
+  lines.push(`╠══════════════════════════════════════════╣`);
+  lines.push(`║  Kind: ${(node.kind ?? '?').padEnd(36)}║`);
+  lines.push(`║  Title: ${(node.title ?? '(untitled)').slice(0, 32).padEnd(32)}║`);
+  if (node.source) {
+    lines.push(`║  Source: ${node.source.slice(0, 30).padEnd(30)}║`);
+  }
+  lines.push(`╚══════════════════════════════════════════╝`);
+  lines.push('');
+
+  // Upstream (what this depends on)
+  const ups = Array.from(result.upstream).filter(id => id !== seedId);
+  lines.push(`── Upstream (depends on) ── ${ups.length} nodes ──`);
+  if (ups.length === 0) {
+    lines.push('  (none — this is a root node)');
+  } else {
+    for (const id of ups.sort()) {
+      const n = index.byId.get(id);
+      const prefix = n ? `[${n.kind}]` : '[?]';
+      lines.push(`  ↑ ${prefix} ${id} ${n?.title ? `— ${n.title}` : ''}`);
+    }
+  }
+  lines.push('');
+
+  // Downstream (what depends on this)
+  const downs = Array.from(result.downstream).filter(id => id !== seedId);
+  lines.push(`── Downstream (impacts) ── ${downs.length} nodes ──`);
+  if (downs.length === 0) {
+    lines.push('  (none — this is a leaf node)');
+  } else {
+    for (const id of downs.sort()) {
+      const n = index.byId.get(id);
+      const prefix = n ? `[${n.kind}]` : '[?]';
+      lines.push(`  ↓ ${prefix} ${id} ${n?.title ? `— ${n.title}` : ''}`);
+    }
+  }
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Format a trace result as a Mermaid flowchart.
+ */
+export function formatTraceMermaid(
+  index: AdjacencyIndex,
+  seedId: string,
+): string {
+  const result = trace(index, seedId);
+  const node = result.node;
+  if (!node) return `%% No node found: ${seedId}`;
+
+  const allIds = new Set([
+    seedId,
+    ...Array.from(result.upstream),
+    ...Array.from(result.downstream),
+  ]);
+
+  const lines: string[] = [];
+  lines.push('```mermaid');
+  lines.push('flowchart LR');
+  lines.push(`  %% Trace for: ${seedId}`);
+
+  // Style seed node
+  const safeId = (id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  // Collect relevant edges
+  const relevantEdges = new Set<string>();
+  for (const id of allIds) {
+    for (const dir of ['out' as const, 'in' as const]) {
+      const edges = index[dir].get(id) ?? [];
+      for (const e of edges) {
+        if (allIds.has(e.from) && allIds.has(e.to)) {
+          const key = `${e.from}→${e.to}`;
+          if (!relevantEdges.has(key)) {
+            relevantEdges.add(key);
+            const label = e.kind.replace(/_/g, ' ');
+            lines.push(`  ${safeId(e.from)}["${e.from}"] -->|"${label}"| ${safeId(e.to)}["${e.to}"]`);
+          }
+        }
+      }
+    }
+  }
+
+  // Highlight the seed node
+  lines.push(`  style ${safeId(seedId)} fill:#f9f,stroke:#333,stroke-width:3px`);
+
+  // Highlight impacted downstream
+  for (const id of result.downstream) {
+    if (id !== seedId) {
+      lines.push(`  style ${safeId(id)} fill:#ffd,stroke:#333,stroke-width:1px`);
+    }
+  }
+
+  lines.push('```');
+  return lines.join('\n');
 }

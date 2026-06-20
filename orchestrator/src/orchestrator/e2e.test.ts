@@ -357,10 +357,12 @@ describe('E2E (todo-app fixture) — engine state flow', () => {
     // Unified fallback is also kept up-to-date
     expect(existsSync(paths.trackingPath)).toBe(true);
 
-    // YAML the engine wrote round-trips through js-yaml
+    // YAML the engine wrote round-trips through js-yaml.
+    // SprintStatusManager maps global_state.development_order → workflow.development_order
+    // when emitting init-compatible global.yaml (per saveInner schema mapping).
     const globalRaw = readFileSync(join(paths.statusDir, 'global.yaml'), 'utf-8');
     const parsed = YAML.load(globalRaw) as any;
-    expect(parsed.global_state.development_order).toHaveLength(2);
+    expect(parsed.workflow.development_order).toHaveLength(2);
 
     // Recovery: unified yaml fallback also reflects the latest state
     const fallback = await SprintStatusManager.load(paths.trackingPath);

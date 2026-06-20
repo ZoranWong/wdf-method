@@ -29,7 +29,96 @@ export type PhaseStatus =
   | 'FULL_STACK_INTEGRATED'
   | 'MERGE_QUEUED'
   | 'MERGED'
-  | 'BLOCKED_BY_DEPENDENCY';
+  | 'BLOCKED_BY_DEPENDENCY'
+  | 'FIX_RETRY'
+  | 'PIPELINE_ESCALATED';  // retry budget exhausted — main agent must review
+
+/** Pipeline stages for per-story dev→review→testing→QA flow */
+export type PipelineStage = 'dev' | 'review' | 'testing' | 'qa';
+
+export const PIPELINE_STAGES: PipelineStage[] = ['dev', 'review', 'testing', 'qa'];
+
+/** Maximum fix attempts per stage before escalating to parent */
+export const MAX_PIPELINE_RETRIES = 5;
+
+export interface PipelineContext {
+  stage: PipelineStage;
+  attempt: number;          // 1-based, resets to 1 on each new stage
+  total_retries: number;    // cumulative retries across all stages
+  max_retries: number;      // 5 before escalation
+  last_failure?: {
+    stage: PipelineStage;
+    error: string;
+    at: string;
+  };
+  feedback?: string;        // feedback from review/testing/QA for dev-agent
+}
+
+export interface PipelineDispatchManifest {
+  type: 'pipeline_dispatch';
+  story_id: string;
+  title: string;
+  track: string;
+  stage: PipelineStage;
+  attempt: number;
+  max_retries: number;
+  scope_write: string[];
+  acceptance_check: string[];
+  worktree_path?: string;
+  feedback?: string;
+  prompt: string;
+  previous_output?: {
+    code_files?: string[];
+    test_files?: string[];
+    review_notes?: string;
+    qa_report?: string;
+  };
+}
+
+export interface PipelineEscalation {
+  type: 'pipeline_escalation';
+  story_id: string;
+  title: string;
+  track: string;
+  failed_stage: PipelineStage;
+  total_attempts: number;
+  reason: string;
+  recommendation: string;
+  manifest_path: string;
+  created_at: string;
+}
+
+/**
+ * Pipeline stage-level dispatch configuration.
+ * Used when a single story goes through dev→review→testing→QA
+ * as separate agent dispatches rather than one monolithic agent.
+ */
+export interface PipelineStageDispatchConfig {
+  worktreePath: string;
+  storyId: string;
+  track: Track;
+  stage: PipelineStage;
+  attempt: number;
+  manifestPath: string;
+  feedback?: string;
+}
+
+/**
+ * Return type for executeStorySteps() when using the pipeline mode.
+ * Replaces the legacy { success, lastSubstep } shape.
+ */
+export interface StoryExecutionResult {
+  success: boolean;
+  lastSubstep?: string;
+  /** Parent session should dispatch an agent using the manifest at dispatchManifestPath */
+  needsDispatch?: boolean;
+  /** Path to the pipeline dispatch manifest for the current stage */
+  dispatchManifestPath?: string;
+  /** Retry budget exhausted — main agent must review */
+  escalated?: boolean;
+  /** Story already merged/skipped — nothing to do */
+  skipped?: boolean;
+}
 
 export type DevMode = 'separated' | 'full_stack';
 export type TriageMode = 'light' | 'serial' | 'parallel' | 'auto';
@@ -40,6 +129,7 @@ export interface StoryEntry {
   order: number;
   story_id: string;
   title: string;
+  effort?: string;             // S | M | L | XL (used for slicing decisions)
   depends_on?: { story_id: string; track: Track }[];
   parallel_group?: number;
   parallel_safe?: boolean;
@@ -82,6 +172,8 @@ export interface StoryStatus {
   ui_acceptance?: UiAcceptance;
   e2e_browser_acceptance?: E2eBrowserAcceptance;
   units?: Record<string, UnitStatus>;
+  /** Per-story pipeline context tracking */
+  pipeline?: PipelineContext;
 }
 
 export interface StepHistoryEntry {
@@ -149,13 +241,33 @@ export interface GateCheck {
   expected?: unknown;
   severity?: 'blocking' | 'warning';
   status?: 'pending' | 'pass' | 'fail' | 'skipped';
+  // Artifact checksum properties
+  algorithm?: string;
+  // Quality threshold properties
+  metric?: string;
+  threshold?: number;
+  /**
+   * For `user_confirmation` checks only.
+   *
+   * When true AND the workflow execution_mode is "auto", the gate
+   * auto-passes with a recorded reason. When false (default) or when
+   * execution_mode is "interactive", the gate stays fail-closed —
+   * an explicit user authorization is required.
+   *
+   * This makes auto-degradation opt-in per gate: critical confirmations
+   * (e.g. production deploy) keep their interactive contract, while
+   * routine ones (e.g. "ready to merge to staging") can flow through.
+   */
+  allow_auto_degrade?: boolean;
 }
 
 export interface GateCard {
   phase?: number;
   sub_phase?: string;
   checks: GateCheck[];
-  all_pass: boolean;
+  // `all_pass` is the evaluator's output, not input. Marked optional so callers
+  // can construct a GateCard from raw `checks` without pre-computing the result.
+  all_pass?: boolean;
 }
 
 export interface ChangeRequest {
@@ -174,6 +286,14 @@ export interface ChangeRequest {
   resolved_by?: string;
 }
 
+export interface ConstitutionCheckResult {
+  ruleId: string;
+  level: 'error' | 'warning';
+  file: string;
+  message: string;
+  passed: boolean;
+}
+
 export interface MergeQueueItem {
   queue_item_id: string;
   story_id: string;
@@ -187,6 +307,10 @@ export interface MergeQueueItem {
   merge_failed_reason?: string;
   merged_at?: string;
   merge_commit?: string;
+  /** Constitution verification results for this merge item */
+  constitution_checks?: ConstitutionCheckResult[];
+  /** Whether constitution checks passed */
+  constitution_passed?: boolean;
 }
 
 export interface SubState {
@@ -218,6 +342,13 @@ export interface ImplementationBoundary {
 export interface GlobalState {
   dev_mode: DevMode;
   task_triage_mode: TriageMode;
+  /**
+   * "auto" enables opt-in auto-degradation of `user_confirmation` gates
+   * (those with allow_auto_degrade=true). "interactive" (default) keeps
+   * every user confirmation fail-closed until an explicit authorization
+   * is recorded.
+   */
+  execution_mode?: 'auto' | 'interactive';
   code_standards_source: string[];
   overall_status: string;
   current_phase: number;
@@ -235,6 +366,7 @@ export interface GlobalState {
     enabled: boolean;
     items: MergeQueueItem[];
   };
+  quality_metrics?: Record<string, number>;
 }
 
 export interface SprintStatus {
@@ -273,8 +405,112 @@ export interface AgentDispatchResult {
   error?: string;
 }
 
-// Re-export config types for backward compatibility
-export {
+// ============================================================
+// Party Mode Types
+// ============================================================
+
+export type PartyRole =
+  | 'analyst'
+  | 'product_manager'
+  | 'ux_designer'
+  | 'architect'
+  | 'story_planner'
+  | 'api_designer'
+  | 'external_expert';
+
+export interface PartyAgent {
+  id: string;
+  role: PartyRole;
+  name: string;
+  persona: string;
+  perspectives: string[];
+  status: 'idle' | 'thinking' | 'responded' | 'reviewing' | 'converged';
+  output?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface CrossTalkComment {
+  id: string;
+  from_agent: string;
+  to_agent?: string;
+  content: string;
+  type: 'agreement' | 'disagreement' | 'question' | 'suggestion' | 'gap';
+  created_at: string;
+  resolved?: boolean;
+  resolution?: string;
+}
+
+export interface PartyRound {
+  round_number: number;
+  phase: 'discovery' | 'design' | 'architecture' | 'convergence' | 'converged' | 'completed';
+  prompt: string;
+  agent_outputs: Record<string, string>;
+  cross_talk: CrossTalkComment[];
+  started_at: string;
+  completed_at?: string;
+}
+
+export interface ConvergencePoint {
+  id: string;
+  topic: string;
+  type: 'agreement' | 'disagreement' | 'gap' | 'decision_needed';
+  agents_involved: string[];
+  summary: string;
+  resolution?: string;
+  resolved_by?: 'user' | 'consensus' | 'lead_agent';
+  resolved_at?: string;
+}
+
+export interface FirstPrincipleAnalysis {
+  id: string;
+  assumption: string;
+  challenge: string;
+  validity_score: number; // 1-10
+  alternative?: string;
+  impact?: string;
+}
+
+export interface PartyState {
+  party_id: string;
+  topic: string;
+  phase: 'discovery' | 'design' | 'architecture' | 'converged' | 'completed';
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'PAUSED' | 'COMPLETED';
+  agents: PartyAgent[];
+  rounds: PartyRound[];
+  convergence_points: ConvergencePoint[];
+  first_principles: FirstPrincipleAnalysis[];
+  final_output?: string;
+  output_artifact?: string;
+  started_at?: string;
+  completed_at?: string;
+  paused_at?: string;
+  resumed_at?: string;
+  invited_experts: string[];
+}
+
+export interface PartyConfig {
+  topic: string;
+  phase: 'discovery' | 'design' | 'architecture';
+  agents: PartyRole[];
+  max_rounds: number;
+  auto_converge: boolean;
+  enable_first_principles: boolean;
+}
+
+export type PartyStatus =
+  | 'NOT_STARTED'
+  | 'IN_PROGRESS'
+  | 'PAUSED'
+  | 'WAITING_USER_INPUT'
+  | 'CONVERGING'
+  | 'COMPLETED';
+
+// Re-export config types for backward compatibility.
+// Must use `export type` (not `export`) because these are interfaces —
+// erased at runtime. Plain `export` makes Node.js ESM throw
+// "does not provide an export named ..." under tsx runtime.
+export type {
   WorkflowConfig,
   AcceptanceGatesSection as AcceptanceGateConfig,
   ScopeLockSection as ScopeLockConfig,

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
 import { spawn, execSync } from 'child_process';
 import { StoryEntry, Track, AgentDispatchResult } from './types.js';
@@ -10,6 +10,402 @@ import {
   agentResultPath,
   AGENT_RESULT_RELPATH,
 } from '../agent/write-result.js';
+import {
+  HeartbeatEmitter,
+  CheckpointWriter,
+  computeProjectHash,
+  cleanupAgent,
+} from './signal-manager.js';
+
+/**
+ * 支持的 AI 编辑器/工具类型
+ */
+export type AgentTool =
+  | 'claude-code'      // Anthropic Claude Code
+  | 'cursor'           // Cursor (内置 Claude)
+  | 'cline'            // Cline (VS Code 扩展)
+  | 'vscode-claude'    // VS Code Claude 扩展
+  | 'codex'            // OpenAI Codex CLI
+  | 'gemini'           // Google Gemini CLI
+  | 'copilot'          // GitHub Copilot CLI
+  | 'windsurf'         // Windsurf (Codeium)
+  | 'unknown';
+
+/**
+ * Agent 提供者接口
+ * 不同工具实现不同的调度策略
+ */
+export interface AgentProvider {
+  tool: AgentTool;
+  name: string;
+  /** Binary name to spawn. CLI must be on PATH for the provider's detect() to succeed. */
+  command: string;
+  detect(): boolean;
+  buildArgs(prompt: string, worktree: string): string[];
+  getEnvOverrides(): NodeJS.ProcessEnv;
+}
+
+// ============================================================================
+// Claude Code Provider (默认 + 最完整支持)
+// ============================================================================
+const ClaudeCodeProvider: AgentProvider = {
+  tool: 'claude-code',
+  name: 'Claude Code',
+  command: 'claude',
+
+  detect(): boolean {
+    try {
+      execSync('claude --version', { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  buildArgs(prompt: string): string[] {
+    return [
+      '--bare',           // 最小模式：禁用所有 skills/plugins/hooks
+      '--fork-session',   // 全新会话，100% 上下文隔离
+      '--allowed-tools',
+      'Read,Write,Edit,Bash(ls),Bash(git),Bash(npm),Bash(npx)',
+      '-p',
+      prompt,
+    ];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'claude-code',
+    };
+  },
+};
+
+// ============================================================================
+// Cursor Provider
+// ============================================================================
+const CursorProvider: AgentProvider = {
+  tool: 'cursor',
+  name: 'Cursor',
+  command: 'claude',
+
+  detect(): boolean {
+    // Cursor 通过环境变量检测
+    return !!(process.env.CURSOR_PATH || process.env.VSCODE_CURSOR_MODE);
+  },
+
+  buildArgs(prompt: string, worktree: string): string[] {
+    // Cursor 目前没有官方 CLI，但可以通过 Claude Code 兼容模式
+    // 实际使用时 Cursor 用户需要先安装 claude CLI
+    return ClaudeCodeProvider.buildArgs(prompt, worktree);
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      ...ClaudeCodeProvider.getEnvOverrides(),
+      WDF_AGENT_MODE: 'cursor',
+    };
+  },
+};
+
+// ============================================================================
+// Unknown Provider - 降级模式
+// ============================================================================
+const UnknownProvider: AgentProvider = {
+  tool: 'unknown',
+  name: 'Unknown (Fallback)',
+  command: 'claude',
+
+  detect(): boolean {
+    return true; // 总是匹配
+  },
+
+  buildArgs(prompt: string, _worktree: string): string[] {
+    // 降级：只使用基础参数，不使用特殊特性
+    return ['-p', prompt];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'fallback',
+    };
+  },
+};
+
+// ============================================================================
+// OpenAI Codex Provider
+// ============================================================================
+const CodexProvider: AgentProvider = {
+  tool: 'codex',
+  name: 'OpenAI Codex CLI',
+  command: 'codex',
+
+  detect(): boolean {
+    try {
+      execSync('codex --version', { stdio: 'ignore' });
+      return true;
+    } catch {
+      // Also check for codex env var as fallback
+      return !!(process.env.CODEX_HOME || process.env.OPENAI_CODEX_PATH);
+    }
+  },
+
+  buildArgs(prompt: string, _worktree: string): string[] {
+    return [
+      'exec',
+      '--no-interactive',
+      '--model', 'gpt-5',
+      '--allowed-tools', 'read,write,edit,bash',
+      prompt,
+    ];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'codex',
+      CODEX_NO_COLOR: 'true',
+      // Codex respects OPENAI_API_KEY from environment
+    };
+  },
+};
+
+// ============================================================================
+// Google Gemini CLI Provider
+// ============================================================================
+const GeminiProvider: AgentProvider = {
+  tool: 'gemini',
+  name: 'Google Gemini CLI',
+  command: 'gemini',
+
+  detect(): boolean {
+    try {
+      execSync('gemini --version', { stdio: 'ignore' });
+      return true;
+    } catch {
+      // Check for gemini env
+      return !!(process.env.GEMINI_CLI_PATH || process.env.GOOGLE_GEMINI_CLI);
+    }
+  },
+
+  buildArgs(prompt: string, _worktree: string): string[] {
+    return [
+      '--prompt', prompt,
+      '--no-extensions',
+      '--output-format', 'json',
+      '--tool-restriction', 'read,write,edit,bash',
+    ];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'gemini',
+      GEMINI_NO_COLOR: 'true',
+    };
+  },
+};
+
+// ============================================================================
+// GitHub Copilot CLI Provider
+// ============================================================================
+const CopilotProvider: AgentProvider = {
+  tool: 'copilot',
+  name: 'GitHub Copilot CLI',
+  command: 'gh',
+
+  detect(): boolean {
+    // `gh copilot --help` exists if the copilot extension is installed.
+    try {
+      execSync('gh copilot --help', { stdio: 'ignore' });
+      return true;
+    } catch {
+      // Allow override via env for CI / dev containers.
+      return !!process.env.COPILOT_CLI_PATH;
+    }
+  },
+
+  buildArgs(prompt: string): string[] {
+    // `gh copilot suggest` is non-interactive when given --target shell -t.
+    // For an agentic prompt we use `gh copilot explain` with the prompt.
+    // NOTE: Copilot CLI is suggestion-focused, not a full agent runtime —
+    // prompts are limited compared to Claude Code / Codex.
+    return ['copilot', 'suggest', '-t', 'shell', prompt];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'copilot',
+      GH_COPILOT_NO_COLOR: 'true',
+    };
+  },
+};
+
+// ============================================================================
+// Windsurf (Codeium) Provider
+// ============================================================================
+const WindsurfProvider: AgentProvider = {
+  tool: 'windsurf',
+  name: 'Windsurf (Codeium)',
+  command: 'windsurf',
+
+  detect(): boolean {
+    try {
+      execSync('windsurf --version', { stdio: 'ignore' });
+      return true;
+    } catch {
+      return !!process.env.WINDSURF_CLI_PATH;
+    }
+  },
+
+  buildArgs(prompt: string, worktree: string): string[] {
+    // Windsurf CLI exposes `windsurf agent run` for headless agent execution.
+    return ['agent', 'run', '--prompt', prompt, '--cwd', worktree];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'windsurf',
+      WINDSURF_NO_COLOR: '1',
+    };
+  },
+};
+
+// ============================================================================
+// Cline (VS Code Extension) Provider
+// ============================================================================
+// Cline is a VS Code extension, not a standalone CLI. Dispatch is best-effort:
+// we write the prompt to a file Cline watches (`.cline/prompt.txt`) and rely on
+// a configured task watcher to pick it up. This is the same pattern used by
+// vibe-kanban and similar orchestration layers.
+const ClineProvider: AgentProvider = {
+  tool: 'cline',
+  name: 'Cline (VS Code Extension)',
+  command: 'code',
+
+  detect(): boolean {
+    // Cline itself has no CLI; we detect the host editor + extension folder.
+    try {
+      execSync('code --version', { stdio: 'ignore' });
+      // Best-effort check for the Cline extension directory.
+      const extPaths = [
+        join(process.env.HOME ?? '', '.vscode', 'extensions'),
+        join(process.env.HOME ?? '', '.vscode-server', 'extensions'),
+      ];
+      for (const p of extPaths) {
+        try {
+          if (existsSync(p) && readdirSync(p).some(d => d.startsWith('saoudrizwan.claude-dev'))) {
+            return true;
+          }
+        } catch { /* ignore */ }
+      }
+      return false;
+    } catch {
+      return !!process.env.CLINE_VSCODE;
+    }
+  },
+
+  buildArgs(prompt: string, worktree: string): string[] {
+    // Open VS Code on the worktree; the user must trigger Cline manually.
+    // We additionally write the prompt to `.cline/prompt.txt` in the worktree
+    // so the user can paste it into Cline.
+    const promptDir = join(worktree, '.cline');
+    try { mkdirSync(promptDir, { recursive: true }); } catch { /* ignore */ }
+    writeFileSync(join(promptDir, 'prompt.txt'), prompt, 'utf8');
+    return ['--reuse-window', worktree];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'cline',
+    };
+  },
+};
+
+// ============================================================================
+// VS Code Claude Extension Provider
+// ============================================================================
+const VSCodeClaudeProvider: AgentProvider = {
+  tool: 'vscode-claude',
+  name: 'VS Code Claude Extension',
+  command: 'code',
+
+  detect(): boolean {
+    try {
+      execSync('code --version', { stdio: 'ignore' });
+      const extPaths = [
+        join(process.env.HOME ?? '', '.vscode', 'extensions'),
+        join(process.env.HOME ?? '', '.vscode-server', 'extensions'),
+      ];
+      for (const p of extPaths) {
+        try {
+          if (existsSync(p) && readdirSync(p).some(d => d.startsWith('anthropic.claude-'))) {
+            return true;
+          }
+        } catch { /* ignore */ }
+      }
+      return false;
+    } catch {
+      return !!process.env.VSCODE_CLAUDE;
+    }
+  },
+
+  buildArgs(prompt: string, worktree: string): string[] {
+    const promptDir = join(worktree, '.vscode-claude');
+    try { mkdirSync(promptDir, { recursive: true }); } catch { /* ignore */ }
+    writeFileSync(join(promptDir, 'prompt.txt'), prompt, 'utf8');
+    return ['--reuse-window', worktree];
+  },
+
+  getEnvOverrides(): NodeJS.ProcessEnv {
+    return {
+      CI: 'true',
+      WDF_AGENT_MODE: 'vscode-claude',
+    };
+  },
+};
+
+/**
+ * 已注册的 Provider 优先级列表
+ * 按优先级排序，第一个匹配的获胜
+ */
+export const PROVIDERS: AgentProvider[] = [
+  ClaudeCodeProvider,
+  CodexProvider,
+  GeminiProvider,
+  CursorProvider,
+  CopilotProvider,
+  WindsurfProvider,
+  ClineProvider,
+  VSCodeClaudeProvider,
+];
+
+/**
+ * 检测当前运行环境，选择最合适的 Agent Provider
+ */
+export function detectAgentProvider(): AgentProvider {
+  // Allow explicit override (CI, dev containers, user preference).
+  const forced = process.env.WDF_FORCE_PROVIDER;
+  if (forced) {
+    const match = PROVIDERS.find(p => p.tool === forced || p.command === forced);
+    if (match) return match;
+  }
+  for (const provider of PROVIDERS) {
+    if (provider.detect()) {
+      return provider;
+    }
+  }
+  return UnknownProvider;
+}
+
+/**
+ * 获取当前检测到的 Agent Provider
+ */
+export const currentAgentProvider = detectAgentProvider();
 
 /**
  * Agent dispatch configuration.
@@ -146,6 +542,30 @@ export class AgentPromptBuilder {
       }
     }
 
+    // Dependency watch — if this story depends on others, include polling instructions
+    if (story.depends_on?.length) {
+      const projectHash = computeProjectHash(this.projectRoot);
+      const signalDir = join(
+        process.env.HOME ?? process.env.USERPROFILE ?? '/tmp',
+        '.wdf-method', 'signals', 'dependencies', projectHash,
+      );
+      prompt.push('');
+      prompt.push('=== DEPENDENCY WATCH ===');
+      prompt.push('This story has upstream dependencies. BEFORE implementing, verify they are complete.');
+      prompt.push('Your dependencies:');
+      for (const dep of story.depends_on) {
+        const depFile = `${signalDir}/${dep.story_id}-ready.json`;
+        prompt.push(`  ${dep.story_id} (${dep.track ?? 'unknown'}): check ${depFile}`);
+      }
+      prompt.push('');
+      prompt.push('To check if a dependency is ready:');
+      prompt.push(`  1. Read ${signalDir}/{story_id}-ready.json`);
+      prompt.push('  2. If status="ready", that dependency is satisfied.');
+      prompt.push('  3. If status="failed", report BLOCKED — the dependency failed and needs human attention.');
+      prompt.push('  4. If the file does not exist, wait up to 15 minutes and check again.');
+      prompt.push('  5. If after 15 min the file still does not exist, report BLOCKED with reason "dependency timeout".');
+    }
+
     prompt.push('');
     prompt.push('=== RETURN VALUE ===');
     prompt.push('When done, write a JSON document to:');
@@ -239,16 +659,42 @@ function syntheticResult(
 /**
  * Standalone, file-based dispatch entry point.
  *
- * Spawns Claude Code in the worktree, waits for the child to exit, then
- * reads `_wdf_output/agent-result.json` from the worktree. No regex / stdout
- * parsing. If the child exits cleanly but the result file is missing, the
- * dispatcher retries up to `maxRetries` times. If the child times out but a
- * partially-written result file is on disk, that file is honoured.
+ * @deprecated **Legacy / test-only path.** The canonical wdf-method execution
+ * model is "CLI emits a dispatch manifest → host Claude session uses its Agent
+ * tool to spawn sub-agents in fresh-chat isolation" (see
+ * `executeImplementationPhase()` in `orchestrator.ts` and the architectural
+ * note in `docs/MULTI-IDE.md`). This function still subprocess-spawns the
+ * provider's CLI binary as a fallback for non-Claude-Code hosts and for
+ * integration tests; new callers should consume the manifest instead. The
+ * `provider.command` field exists so this legacy path is at least
+ * provider-aware rather than hardcoded to `claude`, but multi-IDE support
+ * proper is delivered through the manifest, not by expanding this spawn matrix.
+ *
+ * Spawns the configured provider's CLI in the worktree, waits for the child
+ * to exit, then reads `_wdf_output/agent-result.json` from the worktree. No
+ * regex / stdout parsing. If the child exits cleanly but the result file is
+ * missing, the dispatcher retries up to `maxRetries` times. If the child
+ * times out but a partially-written result file is on disk, that file is
+ * honoured.
  */
 export async function dispatchStoryAgent(
   story: StoryEntry,
   options: DispatchOptions,
 ): Promise<AgentDispatchResult> {
+  // Architectural guard: wdf-method's contract is "CLI never spawns agents".
+  // Production paths must use manifest-based dispatch via pipeline-runner.ts
+  // so the parent Claude session retains control. This guard fails loud if
+  // any caller forgets and tries the legacy spawn path.
+  //
+  // Tests opt out via WDF_ALLOW_SPAWN=1 since they need to exercise the
+  // spawn/timeout/retry mechanics directly.
+  if (process.env.WDF_ALLOW_SPAWN !== '1') {
+    throw new Error(
+      'dispatchStoryAgent is disabled by default — wdf-method CLI must not spawn agents. ' +
+      'Use pipeline-runner.ts to emit a dispatch manifest, or set WDF_ALLOW_SPAWN=1 for tests.',
+    );
+  }
+
   // Defensive identifier validation — guards against `..` traversal in
   // story IDs that would otherwise be embedded in file paths.
   assertSafeIdentifier(story.story_id, 'story.story_id');
@@ -257,6 +703,18 @@ export async function dispatchStoryAgent(
   let attempt = 0;
   let lastSyntheticError: string | undefined;
   const startTime = Date.now();
+
+  // Start heartbeat so the orchestrator knows this agent is alive.
+  const agentId = `${story.story_id}-${options.track}`;
+  const heartbeat = new HeartbeatEmitter({
+    agent_id: agentId,
+    story_id: story.story_id,
+    track: options.track,
+  });
+  heartbeat.start();
+
+  const projectHash = computeProjectHash(options.projectRoot);
+  const checkpointWriter = new CheckpointWriter(projectHash);
 
   // Clean any stale result file from a prior aborted run so a missing file
   // unambiguously means "agent did not produce one".
@@ -295,14 +753,53 @@ export async function dispatchStoryAgent(
 
     if (outcome.kind === 'result') {
       // Result file present — trust it (validated by readResult).
-      return { ...outcome.result, duration_ms: Date.now() - startTime };
+      const finalResult = { ...outcome.result, duration_ms: Date.now() - startTime };
+
+      // Write checkpoint for downstream agents
+      checkpointWriter.write({
+        story_id: story.story_id,
+        status: finalResult.status === 'success' ? 'CODE_ACCEPTED' : 'FAILED',
+        timestamp: new Date().toISOString(),
+        track: options.track,
+        files_changed: finalResult.files_changed,
+        tests_passed: finalResult.tests_passed,
+        tests_total: finalResult.tests_total,
+        summary: finalResult.summary,
+      });
+
+      // Signal dependency readiness on success
+      if (finalResult.status === 'success') {
+        checkpointWriter.signalReady(story.story_id, finalResult.files_changed);
+      } else {
+        checkpointWriter.signalFailed(
+          story.story_id,
+          finalResult.error ?? finalResult.summary,
+        );
+      }
+
+      heartbeat.stop();
+      cleanupAgent(agentId);
+      return finalResult;
     }
 
     if (outcome.kind === 'timeout') {
       // Salvage attempt — the agent may have written the file just before
       // we killed it. If so, return that; otherwise emit a synthetic timeout.
       const salvaged = trySalvage(options.worktreePath);
+      heartbeat.stop();
+      cleanupAgent(agentId);
       if (salvaged) {
+        checkpointWriter.write({
+          story_id: story.story_id,
+          status: salvaged.status === 'success' ? 'CODE_ACCEPTED' : 'TIMEOUT',
+          timestamp: new Date().toISOString(),
+          track: options.track,
+          files_changed: salvaged.files_changed,
+          tests_passed: salvaged.tests_passed,
+          tests_total: salvaged.tests_total,
+          summary: salvaged.summary,
+        });
+        checkpointWriter.signalFailed(story.story_id, 'agent timeout');
         return { ...salvaged, duration_ms: Date.now() - startTime };
       }
       return syntheticResult(
@@ -320,10 +817,14 @@ export async function dispatchStoryAgent(
     // If a partial file was somehow written even on a non-zero exit, honour it.
     const salvaged = trySalvage(options.worktreePath);
     if (salvaged) {
+      heartbeat.stop();
+      cleanupAgent(agentId);
       return { ...salvaged, duration_ms: Date.now() - startTime };
     }
 
     if (attempt >= maxAttempts) {
+      heartbeat.stop();
+      cleanupAgent(agentId);
       return syntheticResult(
         story.story_id,
         'failed',
@@ -336,6 +837,8 @@ export async function dispatchStoryAgent(
   }
 
   // Should be unreachable.
+  heartbeat.stop();
+  cleanupAgent(agentId);
   return syntheticResult(
     story.story_id,
     'failed',
@@ -355,6 +858,10 @@ type RunOutcome =
  * Run a single agent attempt and resolve to a structured outcome. This
  * function never throws — all error paths funnel into `RunOutcome` so the
  * retry loop is straightforward.
+ *
+ * Spawn-based execution. Disabled in production via the WDF_ALLOW_SPAWN gate
+ * in `dispatchStoryAgent` above — the canonical flow is manifest-based. This
+ * helper is retained so tests can exercise the spawn/timeout/retry mechanics.
  */
 function runAgentOnce(
   story: StoryEntry,
@@ -384,20 +891,23 @@ function runAgentOnce(
 
     let child: ReturnType<typeof spawn>;
     try {
+      // 使用检测到的 Agent Provider 构建参数
+      // 支持不同 AI 编辑器环境：Claude Code, Cursor, Cline, VSCode 等
+      const provider = currentAgentProvider;
+      const args = provider.buildArgs(prompt, options.worktreePath);
+      const providerEnv = provider.getEnvOverrides();
+
       child = spawnFn(
-        'claude',
-        [
-          '--print',
-          '--output-format',
-          'json',
-          '--allowedTools',
-          'Read,Write,Edit,Bash(ls),Bash(git *),Bash(npm *),Bash(npx *)',
-          '-p',
-          prompt,
-        ],
+        provider.command,
+        args,
         {
           cwd: options.worktreePath,
-          env: { ...process.env, CI: 'true' },
+          env: {
+            ...process.env,
+            ...providerEnv,
+            WDF_AGENT: story.story_id,          // 标记子 Agent 便于审计
+            WDF_PROVIDER: provider.tool,        // 记录使用的 provider
+          },
           stdio: ['pipe', 'pipe', 'pipe'],
         },
       );
@@ -405,7 +915,7 @@ function runAgentOnce(
       clearTimeout(timer);
       resolveOutcome({
         kind: 'spawn_error',
-        error: `failed to spawn claude: ${err?.message ?? String(err)}`,
+        error: `failed to spawn agent (${currentAgentProvider.tool}): ${err?.message ?? String(err)}`,
       });
       return;
     }
@@ -430,7 +940,7 @@ function runAgentOnce(
       clearTimeout(timer);
       resolveOutcome({
         kind: 'spawn_error',
-        error: `claude process error: ${err.message}`,
+        error: `agent process error (${currentAgentProvider.tool}): ${err.message}`,
       });
     });
 
@@ -551,6 +1061,12 @@ export class AgentDispatcher {
 
   /**
    * Dispatch multiple story agents in parallel, respecting the concurrency limit.
+   *
+   * @deprecated CLI must NOT spawn agents — the loop authority belongs to the
+   * Claude session. Use {@link buildDispatchManifest} instead: it emits a JSON
+   * file the Claude session reads, then spawns each story via its own Agent
+   * tool in fresh-chat isolation (BMAD-style). Kept for legacy callers and
+   * tests until they migrate.
    */
   async dispatchParallel(
     stories: StoryEntry[],
@@ -581,6 +1097,134 @@ export class AgentDispatcher {
 
     return results;
   }
+
+  /**
+   * Build a dispatch manifest for the Claude session.
+   *
+   * Instead of spawning agents itself (which would put the loop authority in
+   * the CLI — forbidden by the architecture), the orchestrator writes a JSON
+   * file listing every story ready to dispatch along with the prompt the
+   * Claude session should pass to its Agent tool. Each story gets its own
+   * prompt file under `.dispatch/<phase>/<story-id>.prompt.md` so it can be
+   * dispatched in a fresh chat (BMAD-style fresh-context isolation).
+   *
+   * The Claude session then enumerates the manifest and dispatches each one
+   * via its native Agent tool. Story implementation parallelism is bounded
+   * by the manifest's `max_concurrent` field; concrete enforcement of that
+   * bound is the Claude session's responsibility.
+   *
+   * Returns the manifest object plus the path it was written to so callers
+   * can echo it to stdout.
+   */
+  buildDispatchManifest(opts: {
+    stories: StoryEntry[];
+    projectRoot: string;
+    phase: string; // e.g. "phase_4_4" or "phase_4_10"
+    maxConcurrent: number;
+  }): { manifest: DispatchManifest; manifestPath: string } {
+    const { mkdirSync, writeFileSync } = require('fs') as typeof import('fs');
+    const { join } = require('path') as typeof import('path');
+
+    const dispatchDir = join(opts.projectRoot, '_wdf_output', '.dispatch', opts.phase);
+    mkdirSync(dispatchDir, { recursive: true });
+
+    const entries: DispatchEntry[] = opts.stories.map(story => {
+      const promptFile = join(dispatchDir, `${story.story_id}.prompt.md`);
+      const prompt = renderStoryPrompt(story);
+      writeFileSync(promptFile, prompt, 'utf-8');
+      return {
+        story_id: story.story_id,
+        title: story.title ?? story.story_id,
+        track: story.track,
+        scope_write: story.scope_write,
+        depends_on: (story.depends_on ?? []).map(d => d.story_id),
+        prompt_file: promptFile,
+        acceptance_check: story.acceptance_check ?? [],
+      };
+    });
+
+    const manifest: DispatchManifest = {
+      phase: opts.phase,
+      generated_at: new Date().toISOString(),
+      max_concurrent: opts.maxConcurrent,
+      protocol: 'fresh-chat-per-story',
+      instructions: [
+        'For each entry in `stories`, spawn a sub-agent (Claude Agent tool with',
+        'subagent_type=general-purpose, or equivalent) using the contents of',
+        'prompt_file as the agent task. Respect depends_on ordering and run no',
+        'more than max_concurrent simultaneously. After each story completes,',
+        'call `wdf start` again so the CLI can re-sync state.',
+      ].join(' '),
+      stories: entries,
+    };
+
+    const manifestPath = join(dispatchDir, 'manifest.json');
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+    return { manifest, manifestPath };
+  }
+}
+
+/**
+ * Single story entry inside a dispatch manifest.
+ */
+export interface DispatchEntry {
+  story_id: string;
+  title: string;
+  track: Track;
+  scope_write: string[];
+  depends_on: string[];
+  prompt_file: string;
+  acceptance_check: string[];
+}
+
+/**
+ * JSON contract written to `_wdf_output/.dispatch/<phase>/manifest.json`.
+ * Consumed by the Claude session, which fans out the work via its own
+ * Agent tool. Never read back by the CLI.
+ */
+export interface DispatchManifest {
+  phase: string;
+  generated_at: string;
+  max_concurrent: number;
+  protocol: 'fresh-chat-per-story';
+  instructions: string;
+  stories: DispatchEntry[];
+}
+
+/**
+ * Render a fresh-chat-ready prompt for a single story. Pure function so it
+ * can be reused by the manifest builder and any future test fixtures.
+ */
+function renderStoryPrompt(story: StoryEntry): string {
+  const lines = [
+    `# Story Implementation Task — ${story.story_id}`,
+    '',
+    `**Title:** ${story.title ?? story.story_id}`,
+    `**Track:** ${story.track}`,
+    `**Scope (write):** ${story.scope_write.join(', ')}`,
+    '',
+    '## What to do',
+    '1. Read the architecture and API contract under `_wdf_output/`.',
+    '2. Implement the code within the scope paths listed above.',
+    '3. Write tests for every acceptance criterion.',
+    '4. Run the acceptance checks and ensure they pass.',
+    '5. Commit with message `' + story.story_id + ': <title> — IMPLEMENTED`.',
+    '',
+  ];
+  if (story.acceptance_check?.length) {
+    lines.push('## Acceptance checks');
+    for (const c of story.acceptance_check) lines.push(`- ${c}`);
+    lines.push('');
+  }
+  if (story.depends_on?.length) {
+    lines.push('## Dependencies (must already be complete)');
+    for (const d of story.depends_on) lines.push(`- ${d.story_id}`);
+    lines.push('');
+  }
+  lines.push('## When done');
+  lines.push('Return a short summary plus the list of files you changed.');
+  lines.push('The orchestrator will detect your code via `wdf start` on the next run.');
+  return lines.join('\n');
 }
 
 // Re-export schema validator so tests and other call sites can validate

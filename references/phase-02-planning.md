@@ -51,7 +51,7 @@ gate_card:
     - id: "G2-01"
       description: "Phase 1 is LOCKED or SKIPPED"
       type: "dependency_status"
-      source: "{sprint_tracking}"
+      source: "{status_global_file}"
       field: "phases.phase_1.status"
       operator: "in"
       expected: ["LOCKED", "SKIPPED"]

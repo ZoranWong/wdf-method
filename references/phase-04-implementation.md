@@ -478,7 +478,7 @@ gate_card:
     - id: "G4-01"
       description: "Phase 3 (Solutioning) is LOCKED"
       type: "dependency_status"
-      source: "{sprint_tracking}"
+      source: "{status_global_file}"
       field: "phases.phase_3.status"
       operator: "eq"
       expected: "LOCKED"
@@ -510,7 +510,7 @@ gate_card:
     - id: "G4-05"
       description: "Development order is frozen"
       type: "dependency_status"
-      source: "{sprint_tracking}"
+      source: "{status_global_file}"
       field: "global_state.development_order_frozen_at"
       operator: "neq"
       expected: null

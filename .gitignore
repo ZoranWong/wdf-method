@@ -27,3 +27,10 @@ coverage/
 # Claude
 .claude-plugin/
 .worktrees/
+
+# Temp / atomic test residues
+*.tmp
+*.tmp.*
+wdf-atomic-test-*/
+wdf-doctor-test-*/
+.tmp_*
