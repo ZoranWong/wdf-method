@@ -686,6 +686,10 @@ async function runTraceCommand(args: string[], projectRoot: string) {
     console.error('  wdf trace REQ-7');
     console.error('  wdf trace STORY-001 --format=mermaid');
     console.error('  wdf trace API:GET /todos --rebuild');
+    console.error('  wdf trace SPEC:auth:REQ-001');
+    console.error('');
+    console.error('Valid IDs: REQ-N, STORY-NNN, EPIC-N, API:METHOD /path,');
+    console.error('            DB:table, JTBD-N, COMMIT:<sha>, SPEC:<domain>:REQ-N');
     process.exit(id === '--help' || id === '-h' ? 0 : 1);
   }
 

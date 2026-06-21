@@ -19,6 +19,7 @@ import { join, basename, extname, relative } from 'path';
 import { createHash } from 'crypto';
 import { execSync } from 'child_process';
 import { scanTestsForAcBindings, type TestBinding } from './ac-test-binding.js';
+import { loadSpecDocs } from './spec-sync.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -30,7 +31,8 @@ export type NodeKind =
   | 'API'     // API endpoint (path + method)
   | 'DB'      // Database table
   | 'TEST'    // Test case (file:line, AC-bound)
-  | 'COMMIT'; // Git commit
+  | 'COMMIT'  // Git commit
+  | 'SPEC';   // CHG-2026-015 S5: spec requirement (specs/<domain>/spec.md)
 
 export type EdgeKind =
   | 'derives_from'   // STORY → REQ, REQ → JTBD
@@ -142,6 +144,7 @@ export function buildTraceabilityGraph(opts: BuildOptions): TraceabilityGraph {
   parseStories(b, outRoot);
   parseApiSpec(b, outRoot);
   parseDbSchema(b, outRoot);
+  parseSpecs(b, outRoot);
   parseJtbd(b, outRoot);
   parseTests(b, testRoots, root);
   parseCommits(b, root);
@@ -157,6 +160,18 @@ function collectSourceFiles(outRoot: string, testRoots: string[]): string[] {
   candidate(join(outRoot, 'epics.md'));
   candidate(join(outRoot, 'api-spec.yaml'));
   candidate(join(outRoot, 'db-schema.md'));
+
+  // CHG-2026-015 S5: specs/ files contribute to the graph; include them in
+  // the source hash so spec changes invalidate the cache.
+  const specsDir = join(outRoot, 'specs');
+  if (existsSync(specsDir)) {
+    let specEntries: string[] = [];
+    try { specEntries = readdirSync(specsDir); } catch { specEntries = []; }
+    for (const entry of specEntries) {
+      const specPath = join(specsDir, entry, 'spec.md');
+      if (existsSync(specPath)) files.push(specPath);
+    }
+  }
 
   const dirs = ['stories', 'planning'];
   for (const d of dirs) {
@@ -359,6 +374,56 @@ export function parseDbSchema(b: GraphBuilder, outRoot: string): void {
     if (m) {
       const id = `DB:${m[1].toLowerCase()}`;
       b.addNode({ id, kind: 'DB', title: m[1], source: 'db-schema.md', line: i + 1 });
+    }
+  }
+}
+
+/**
+ * CHG-2026-015 S5 — Parse specs/<domain>/spec.md into SPEC nodes.
+ *
+ * For each requirement with an ID, emits a SPEC:<domain>:<REQ-ID> node and links it to:
+ *   - REQ (PRD) via derives_from — only if a matching PRD REQ exists
+ *   - API:<METHOD> <path> via implements — for each declared endpoint
+ *   - DB:<name> via implements — for each declared entity (lowercased to match parseDbSchema)
+ *
+ * Endpoints and entities reuse existing API/DB node IDs rather than creating duplicates.
+ * Stubs are added when the corresponding API/DB node doesn't yet exist (e.g. specs/ is
+ * source of truth but api-spec.yaml/db-schema.md haven't been regenerated yet).
+ */
+export function parseSpecs(b: GraphBuilder, outRoot: string): void {
+  const specsDir = join(outRoot, 'specs');
+  if (!existsSync(specsDir)) return;
+  const docs = loadSpecDocs(specsDir);
+  for (const doc of docs) {
+    const relSource = `specs/${doc.domain}/spec.md`;
+    for (const req of doc.requirements) {
+      if (!req.id) continue;
+      const specNodeId = `SPEC:${doc.domain}:${req.id}`;
+      b.addNode({
+        id: specNodeId,
+        kind: 'SPEC',
+        title: req.name,
+        source: relSource,
+      });
+
+      // SPEC -derives_from-> REQ (matching PRD REQ)
+      if (b.hasNode(req.id)) {
+        b.addEdge({ from: specNodeId, to: req.id, kind: 'derives_from', source: relSource });
+      }
+
+      // SPEC -implements-> API (per endpoint)
+      for (const ep of req.endpoints ?? []) {
+        const apiId = `API:${ep.method} ${ep.path}`;
+        b.addNode({ id: apiId, kind: 'API', title: apiId });
+        b.addEdge({ from: specNodeId, to: apiId, kind: 'implements', source: relSource });
+      }
+
+      // SPEC -implements-> DB (per entity)
+      for (const ent of req.entities ?? []) {
+        const dbId = `DB:${ent.name.toLowerCase()}`;
+        b.addNode({ id: dbId, kind: 'DB', title: ent.name });
+        b.addEdge({ from: specNodeId, to: dbId, kind: 'implements', source: relSource });
+      }
     }
   }
 }

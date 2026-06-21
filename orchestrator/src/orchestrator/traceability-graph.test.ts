@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -8,6 +8,7 @@ import {
   loadGraph,
   indexGraph,
   downstream,
+  upstream,
   type TraceabilityGraph,
   GraphBuilder,
 } from './traceability-graph.js';
@@ -204,6 +205,182 @@ describe('buildTraceabilityGraph', () => {
     const node = g.nodes.find(n => n.id === 'X')!;
     expect(node.title).toBe('first');
     expect((node.meta as any).extra).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────
+// CHG-2026-015 S5 — parseSpecs (SPEC nodes)
+// ─────────────────────────────────────────
+
+/**
+ * Scaffold specs/ with two domains. auth/REQ-001 has matching PRD REQ-1,
+ * exercises derives_from + implements edges. todos/REQ-001 has no PRD
+ * counterpart (no derives_from), only implements edges.
+ */
+function scaffoldSpecs(root: string): void {
+  const specsDir = join(root, '_wdf_output', 'specs');
+  mkdirSync(join(specsDir, 'auth'), { recursive: true });
+  mkdirSync(join(specsDir, 'todos'), { recursive: true });
+
+  writeFileSync(join(specsDir, 'auth', 'spec.md'), [
+    '---',
+    'artifact_type: spec',
+    'domain: auth',
+    'version: 1',
+    '---',
+    '',
+    '# Spec — Auth',
+    '',
+    '## Requirement: User Registration',
+    '- id: REQ-001',
+    '',
+    'GIVEN a visitor',
+    'WHEN they register',
+    'THEN the system MUST create the user',
+    '',
+    '### Endpoints',
+    '- POST /auth/register',
+    "  - operationId: registerUser",
+    '',
+    '### Entities',
+    '- User',
+    '  - id: UUID pk',
+    '  - email: TEXT not_null',
+    '',
+    '## Requirement: User Login',
+    '- id: REQ-002',
+    '',
+    'GIVEN a user',
+    'WHEN they log in',
+    'THEN the system MUST issue a session',
+    '',
+    '### Endpoints',
+    '- POST /auth/login',
+    '  - operationId: loginUser',
+    '',
+  ].join('\n'));
+
+  writeFileSync(join(specsDir, 'todos', 'spec.md'), [
+    '---',
+    'artifact_type: spec',
+    'domain: todos',
+    'version: 1',
+    '---',
+    '',
+    '# Spec — Todos',
+    '',
+    '## Requirement: Todo Creation',
+    '- id: REQ-001',
+    '',
+    'GIVEN an authenticated user',
+    'WHEN they create a todo',
+    'THEN the system MUST persist it',
+    '',
+    '### Endpoints',
+    '- POST /todos',
+    '  - operationId: createTodo',
+    '',
+    '### Entities',
+    '- Todo',
+    '  - id: UUID pk',
+    '',
+  ].join('\n'));
+}
+
+describe('CHG-2026-015 S5 — parseSpecs', () => {
+  let root: string;
+  beforeEach(() => {
+    root = setupRoot();
+    scaffold(root);
+    scaffoldSpecs(root);
+  });
+
+  it('emits SPEC node per requirement per domain', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const specNodes = g.nodes.filter(n => n.kind === 'SPEC');
+    expect(specNodes.length).toBe(3); // auth REQ-001, auth REQ-002, todos REQ-001
+    const ids = specNodes.map(n => n.id).sort();
+    expect(ids).toEqual(['SPEC:auth:REQ-001', 'SPEC:auth:REQ-002', 'SPEC:todos:REQ-001']);
+  });
+
+  it('sets SPEC node title from requirement name and source from spec.md path', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const node = g.nodes.find(n => n.id === 'SPEC:auth:REQ-001')!;
+    expect(node.title).toBe('User Registration');
+    expect(node.source).toBe('specs/auth/spec.md');
+  });
+
+  it('emits SPEC -derives_from-> REQ edge when PRD has matching REQ', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    // PRD scaffold has REQ-1..5; spec uses REQ-001 format. The match requires
+    // the IDs to be string-equal. The PRD IDs are "REQ-1" not "REQ-001", so
+    // this edge will NOT exist — that's the correct behavior. Verify the
+    // absence to confirm the rule fires correctly.
+    const edge = g.edges.find(e => e.from === 'SPEC:auth:REQ-001' && e.kind === 'derives_from');
+    expect(edge).toBeUndefined();
+  });
+
+  it('emits SPEC -derives_from-> REQ edge when IDs match exactly', () => {
+    // Re-scaffold PRD with REQ-001 (zero-padded) so IDs match
+    writeFileSync(join(root, '_wdf_output', 'prd.md'), [
+      '# PRD',
+      '## REQ-001: User can sign up',
+    ].join('\n'));
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const edge = g.edges.find(
+      e => e.from === 'SPEC:auth:REQ-001' && e.to === 'REQ-001' && e.kind === 'derives_from',
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it('emits SPEC -implements-> API edge per endpoint, reusing API node ID', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const edge = g.edges.find(
+      e => e.from === 'SPEC:auth:REQ-001' && e.to === 'API:POST /auth/register' && e.kind === 'implements',
+    );
+    expect(edge).toBeDefined();
+    // API node exists (either from parseApiSpec or as a stub from parseSpecs)
+    const apiNode = g.nodes.find(n => n.id === 'API:POST /auth/register');
+    expect(apiNode).toBeDefined();
+  });
+
+  it('emits SPEC -implements-> DB edge per entity, lowercased to match parseDbSchema', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const edge = g.edges.find(
+      e => e.from === 'SPEC:auth:REQ-001' && e.to === 'DB:user' && e.kind === 'implements',
+    );
+    expect(edge).toBeDefined();
+    // DB node is lowercased to match parseDbSchema's convention
+    const dbNode = g.nodes.find(n => n.id === 'DB:user');
+    expect(dbNode).toBeDefined();
+    expect(dbNode!.title).toBe('User');
+  });
+
+  it('includes specs/ files in source_hash (cache invalidates on spec change)', () => {
+    const g1 = buildTraceabilityGraph({ projectRoot: root });
+    // Append a trailing newline to a spec.md file (semantically same graph, but bytes differ)
+    const specPath = join(root, '_wdf_output', 'specs', 'auth', 'spec.md');
+    writeFileSync(specPath, readFileSync(specPath, 'utf8') + '\n', 'utf8');
+    const g2 = buildTraceabilityGraph({ projectRoot: root });
+    expect(g1.source_hash).not.toBe(g2.source_hash);
+  });
+
+  it('upstream from SPEC walks out to API/DB nodes (SPEC defines them)', () => {
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const index = indexGraph(g);
+    // upstream walks outgoing derives_from/belongs_to/implements edges.
+    // SPEC -implements-> API and SPEC -implements-> DB are outgoing edges.
+    const ups = upstream(index, ['SPEC:auth:REQ-001']);
+    expect(ups.has('API:POST /auth/register')).toBe(true);
+    expect(ups.has('DB:user')).toBe(true);
+  });
+
+  it('no SPEC nodes when specs/ absent (graceful degradation)', () => {
+    const fresh = setupRoot();
+    scaffold(fresh); // no specs/
+    const g = buildTraceabilityGraph({ projectRoot: fresh });
+    const specNodes = g.nodes.filter(n => n.kind === 'SPEC');
+    expect(specNodes).toHaveLength(0);
   });
 });
 
