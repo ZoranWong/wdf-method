@@ -1,0 +1,41 @@
+change_id: CHG-2026-017
+summary: "Demo semantic delta v2 — add Password Reset requirement to auth domain"
+
+base_version: "3.9.0"
+target_version: "3.9.1"
+schema_version: 2
+
+operations:
+  - op: ADDED
+    domain: auth
+    requirement:
+      id: REQ-014
+      name: Password Reset
+      priority: P1
+      description: A user who forgot their password can reset it via a time-limited token.
+      scenarios:
+        - name: Reset link issuance
+          given:
+            - a user who has forgotten their password
+          when:
+            - they request a reset link
+          then:
+            - the system MUST email a time-limited reset token to the registered address
+
+        - name: Successful reset
+          given:
+            - a user holding an unexpired reset token
+          when:
+            - they submit a new password of length >= 12
+          then:
+            - the system MUST invalidate the token
+            - the system MUST update the password hash
+
+        - name: Expired token rejected
+          given:
+            - a user holding an expired reset token
+          when:
+            - they submit a new password
+          then:
+            - the system MUST reject the request with message "token expired"
+    rationale: "Reference v2 delta proving the schema_version: 2 path end-to-end."

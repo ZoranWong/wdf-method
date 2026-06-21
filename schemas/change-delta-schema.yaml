@@ -1,0 +1,348 @@
+# ─────────────────────────────────────────
+# Change Delta Schema — wdf-method V3.9
+# Defines the structured patch format used in changes/<CHG-id>/delta.yaml.
+# A delta describes field-level modifications that the cr-applier can
+# automatically apply to target files (specs, configs, schemas).
+#
+# Design references:
+#   - RFC 6902 (json-patch) — operation semantics
+#   - OpenSpec proposals/<change>/specs/* delta isolation
+#   - CHG-2026-015 S2 (v2): semantic ADDED/MODIFIED/REMOVED ops on specs/
+# ─────────────────────────────────────────
+
+schema: "change-delta"
+version: "2.0.0"
+
+# ─────────────────────────────────────────
+# Top-level fields
+# ─────────────────────────────────────────
+
+change_id:
+  type: "string"
+  description: "Must match the parent directory name (e.g. CHG-2026-002)"
+  pattern: "^CHG-\\d{4}-\\d{3}$"
+  required: true
+
+summary:
+  type: "string"
+  description: "One-line description of what this delta achieves"
+  required: true
+
+base_version:
+  type: "string"
+  description: "Version of wdf-method this delta was authored against"
+  required: true
+  example: "3.6.0"
+
+target_version:
+  type: "string"
+  description: "Version after applying this delta"
+  required: true
+  example: "3.7.0"
+
+schema_version:
+  type: "integer"
+  description: |
+    Delta grammar version.
+      1 (default) — mechanical ops on raw file regions (set/modify/append/...).
+      2           — semantic ops on _wdf_output/specs/<domain>/spec.md only
+                    (ADDED/MODIFIED/REMOVED at the requirement level).
+    A single delta MUST NOT mix v1 and v2 ops; split into two CRs if both
+    are needed. Mixed-version deltas are rejected by validateDelta.
+  enum: [1, 2]
+  required: false
+  default: 1
+
+operations:
+  type: "list"
+  description: "Ordered list of patch operations. Applied transactionally."
+  required: true
+  items: "$operation"
+
+# ─────────────────────────────────────────
+# Operation: a single patch action
+# ─────────────────────────────────────────
+
+operation:
+  op:
+    type: "string"
+    description: "Operation type"
+    enum:
+      - "set"          # set a key in toml/yaml; create if missing
+      - "remove"       # remove a key in toml/yaml
+      - "modify"       # replace exact `before` text with `after` (markdown/text)
+      - "append"       # append `value` to a markdown section / list / array
+      - "create"       # create a new file with `content`
+      - "delete"       # delete a file (must match `expected_hash` if provided)
+
+  target:
+    type: "object"
+    description: "Where to apply the operation"
+    fields:
+      kind:
+        type: "string"
+        description: "Target kind drives path resolution semantics"
+        enum:
+          - "toml_key"      # dotted key path in a .toml file
+          - "yaml_key"      # dotted key path in a .yaml/.yml file
+          - "spec_section"  # Markdown section identified by heading hierarchy
+          - "text_match"    # raw text-region inside any file (uses `before`)
+          - "file"          # entire file (op=create|delete only)
+
+      file:
+        type: "string"
+        description: "Path relative to project root"
+        required: true
+
+      path:
+        type: "string"
+        description: "Dotted key path (toml_key, yaml_key only)"
+        example: "change_request.delta_required"
+
+      section:
+        type: "string"
+        description: "Heading text identifying the section (spec_section only)"
+        example: "## 7. CR 治理"
+
+  value:
+    type: "any"
+    description: "New value for set / append. Type matches target kind."
+    required_when: "op in [set, append]"
+
+  before:
+    type: "string"
+    description: "Exact text to replace (modify op) or remove (text_match)"
+    required_when: "op == modify"
+
+  after:
+    type: "string"
+    description: "Replacement text (modify op)"
+    required_when: "op == modify"
+
+  content:
+    type: "string"
+    description: "File body (create op)"
+    required_when: "op == create"
+
+  expected_hash:
+    type: "string"
+    description: "Optional sha256 of file before patching. Mismatch → fail."
+    required: false
+
+  rationale:
+    type: "string"
+    description: "Optional one-line note explaining this op"
+    required: false
+
+# ─────────────────────────────────────────
+# Path syntax (toml_key / yaml_key)
+# ─────────────────────────────────────────
+# - Dots separate keys: "a.b.c"
+# - Array index in brackets: "items[0].name"
+# - Quoted segments for keys with dots: 'a."b.c".d'
+#
+# Examples:
+#   change_request.delta_required             → top-level table key
+#   acceptance_gates.code_acceptance.coverage → nested
+#   integrations[2].name                      → array element
+
+# ─────────────────────────────────────────
+# Section locator (spec_section)
+# ─────────────────────────────────────────
+# - Format: full heading line including markdown prefix, e.g. "## 7. CR 治理"
+# - Section spans from the heading line to the next heading at same-or-higher level.
+# - Within `modify`, the `before`/`after` text is literal substring match
+#   (anchored anywhere inside the section).
+
+# ─────────────────────────────────────────
+# v2 semantic operations (schema_version: 2)
+# ─────────────────────────────────────────
+# v2 ops declare ADDED/MODIFIED/REMOVED at the *requirement* level on a
+# domain's spec.md (under `_wdf_output/specs/<domain>/spec.md`). The planner
+# parses the current spec, mutates the in-memory SpecDocument, validates via
+# validateSpec(), and re-serializes via formatSpecDoc() (which sorts
+# requirements by id for byte-stable output).
+#
+# v2 ops MUST NOT target non-spec files. Use v1 ops for TOML/YAML/markdown.
+#
+# Cascade regenerate: after archive, if [specs] source_of_truth = true, the
+# applier runs forwardSync to regenerate PRD's `## 2. Functional Requirements`
+# section. With source_of_truth = false, the cascade is skipped with a warning.
+
+v2_operation:
+  op:
+    type: "string"
+    description: "Semantic operation at requirement level"
+    enum:
+      - "ADDED"      # add a new requirement to the domain; fail if id exists
+      - "MODIFIED"   # REPLACES the matching requirement (including scenarios)
+      - "REMOVED"    # delete the requirement by id; fail if missing
+
+  domain:
+    type: "string"
+    description: |
+      Lowercase kebab-case domain identifier. The op targets
+      `_wdf_output/specs/<domain>/spec.md`. Missing file → treated as empty
+      SpecDocument; ADDED will create it via action='create'.
+    pattern: "^[a-z][a-z0-9-]{1,30}$"
+    required: true
+    example: "auth"
+
+  requirement:
+    type: "object"
+    description: "Full requirement object (ADDED, MODIFIED). See schemas/spec-schema.yaml."
+    required_when: "op in [ADDED, MODIFIED]"
+    fields:
+      id:
+        type: "string"
+        pattern: "^REQ-\\d{3,4}$"
+        description: |
+          Stable identifier traceable to PRD. ADDED rejects duplicates.
+          MODIFIED uses this (or requirement_id) to find the target;
+          scenarios are REPLACED wholesale.
+      name:
+        type: "string"
+        pattern: "^[A-Z][A-Za-z0-9 _-]{2,80}$"
+        required: true
+        description: "Human-readable behavior name; MUST be unique within domain."
+      priority:
+        type: "string"
+        enum: ["P0", "P1", "P2"]
+      description:
+        type: "string"
+      scenarios:
+        type: "list"
+        items: "$scenario"
+        required: true
+        min_items: 1
+
+  requirement_id:
+    type: "string"
+    pattern: "^REQ-\\d{3,4}$"
+    description: "Which requirement to delete (REMOVED)."
+    required_when: "op == REMOVED"
+    example: "REQ-014"
+
+  rationale:
+    type: "string"
+    description: "Optional one-line note explaining this op"
+    required: false
+
+# ─────────────────────────────────────────
+# Application semantics
+# ─────────────────────────────────────────
+# 1. Operations are applied IN ORDER.
+# 2. ATOMIC: a single failed op rolls back all earlier ops in the same delta.
+# 3. DRY-RUN: --dry-run prints unified diff per file without writing.
+# 4. PRECONDITIONS:
+#    - For modify: `before` MUST appear exactly once in the target.
+#    - For set/remove (toml/yaml): path must resolve to a leaf or table.
+#    - For create: file MUST NOT already exist.
+#    - For delete: file MUST exist; `expected_hash` checked if provided.
+#    - For v2 ADDED: requirement.id MUST NOT already exist in the domain.
+#    - For v2 MODIFIED: requirement.id (or requirement_id) MUST already exist.
+#    - For v2 REMOVED: requirement_id MUST already exist in the domain.
+# 5. v2 OPS TARGET ONLY `_wdf_output/specs/<domain>/spec.md`. TOML/YAML/markdown
+#    still requires v1 ops.
+# 6. v2 POST-VALIDATION: every touched spec.md passes validateSpec() with
+#    zero errors before any disk write (RFC 2119, no placeholders, etc.).
+
+# ─────────────────────────────────────────
+# Example 1: minimal delta
+# ─────────────────────────────────────────
+
+example_minimal: |
+  change_id: "CHG-2026-100"
+  summary: "Bump default test coverage threshold"
+  base_version: "3.6.0"
+  target_version: "3.7.0"
+  operations:
+    - op: set
+      target:
+        kind: toml_key
+        file: customize.toml
+        path: "acceptance_gates.code_acceptance.coverage"
+      value: 85
+      rationale: "Raise from 80 to 85"
+
+# ─────────────────────────────────────────
+# Example 2: multi-target delta
+# ─────────────────────────────────────────
+
+example_multi: |
+  change_id: "CHG-2026-002"
+  summary: "Introduce Spec Delta governance"
+  base_version: "3.6.0"
+  target_version: "3.7.0"
+  operations:
+    - op: create
+      target:
+        kind: file
+        file: schemas/change-delta-schema.yaml
+      content: |
+        # (full schema body)
+    - op: set
+      target:
+        kind: toml_key
+        file: customize.toml
+        path: "change_request.delta_required"
+      value: true
+    - op: modify
+      target:
+        kind: spec_section
+        file: SPEC.md
+        section: "## 7. Change Request 流程"
+      before: |
+        CR 仅以自然语言描述变更面。
+      after: |
+        CR 必须附带 delta.yaml，描述字段级变更面（详见 schemas/change-delta-schema.yaml）。
+    - op: append
+      target:
+        kind: spec_section
+        file: TRACEABILITY.md
+        section: "## 4. 实现矩阵"
+      value: |
+        | CR Delta 治理 | schemas/change-delta-schema.yaml | orchestrator/src/orchestrator/cr-applier.ts | cr-applier.test.ts |
+
+# ─────────────────────────────────────────
+# Example 3: v2 semantic delta (schema_version: 2)
+# ─────────────────────────────────────────
+
+example_v2: |
+  change_id: "CHG-2026-017"
+  summary: "Add Password Reset requirement to auth domain"
+  base_version: "3.9.0"
+  target_version: "3.9.1"
+  schema_version: 2
+  operations:
+    - op: ADDED
+      domain: auth
+      requirement:
+        id: REQ-014
+        name: Password Reset
+        priority: P1
+        scenarios:
+          - given: ['a user who forgot their password']
+            when: ['they request a reset link']
+            then: ['the system MUST email a time-limited reset token']
+          - given: ['a user holding an unexpired reset token']
+            when: ['they submit a new password of length >= 12']
+            then: ['the system MUST invalidate the token and update the password hash']
+
+# ─────────────────────────────────────────
+# Validation summary (used by linter)
+# ─────────────────────────────────────────
+validation_rules:
+  - "change_id must equal parent directory name"
+  - "operations array must be non-empty"
+  - "target.kind must be a known enum"
+  - "op-specific required fields must be present"
+  - "file paths must be relative (no leading /)"
+  - "no path may escape project root (no '..' traversal)"
+  - "schema_version (if present) must be 1 or 2"
+  - "v2 deltas (schema_version=2) must contain only ADDED/MODIFIED/REMOVED ops"
+  - "v1 deltas must not contain ADDED/MODIFIED/REMOVED ops"
+  - "v2 domain must match ^[a-z][a-z0-9-]{1,30}$"
+  - "v2 ADDED must include a requirement object with non-empty scenarios"
+  - "v2 REMOVED must include a requirement_id matching ^REQ-\\d{3,4}$"
+  - "v2 spec docs must pass validateSpec() (RFC 2119, no placeholders, etc.)"

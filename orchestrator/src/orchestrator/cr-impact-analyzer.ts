@@ -19,6 +19,7 @@
  */
 
 import type { Delta, DeltaOperation } from './cr-applier.js';
+import { isV2Operation } from './cr-applier.js';
 import {
   type TraceabilityGraph,
   type TraceNode,
@@ -30,6 +31,7 @@ import {
   type PhaseStatus,
   validateStateTransition,
 } from './fsm-engine.js';
+import { deriveSemanticFromOp } from './cr-applier.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -40,6 +42,8 @@ export interface ChangeAnchor {
   section?: string;
   /** Optional dotted key path (toml/yaml). */
   path?: string;
+  /** Optional semantic classification (OpenSpec-style). */
+  semantic?: 'added' | 'modified' | 'removed';
 }
 
 export interface ImpactReport {
@@ -54,6 +58,13 @@ export interface ImpactReport {
   unlock_phases: string[];
   /** Anchors that mapped to NO graph node (visible to reviewer). */
   unmapped_anchors: ChangeAnchor[];
+  /** Semantic summary — count of operations by classification. */
+  semantic_summary: {
+    added: number;
+    modified: number;
+    removed: number;
+    unspecified: number;
+  };
 }
 
 // ─── Anchor → seed mapping ──────────────────────────────────────────
@@ -163,14 +174,34 @@ function openApiPathToNodeId(dotted: string): string | null {
 // ─── Delta → anchors ─────────────────────────────────────────────────
 
 export function deltaToAnchors(delta: Delta): ChangeAnchor[] {
-  return delta.operations.map(opToAnchor);
+  // CHG-2026-015 S2: v2 ops contribute domain-level anchors; v1 ops map as before.
+  return delta.operations.map(op => {
+    if (isV2Operation(op)) {
+      const semantic = op.op === 'ADDED' ? 'added'
+        : op.op === 'REMOVED' ? 'removed' : 'modified';
+      const section = op.op === 'REMOVED'
+        ? op.requirement_id
+        : op.requirement?.id ?? op.requirement?.name;
+      return {
+        file: `_wdf_output/specs/${op.domain}/spec.md`,
+        section,
+        path: undefined,
+        semantic,
+      } as ChangeAnchor;
+    }
+    return opToAnchor(op);
+  });
 }
 
 function opToAnchor(op: DeltaOperation): ChangeAnchor {
+  // Carry through explicit semantic classification if the CR author set it;
+  // otherwise infer from the op so legacy CRs still get ADDED/MODIFIED/REMOVED
+  // bucketing in impact reports.
   return {
     file: op.target.file,
     section: op.target.section,
     path: op.target.path,
+    semantic: op.semantic ?? deriveSemanticFromOp(op.op),
   };
 }
 
@@ -212,6 +243,15 @@ export function analyzeImpact(
   }
   const unlock = phasesForKinds(Object.keys(byKind));
 
+  const semantic_summary = { added: 0, modified: 0, removed: 0, unspecified: 0 };
+  for (const a of anchors) {
+    const s = a.semantic;
+    if (s === 'added') semantic_summary.added++;
+    else if (s === 'modified') semantic_summary.modified++;
+    else if (s === 'removed') semantic_summary.removed++;
+    else semantic_summary.unspecified++;
+  }
+
   return {
     change_id: changeId,
     seeds: Array.from(seeds).sort(),
@@ -219,6 +259,7 @@ export function analyzeImpact(
     by_kind: byKind,
     unlock_phases: unlock,
     unmapped_anchors: unmapped,
+    semantic_summary,
   };
 }
 
@@ -236,6 +277,17 @@ export function formatImpactReport(r: ImpactReport): string {
   lines.push(`  Seeds:             ${r.seeds.length}`);
   lines.push(`  Affected nodes:    ${r.affected_ids.length}`);
   lines.push(`  Unlock phases:     ${r.unlock_phases.join(', ') || '(none)'}`);
+  // Semantic summary (OpenSpec-style ADDED/MODIFIED/REMOVED classification).
+  const s = r.semantic_summary;
+  const totalOps = s.added + s.modified + s.removed + s.unspecified;
+  if (totalOps > 0) {
+    lines.push('');
+    lines.push('  Semantic classification:');
+    lines.push(`    ➕ ADDED:      ${s.added}`);
+    lines.push(`    ✏️  MODIFIED:   ${s.modified}`);
+    lines.push(`    ❌ REMOVED:    ${s.removed}`);
+    if (s.unspecified > 0) lines.push(`    ⚠  UNSPECIFIED: ${s.unspecified}`);
+  }
   lines.push('');
   for (const kind of Object.keys(r.by_kind).sort()) {
     const ns = r.by_kind[kind];

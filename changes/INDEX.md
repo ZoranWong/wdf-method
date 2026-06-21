@@ -1,6 +1,6 @@
 # Change Requests Index
 
-**最后更新**: 2026-06-21 (CHG-016 R3 入口一致性修复 IMPLEMENTED)
+**最后更新**: 2026-06-21 (CHG-017 semantic delta v2 demo PROPOSED)
 
 本目录托管所有 wdf-method 的变更提案（Change Request, CR），遵循 `schemas/change-request-schema.yaml` 与 `.template/proposal.md` 模板。
 
@@ -52,6 +52,7 @@
 |-------|------|--------|----------|------|--------|----------|
 | [CHG-2026-015](CHG-2026-015-specs-source-of-truth/proposal.md) | specs/ Source of Truth + Semantic Delta Archive | **P0** | 3.8.1→3.9.0 | 📝 PROPOSED | AI | R3-01 (S1-S6) |
 | [CHG-2026-016](CHG-2026-016-r3-consistency-bugfix/proposal.md) | R3 入口一致性修复（12 bugs + 文档漂移） | **P0** | 3.8.1 | ✅ IMPLEMENTED | AI | R3-00 (CHG-015 前置) |
+| [CHG-2026-017](CHG-2026-017-semantic-delta-demo/proposal.md) | Semantic Delta v2 Demo (CHG-015 S2 reference) | P1 | 3.9.1 | 📝 PROPOSED | AI | R3-02 (CHG-015 S2) |
 
 ## 状态标识
 
@@ -83,6 +84,7 @@ R3 (Spec 范式升级):
   CHG-015 (specs/source-of-truth)
     ├ S1 (specs dir + sync)       → v3.8.1
     ├ S2 (semantic delta v2)      → v3.8.2  [deprecates CHG-002 v1]
+    │    └── CHG-017 (v2 demo) 📝  ← S2 reference delta
     ├ S3 (archive cascade)        → v3.8.3  [upgrades CHG-014]
     ├ S4 (brownfield init)        → v3.8.3
     ├ S5 (traceability upgrade)   → v3.8.1
