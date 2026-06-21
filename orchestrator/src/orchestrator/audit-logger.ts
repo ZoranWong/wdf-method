@@ -25,7 +25,18 @@ export type AuditEventType =
   | 'recovery_run'
   | 'agent_dispatch_start'
   | 'agent_dispatch_complete'
-  | 'config_change';
+  | 'config_change'
+  // Party Mode events (party-engine.ts). These flow through the same audit
+  // log as orchestration events; the union keeps appendAudit() type-safe.
+  | 'party_created'
+  | 'party_started'
+  | 'party_paused'
+  | 'party_round_completed'
+  | 'party_crosstalk_completed'
+  | 'party_firstprinciples_completed'
+  | 'party_convergence_resolved'
+  | 'party_expert_invited'
+  | 'party_completed';
 
 export interface AuditEntry {
   timestamp: string;       // ISO 8601 UTC
@@ -35,6 +46,24 @@ export interface AuditEntry {
   status: 'pass' | 'fail' | 'info';
   message: string;
   details?: Record<string, any>;
+  // ── Party Mode fields (party-engine.ts writes these directly so they
+  // round-trip through the JSONL audit log without nesting under `details`).
+  party_id?: string;
+  topic?: string;
+  phase?: string;
+  agent_count?: number;
+  round_number?: number;
+  comment_count?: number;
+  analysis_count?: number;
+  point_id?: string;
+  resolved_by?: string;
+  reason?: string;
+  expert_id?: string;
+  expert_type?: string;
+  output_path?: string;
+  round_count?: number;
+  convergence_points?: number;
+  first_principles?: number;
 }
 
 const AUDIT_DIR_REL = join('_wdf_output', 'audit');

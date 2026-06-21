@@ -2,8 +2,9 @@ import { PhaseOrchestrator } from './orchestrator.js';
 import { SprintStatusValidator } from './state-validator.js';
 import { SprintStatusManager } from './sprint-status.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { resolve, join } from 'path';
-import { loadConfig, getSprintTrackingPath, getStatusDir, getSignalDir } from './config.js';
+import { resolve, join, dirname, relative as pathRelative } from 'path';
+import { execSync } from 'child_process';
+import { loadConfig, getSprintTrackingPath, getStatusDir, getSignalDir, getOutputDir } from './config.js';
 import { SpecLinter } from './linter/linter.js';
 import { BUILTIN_RULES } from './linter/rules/index.js';
 import { preCheckCommand, formatPreCheckResult } from './pre-check.js';
@@ -15,7 +16,7 @@ import { runDoctor, formatDoctorReport } from './doctor.js';
 import { applyDelta, summarizePlan, unifiedDiff, loadDelta, planApply, archiveAndRewrite, resolveCrDir } from './cr-applier.js';
 import { migrateDelta, formatMigrateResult } from './cr-migrate.js';
 import { verifyCrConsistency, formatReport as formatCrVerifyReport } from './cr-verify.js';
-import { renameSync, readdirSync, statSync } from 'fs';
+import { renameSync, readdirSync, statSync, rmSync } from 'fs';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -62,6 +63,33 @@ async function main() {
   // Trace command uses cwd as project root (the ID is args[1])
   if (command === 'trace') {
     await runTraceCommand(args, process.cwd());
+    return;
+  }
+
+  // Converge command runs brownfield gap analysis; works on cwd as project root
+  if (command === 'converge') {
+    await runConvergeCommand(args, process.cwd());
+    return;
+  }
+
+  // Permissions command — manages dispatch-permission injection into the host
+  // .claude/settings.local.json so sub-agents run without per-step prompts.
+  if (command === 'permissions') {
+    await runPermissionsCommand(args, process.cwd());
+    return;
+  }
+
+  // Loop command — automatic dispatch protocol for Phase 4.
+  // Evaluates all stories' pipeline states and returns the next action.
+  if (command === 'loop') {
+    await runLoopCommand(args, process.cwd());
+    return;
+  }
+
+  // Install command — generates platform-specific config (multi-agent).
+  // Supports Claude Code, Codex, Cursor, Copilot, Gemini.
+  if (command === 'install') {
+    await runInstallCommand(args, process.cwd());
     return;
   }
 
@@ -291,28 +319,28 @@ async function main() {
         console.log('╚══════════════════════════════════════════╝\n');
         const results: [string, boolean, string][] = [];
         // Git
-        try { const g = require('child_process').execSync('git --version', { encoding: 'utf8' }).trim(); results.push(['Git', true, g]); } catch { results.push(['Git', false, 'Not installed']); }
+        try { const g = execSync('git --version', { encoding: 'utf8' }).trim(); results.push(['Git', true, g]); } catch { results.push(['Git', false, 'Not installed']); }
         // Worktree
-        try { require('child_process').execSync('git worktree list', { cwd: projectRoot, stdio: 'pipe' }); results.push(['Git worktree', true, 'Available']); } catch { results.push(['Git worktree', false, 'Not available']); }
+        try { execSync('git worktree list', { cwd: projectRoot, stdio: 'pipe' }); results.push(['Git worktree', true, 'Available']); } catch { results.push(['Git worktree', false, 'Not available']); }
         // Node
         results.push(['Node.js', true, process.version]);
         // NPM
-        try { const n = require('child_process').execSync('npm --version', { encoding: 'utf8' }).trim(); results.push(['npm', true, n]); } catch { results.push(['npm', false, 'Not installed']); }
+        try { const n = execSync('npm --version', { encoding: 'utf8' }).trim(); results.push(['npm', true, n]); } catch { results.push(['npm', false, 'Not installed']); }
         // Disk
-        try { const df = require('child_process').execSync('df -h .', { encoding: 'utf8', cwd: projectRoot }).trim().split('\n')[1]; results.push(['Disk', true, df.split(/\s+/)[3] + ' available']); } catch { results.push(['Disk', false, 'Cannot check']); }
+        try { const df = execSync('df -h .', { encoding: 'utf8', cwd: projectRoot }).trim().split('\n')[1]; results.push(['Disk', true, df.split(/\s+/)[3] + ' available']); } catch { results.push(['Disk', false, 'Cannot check']); }
         // Signals
         const signalDir = getSignalDir(cfg, projectRoot);
         results.push(['Signals dir', existsSync(signalDir), existsSync(signalDir) ? signalDir : 'Not found']);
         // Status files
         if (existsSync(statusDir)) {
-          const files = require('fs').readdirSync(statusDir).filter((f: string) => f.endsWith('.yaml'));
+          const files = readdirSync(statusDir).filter((f: string) => f.endsWith('.yaml'));
           results.push(['Status files', files.length > 0, `${files.length} files: ${files.join(', ')}`]);
         } else { results.push(['Status files', false, 'status/ directory not found']); }
         // BMAD skills
         try { const { BmadHealthChecker } = await import('./bmad-health-check.js'); const chk = new BmadHealthChecker(projectRoot); const r: any = await chk.check(); results.push(['BMAD skills', r.overall !== 'blocked', `${r.available.filter((s: any) => s.available).length}/${r.available.length} available (${r.overall})`]); } catch { results.push(['BMAD skills', false, 'Health checker error']); }
         // Agent count
         const agentDir = join(projectRoot, '.claude', 'skills', 'wdf-method', 'skills');
-        if (existsSync(agentDir)) { const c = require('fs').readdirSync(agentDir).filter((d: string) => existsSync(join(agentDir, d, 'SKILL.md'))).length; results.push(['Agent skills', c > 0, `${c} agents installed`]); } else { results.push(['Agent skills', false, 'Not installed']); }
+        if (existsSync(agentDir)) { const c = readdirSync(agentDir).filter((d: string) => existsSync(join(agentDir, d, 'SKILL.md'))).length; results.push(['Agent skills', c > 0, `${c} agents installed`]); } else { results.push(['Agent skills', false, 'Not installed']); }
         // Engine
         results.push(['Engine', true, '14 TS files, 0 compile errors']);
 
@@ -375,6 +403,17 @@ Workflow Commands:
       --skip RULE_ID        Skip specific rule(s)
       --list-rules          Show all available rules
       --fix                 Auto-fix fixable issues
+  wdf loop [options]                     Get next dispatch action (auto-loop)
+    Options:
+      --json                  JSON output (default)
+      --human                 Human-readable output
+      --post-dispatch         Revoke permissions + get next after agent completion
+      --story=<id>            Story ID (for --post-dispatch)
+      --stage=<stage>         Stage (for --post-dispatch)
+  wdf install [options]                  Generate platform config (multi-agent)
+    Options:
+      --platform=<p1,p2>      Comma-separated list (claude, codex, cursor, copilot, gemini)
+      --dry-run               Show what would be written without writing
   wdf help                                Show this help
 
 Init Options:
@@ -572,6 +611,181 @@ async function runDoctorCommand(args: string[], projectRoot: string) {
   process.exit(report.overall === 'fail' ? 1 : 0);
 }
 
+async function runLoopCommand(args: string[], projectRoot: string) {
+  const cfg = loadConfig(projectRoot, { silent: true }).config;
+  const trackingPath = getSprintTrackingPath(cfg, projectRoot);
+  const outputDir = getOutputDir(cfg, projectRoot);
+
+  if (!existsSync(trackingPath)) {
+    console.error('No sprint-status.yaml found. Run `wdf init` first.');
+    process.exit(1);
+  }
+
+  const state = await SprintStatusManager.load(trackingPath);
+
+  // Framework root: walk up from projectRoot to find customize.toml
+  // (the wdf-method framework root). Falls back to projectRoot itself.
+  let frameworkRoot = projectRoot;
+  let dir = projectRoot;
+  for (let i = 0; i < 5; i++) {
+    if (existsSync(join(dir, 'customize.toml')) && existsSync(join(dir, 'references', 'agents'))) {
+      frameworkRoot = dir;
+      break;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  const json = args.includes('--json') || !args.includes('--human');
+
+  // If --post-dispatch is passed, revoke permissions for the completed story
+  const postDispatch = args.includes('--post-dispatch');
+  const storyId = args.find(a => a.startsWith('--story='))?.split('=')[1];
+  const stage = args.find(a => a.startsWith('--stage='))?.split('=')[1];
+
+  const { evaluateNextLoopAction, postDispatchNext } = await import('./dispatch-loop-engine.js');
+
+  const result = (postDispatch && storyId && stage)
+    ? postDispatchNext(state, outputDir, projectRoot, frameworkRoot, storyId, stage as any)
+    : evaluateNextLoopAction(state, outputDir, projectRoot, frameworkRoot);
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(formatLoopResult(result));
+  }
+}
+
+function formatLoopResult(result: any): string {
+  const lines: string[] = [];
+  const { action, pipeline_snapshot, evaluated_at } = result;
+
+  lines.push('══ WDF Loop ══');
+  lines.push(`  Evaluated: ${evaluated_at}`);
+  lines.push('');
+
+  // Pipeline overview
+  lines.push('  Pipeline:');
+  for (const s of pipeline_snapshot) {
+    const marker = s.is_next ? '▶' : s.status === 'MERGED' ? '✓' : '·';
+    lines.push(`    ${marker} ${s.story_id} [${s.track}/${s.stage}] ${s.title} (${s.status})`);
+  }
+  lines.push('');
+
+  switch (action.kind) {
+    case 'dispatch':
+      lines.push(`  ▶ NEXT: Dispatch ${action.role} for ${action.story_id}`);
+      lines.push(`    Stage: ${action.stage} (attempt ${action.attempt}/${action.max_retries})`);
+      lines.push(`    Manifest: ${action.manifest_path}`);
+      lines.push(`    Permissions applied: ${action.permissions_applied ? 'yes' : 'no'}`);
+      if (action.is_retry) lines.push(`    ⚠ RETRY — feedback: ${action.feedback ?? 'n/a'}`);
+      lines.push(`    Remaining: ${action.remaining} story(ies)`);
+      lines.push('');
+      lines.push('  → Agent tool dispatch with the prompt from manifest.prompt');
+      lines.push('  → After completion: wdf loop --post-dispatch --story=<id> --stage=<stage>');
+      break;
+
+    case 'escalation':
+      lines.push(`  ⚠ ESCALATION: ${action.story_id}`);
+      lines.push(`    Stage: ${action.escalation.failed_stage}`);
+      lines.push(`    Attempts: ${action.escalation.total_attempts}`);
+      lines.push(`    Reason: ${action.escalation.reason}`);
+      lines.push(`    Recommendation: ${action.escalation.recommendation}`);
+      lines.push(`    Remaining: ${action.remaining} other story(ies)`);
+      lines.push('');
+      lines.push('  → Human review required. Resolve and re-run `wdf loop`.');
+      break;
+
+    case 'blocked':
+      lines.push(`  ⏸ BLOCKED: ${action.story_id}`);
+      lines.push(`    Reason: ${action.reason}`);
+      lines.push(`    Blocked by: ${action.blocked_by.join(', ')}`);
+      lines.push('');
+      lines.push('  → Complete the blocking stories first.');
+      break;
+
+    case 'complete':
+      lines.push(`  ✅ COMPLETE: All stories processed`);
+      const s = action.summary;
+      lines.push(`    Total: ${s.total_stories}, Merged: ${s.merged}, Escalated: ${s.escalated}`);
+      lines.push('');
+      lines.push('  → Phase 4 complete. Run `wdf start` to proceed.');
+      break;
+  }
+
+  return lines.join('\n');
+}
+
+async function runInstallCommand(args: string[], projectRoot: string) {
+  const { installForPlatforms, detectPlatforms, ALL_PLATFORMS } = await import('./multi-agent-install.js');
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+
+  // Determine framework root — walk up from cwd to find customize.toml
+  let frameworkRoot = projectRoot;
+  let dir = projectRoot;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, 'customize.toml')) && existsSync(join(dir, 'commands'))) {
+      frameworkRoot = dir;
+      break;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  // Determine target platforms from --platform flag
+  const platformArg = args.find(a => a.startsWith('--platform='));
+  let platforms: any[] = platformArg
+    ? platformArg.slice(11).split(',').map(s => s.trim())
+    : ALL_PLATFORMS;
+
+  if (!json) {
+    console.log('══ WDF Install ══');
+    console.log(`  Framework root: ${frameworkRoot}`);
+    console.log(`  Project root:   ${projectRoot}`);
+    console.log(`  Platforms:      ${platforms.join(', ')}`);
+    console.log(`  Mode:           ${dryRun ? 'dry-run' : 'execute'}`);
+    console.log('');
+
+    const detected = detectPlatforms(projectRoot);
+    if (detected.length > 0) {
+      console.log(`  Already detected: ${detected.join(', ')}`);
+      console.log('');
+    }
+  }
+
+  const results = installForPlatforms({
+    projectRoot,
+    frameworkRoot,
+    platforms,
+    dryRun,
+  });
+
+  if (json) {
+    console.log(JSON.stringify({ results, dryRun }, null, 2));
+    return;
+  }
+
+  for (const result of results) {
+    console.log(`  ${result.platform}:`);
+    console.log(`    Commands: ${result.commands_installed}`);
+    console.log(`    Files:    ${result.files_written.length}`);
+    for (const f of result.files_written) {
+      console.log(`      ${dryRun ? '[dry-run]' : '✓'} ${f}`);
+    }
+    for (const w of result.warnings) {
+      console.log(`      ⚠ ${w}`);
+    }
+    console.log('');
+  }
+
+  if (!dryRun) {
+    console.log('  Install complete. Restart your AI agent to pick up the new commands.');
+  }
+}
+
 async function runStartCommand(args: string[], projectRoot: string, orchestrator: PhaseOrchestrator) {
   const { generatePrompt } = await import('./prompt-generator.js');
   const json = args.includes('--json');
@@ -707,6 +921,114 @@ async function runTraceCommand(args: string[], projectRoot: string) {
     console.error(`\nNode "${id}" not found in the traceability graph.`);
     process.exit(1);
   }
+}
+
+async function runPermissionsCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  const { listDispatchPermissions, applyPermissions, revokePermissions, revokeAllDispatchPermissions } = await import('./permission-injector.js');
+
+  if (sub === 'list' || sub === undefined || sub === '--help' || sub === '-h') {
+    if (sub === '--help' || sub === '-h') {
+      console.error('Usage: wdf permissions <list|apply|revoke|purge> [args]');
+      console.error('');
+      console.error('Subcommands:');
+      console.error('  list                          Show wdf-dispatch entries in .claude/settings.local.json');
+      console.error('  apply <manifest.json>         Apply a dispatch manifest permissions scope');
+      console.error('  revoke <story_id> <stage>     Remove entries tagged for one (story, stage)');
+      console.error('  purge                         Remove every wdf-dispatch tagged entry');
+      process.exit(0);
+    }
+    const list = listDispatchPermissions(projectRoot);
+    if (list.length === 0) {
+      console.log('(no wdf-dispatch entries)');
+      return;
+    }
+    for (const e of list) {
+      console.log(`[${e.kind}] ${e.story_id}/${e.stage}  ${e.raw.split(' ')[0]}`);
+    }
+    return;
+  }
+
+  if (sub === 'apply') {
+    const manifestPath = args[2];
+    if (!manifestPath) {
+      console.error('Usage: wdf permissions apply <manifest.json>');
+      process.exit(1);
+    }
+    const raw = readFileSync(resolve(manifestPath), 'utf8');
+    const manifest = JSON.parse(raw);
+    const applied = applyPermissions(manifest, projectRoot);
+    console.log(`Applied ${applied.length} permission entries for ${manifest.story_id}/${manifest.stage}`);
+    return;
+  }
+
+  if (sub === 'revoke') {
+    const storyId = args[2];
+    const stage = args[3];
+    if (!storyId || !stage) {
+      console.error('Usage: wdf permissions revoke <story_id> <stage>');
+      process.exit(1);
+    }
+    const removed = revokePermissions(storyId, stage, projectRoot);
+    console.log(`Removed ${removed} entries for ${storyId}/${stage}`);
+    return;
+  }
+
+  if (sub === 'purge') {
+    const removed = revokeAllDispatchPermissions(projectRoot);
+    console.log(`Purged ${removed} wdf-dispatch entries`);
+    return;
+  }
+
+  console.error(`Unknown subcommand: ${sub}`);
+  console.error('See: wdf permissions --help');
+  process.exit(1);
+}
+
+async function runConvergeCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  if (sub === '--help' || sub === '-h' || sub === undefined) {
+    console.error('Usage: wdf converge [--source=PATH] [--specs=PATH] [--prd=PATH] [--to-stories] [--json]');
+    console.error('');
+    console.error('Brownfield gap analysis: compare declared requirements against code references.');
+    console.error('Reads _wdf_output/specs/ (V3.9+) or _wdf_output/prd.md (V3.8 legacy), scans src/ for');
+    console.error('REQ-NNN references, and emits a gap report.');
+    console.error('');
+    console.error('Options:');
+    console.error('  --source=PATH     Source root to scan (default: src/, also backend/src/ if present)');
+    console.error('  --specs=PATH      Specs directory (default: _wdf_output/specs/)');
+    console.error('  --prd=PATH        Legacy PRD path (default: _wdf_output/prd.md)');
+    console.error('  --to-stories      Emit draft stories for each gap into _wdf_output/stories/converge-<date>/');
+    console.error('  --json            Emit machine-readable JSON instead of writing a report file');
+    console.error('');
+    console.error('Examples:');
+    console.error('  wdf converge');
+    console.error('  wdf converge --source=backend/src --to-stories');
+    process.exit(sub === undefined ? 1 : 0);
+  }
+
+  const { runConverge, writeConvergeArtifacts } = await import('./converge-engine.js');
+  const opts: { projectRoot: string; sourceDir?: string; specsDir?: string; prdPath?: string; toStories?: boolean } = {
+    projectRoot,
+  };
+  for (const a of args.slice(1)) {
+    if (a.startsWith('--source=')) opts.sourceDir = resolve(projectRoot, a.slice(9));
+    else if (a.startsWith('--specs=')) opts.specsDir = resolve(projectRoot, a.slice(8));
+    else if (a.startsWith('--prd=')) opts.prdPath = resolve(projectRoot, a.slice(6));
+    else if (a === '--to-stories') opts.toStories = true;
+  }
+  const asJson = args.includes('--json');
+
+  const result = runConverge(opts);
+  if (asJson) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const { reportPath, storiesDir } = writeConvergeArtifacts(result, opts);
+  console.log(`Converge report: ${reportPath}`);
+  console.log(`Summary: ${result.summary.implemented}/${result.summary.declared} implemented (${result.summary.coveragePercent}%), ${result.summary.gaps} gaps, ${result.summary.drift} drift`);
+  if (storiesDir) console.log(`Draft stories:  ${storiesDir} (${result.gaps.length} files)`);
 }
 
 async function runSnapshotCommand(args: string[], projectRoot: string) {
@@ -1989,7 +2311,7 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
     } catch (err: any) {
       if (err.message?.includes('Already archived') && force) {
         // remove existing
-        const { rmSync } = require('fs') as typeof import('fs');
+        // rmSync already imported at top;
         const existing = join(projectRoot, 'changes', '_archive', id);
         rmSync(existing, { recursive: true, force: true });
         const result = await archiveAndRewrite(id, projectRoot, archiveOpts);
@@ -2024,8 +2346,7 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
 }
 
 function relative(from: string, to: string): string {
-  const path = require('path') as typeof import('path');
-  return path.relative(from, to);
+  return pathRelative(from, to);
 }
 
 function parseOptInt(args: string[], flag: string, defaultVal: number): number {

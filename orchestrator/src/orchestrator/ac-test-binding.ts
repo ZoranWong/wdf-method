@@ -596,11 +596,11 @@ function runTestCommand(
   }
   const argv = rawCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
   if (argv.length === 0) return Promise.reject(new Error('empty test command'));
-  const file = argv[0];
+  const file = argv[0]!;
   const args = argv.slice(1).map(a => a.replace(/^["']|["']$/g, ''));
 
   return new Promise<CmdOut>((resolve, reject) => {
-    const child = spawn(file, args, {
+    const child: import('child_process').ChildProcess = spawn(file, args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -614,8 +614,8 @@ function runTestCommand(
       setTimeout(() => child.kill('SIGKILL'), 2000);
     }, timeoutMs);
 
-    child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
     child.on('error', e => { clearTimeout(timer); reject(e); });
     child.on('close', code => {
       clearTimeout(timer);
