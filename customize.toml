@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────
 
 [workflow]
-version = "3.6.0"
+version = "3.8.0"
 
 # ── Development mode ──
 # "separated"  — Frontend and backend are separate projects, Phase 4 BE and FE tracks run in parallel
@@ -669,6 +669,7 @@ default_integration_checks = ["npm run test", "npm run build"]
 merge_order_increment = 10              # Sequential numbering gap (10, 20, 30...)
 lock_timeout_seconds = 5               # Max wait for .lock acquisition
 stale_lock_cleanup_seconds = 60        # Auto-remove .lock if older than this
+constitution_check = true              # Run constitution checks before each merge (P1)
 
 # V3.6 File-Based Design:
 # - Each queued story is a file: merge-queue/items/{merge_order:04d}-{story_id_slug}-{track}.yaml
@@ -860,3 +861,20 @@ heartbeat_interval_seconds = 30          # Agent heartbeat frequency
 pause_timeout_seconds = 300              # Max wait for agent to pause
 heartbeat_timeout_seconds = 120          # Agent considered dead after this
 cleanup_on_complete = true               # Remove signal files on agent completion
+
+# ─────────────────────────────────────────
+# Specs (BDD Source of Truth) — CHG-2026-015 S1
+# ─────────────────────────────────────────
+# Introduces _wdf_output/specs/<domain>/spec.md as the canonical BDD
+# source of truth. Bidirectional sync with PRD via `wdf spec sync`.
+#
+# Staging:
+#   v3.8.x: source_of_truth = false (PRD canonical; reverse sync bootstraps specs/)
+#   v3.9.0: source_of_truth = true  (specs/ canonical; forward sync overwrites PRD)
+
+[specs]
+source_of_truth = false                  # v3.8.x: PRD canonical; v3.9.0 flips to true
+specs_dir = "{project-root}/_wdf_output/specs"
+default_sync_direction = "reverse"       # Bootstrap existing projects: PRD → specs/
+managed_region_marker = "wdf:specs-sync" # HTML comment marker around generated PRD blocks
+enforce_unique_requirement_names = true  # Validator rule: requirement.name unique per domain

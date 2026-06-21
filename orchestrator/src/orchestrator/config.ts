@@ -97,6 +97,7 @@ export interface MergeQueueSection {
   merge_order_increment: number;
   lock_timeout_seconds: number;
   stale_lock_cleanup_seconds: number;
+  constitution_check: boolean;
 }
 
 export interface ChangeRequestSection {
@@ -152,6 +153,16 @@ export interface AcceptanceCheckSafetySection {
   allowed_exceptions: string[];
 }
 
+export interface SpecsSection {
+  // v3.8.x: false (PRD remains canonical; reverse sync bootstraps specs/)
+  // v3.9.0: flipped to true (specs/ becomes source; forward sync overwrites PRD)
+  source_of_truth: boolean;
+  specs_dir: string;
+  default_sync_direction: 'forward' | 'reverse';
+  managed_region_marker: string;
+  enforce_unique_requirement_names: boolean;
+}
+
 export interface WorkflowConfig {
   workflow: WorkflowSection;
   acceptance_gates: AcceptanceGatesSection;
@@ -162,6 +173,7 @@ export interface WorkflowConfig {
   agent_communication: AgentCommunicationSection;
   defaults: DefaultsSection;
   acceptance_check_safety: AcceptanceCheckSafetySection;
+  specs: SpecsSection;
   bmad_skill_fallbacks?: Record<string, any>;
   // Catch-all for unknown sections
   [extra: string]: any;
@@ -171,7 +183,7 @@ export interface WorkflowConfig {
 // Built-in defaults
 // ─────────────────────────────────────────
 
-const DEFAULT_OUTPUT_BASE = '_bmad-output/web-dev-flow';
+const DEFAULT_OUTPUT_BASE = '_wdf_output';
 
 export const DEFAULT_CONFIG: WorkflowConfig = {
   workflow: {
@@ -217,6 +229,7 @@ export const DEFAULT_CONFIG: WorkflowConfig = {
     merge_order_increment: 10,
     lock_timeout_seconds: 5,
     stale_lock_cleanup_seconds: 60,
+    constitution_check: true,
   },
   change_request: {
     enabled: true,
@@ -265,6 +278,13 @@ export const DEFAULT_CONFIG: WorkflowConfig = {
     allowed_prefixes: [],
     forbidden_patterns: [],
     allowed_exceptions: [],
+  },
+  specs: {
+    source_of_truth: false,
+    specs_dir: `{project-root}/${DEFAULT_OUTPUT_BASE}/specs`,
+    default_sync_direction: 'reverse',
+    managed_region_marker: 'wdf:specs-sync',
+    enforce_unique_requirement_names: true,
   },
 };
 
@@ -403,8 +423,9 @@ export interface LoadConfigResult {
  * Order (low → high precedence):
  *   1. Built-in DEFAULT_CONFIG
  *   2. {skillRoot}/customize.toml
- *   3. {projectRoot}/_bmad/custom/web-dev-flow.toml (team)
- *   4. {projectRoot}/_bmad/custom/web-dev-flow.user.toml (user)
+ *   3. Active preset: {skillRoot}/presets/<name>.toml (C3 Extensions/Presets)
+ *   4. {projectRoot}/_bmad/custom/web-dev-flow.toml (team)
+ *   5. {projectRoot}/_bmad/custom/web-dev-flow.user.toml (user)
  */
 export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): LoadConfigResult {
   const warnings: string[] = [];
@@ -429,7 +450,52 @@ export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): L
 
   let merged: any = deepClone(DEFAULT_CONFIG);
 
+  // Find the boundary between skill-base paths and project-override paths.
+  // The active preset is injected at that boundary (layer 3 of 5).
+  // Heuristic: any path containing '_bmad' OR starting with projectRoot
+  // (but not skillRoot's customize.toml) is a project override.
+  const isProjectOverride = (p: string) =>
+    p.includes('_bmad') ||
+    resolve(p).startsWith(resolve(projectRoot) + '/');
+
+  let presetInjected = false;
+  let presetState: { active: any; preset: any } | null = null;
+  const loadPresetState = () => {
+    if (presetState !== null) return;
+    try {
+      // Sync access pattern: read active-preset.yaml + preset file directly.
+      // Avoids async import + ESM/CJS boundary issues.
+      const activePath = join(projectRoot, '_wdf_output', 'active-preset.yaml');
+      if (!existsSync(activePath)) { presetState = { active: null, preset: null }; return; }
+      const activeRaw = readFileSync(activePath, 'utf8');
+      const activeMatch = activeRaw.match(/^preset:\s*(\S+)/m);
+      const activeName = activeMatch ? activeMatch[1] : null;
+      if (!activeName || activeName === 'null') { presetState = { active: null, preset: null }; return; }
+      const presetPath = join(skillRoot, 'presets', `${activeName}.toml`);
+      if (!existsSync(presetPath)) { presetState = { active: { preset: activeName }, preset: null }; return; }
+      const presetParsed = parseToml(readFileSync(presetPath, 'utf8'));
+      presetState = {
+        active: { preset: activeName },
+        preset: { path: presetPath, parsed: presetParsed },
+      };
+    } catch {
+      presetState = { active: null, preset: null };
+    }
+  };
+  const tryInjectPreset = () => {
+    if (presetInjected) return;
+    presetInjected = true;
+    loadPresetState();
+    if (presetState?.preset) {
+      merged = deepMerge(merged, presetState.preset.parsed);
+      sources.push(presetState.preset.path);
+    }
+  };
+
+  // Layer 2: skill-base customize.toml
   for (const path of candidates) {
+    // Inject preset (layer 3) right before the first project-override.
+    if (isProjectOverride(path)) tryInjectPreset();
     if (!existsSync(path)) continue;
     try {
       const parsed = parseToml(readFileSync(path, 'utf-8'));
@@ -439,10 +505,12 @@ export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): L
       warnings.push(`Failed to parse ${path}: ${err?.message ?? err}`);
     }
   }
+  // If no project overrides were present, still inject preset (last chance).
+  tryInjectPreset();
 
   // Validate required sections
   if (!merged.workflow?.output_dir) {
-    warnings.push('workflow.output_dir is missing — using default _bmad-output/web-dev-flow');
+    warnings.push('workflow.output_dir is missing — using default _wdf_output');
     merged.workflow = merged.workflow ?? {};
     merged.workflow.output_dir = DEFAULT_CONFIG.workflow.output_dir;
   }
@@ -463,7 +531,7 @@ export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): L
   const knownSections = new Set([
     'workflow', 'acceptance_gates', 'scope_lock', 'merge_queue',
     'change_request', 'auto_run', 'agent_communication', 'defaults',
-    'acceptance_check_safety', 'bmad_skill_fallbacks',
+    'acceptance_check_safety', 'bmad_skill_fallbacks', 'specs',
   ]);
   for (const key of Object.keys(merged)) {
     if (!knownSections.has(key) && typeof merged[key] === 'object') {
@@ -501,6 +569,11 @@ export function resolvePath(template: string, projectRoot: string): string {
 /** Get absolute output_dir. */
 export function getOutputDir(config: WorkflowConfig, projectRoot: string): string {
   return resolvePath(config.workflow.output_dir, projectRoot);
+}
+
+/** Get absolute specs/ directory path (canonical BDD source of truth). */
+export function getSpecsDir(config: WorkflowConfig, projectRoot: string): string {
+  return resolvePath(config.specs.specs_dir, projectRoot);
 }
 
 /** Get absolute sprint-status.yaml path. */

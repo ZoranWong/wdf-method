@@ -41,6 +41,7 @@ Template String → Customize Config → Default Path → Absolute Path
 | `{api_spec_output}` | customize.toml → `api_spec_output` | `{project-root}/_wdf_output/api-spec.yaml` |
 | `{db_schema_output}` | customize.toml → `db_schema_output` | `{project-root}/_wdf_output/db-schema.md` |
 | `{epics_output}` | customize.toml → `epics_output` | `{project-root}/_wdf_output/epics.md` |
+| `{specs_dir}` | customize.toml → `specs.specs_dir` | `{project-root}/_wdf_output/specs` — canonical BDD source of truth (CHG-2026-015). Per-domain `specs/<domain>/spec.md`. |
 | `{stories_output}` | customize.toml → `stories_output` | `{project-root}/_wdf_output/stories` |
 | `{integration_output}` | customize.toml → `integration_output` | `{project-root}/_wdf_output/integration-report.md` |
 | `{research_output}` | customize.toml → `research_output` | `{project-root}/_wdf_output/research` |

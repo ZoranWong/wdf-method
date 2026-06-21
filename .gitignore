@@ -5,6 +5,10 @@ _wdf_output/
 _review/
 .wdf/
 
+# Frozen test fixtures bypass the _wdf_output/ ignore above
+!examples/spec-sync-demo/_wdf_output/
+!examples/spec-sync-demo/_wdf_output/**
+
 # Orchestrator subpackage
 orchestrator/dist/
 orchestrator/node_modules/

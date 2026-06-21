@@ -89,6 +89,7 @@ async function main() {
     'workspace', 'template', 'preset', 'coverage',
     'schema', 'provider', 'review', 'retro', 'retrospective',
     'health', 'doctor', 'pre-check', 'lint',
+    'spec',
   ]);
 
   if (!initialized && !FRAMEWORK_LEVEL_COMMANDS.has(command)) {
@@ -243,6 +244,10 @@ async function main() {
 
     case 'snapshot':
       await runSnapshotCommand(args, projectRoot);
+      break;
+
+    case 'spec':
+      await runSpecCommand(args, projectRoot);
       break;
 
     case 'start':
@@ -835,6 +840,191 @@ async function runSnapshotCommand(args: string[], projectRoot: string) {
       console.log('  --json                    JSON output');
       console.log('  --dry-run                 Show what would happen without making changes');
       break;
+  }
+}
+
+async function runSpecCommand(args: string[], projectRoot: string) {
+  const subCommand = args[1];
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+
+  const { loadConfig, getSpecsDir, getOutputDir } = await import('./config.js');
+  const cfg = loadConfig(projectRoot, { silent: true }).config;
+  const outputDir = getOutputDir(cfg, projectRoot);
+  const specsDir = getSpecsDir(cfg, projectRoot);
+
+  const {
+    parseSpecDoc,
+    parsePrdReqs,
+    parseEpicsTracks,
+    inferDomainFromReq,
+    prdToSpecDocument,
+    formatSpecDoc,
+    validateSpec,
+    forwardSync,
+    reverseSync,
+    applySync,
+    loadSpecDocs,
+    scaffoldEmptySpec,
+    listDomains,
+  } = await import('./spec-sync.js');
+
+  const specConfig = {
+    specsDir,
+    sourceOfTruth: cfg.specs.source_of_truth,
+    managedRegionMarker: cfg.specs.managed_region_marker,
+    enforceUniqueRequirementNames: cfg.specs.enforce_unique_requirement_names,
+  };
+
+  switch (subCommand) {
+    case 'init': {
+      const domain = args[2];
+      if (!domain) {
+        console.error('Usage: wdf spec init <domain>');
+        console.error('Example: wdf spec init auth');
+        process.exit(1);
+      }
+      const action = scaffoldEmptySpec(domain, specsDir);
+      if (dryRun) {
+        console.log(`Would ${action.action} ${action.path}`);
+        if (json) console.log(JSON.stringify({ action }, null, 2));
+        break;
+      }
+      const result = applySync({ direction: 'reverse', writes: [action], warnings: [] }, false);
+      console.log(`${action.action === 'create' ? 'Created' : 'Updated'}: ${action.path}`);
+      console.log(`Applied: ${result.applied.length}, Skipped: ${result.skipped.length}`);
+      break;
+    }
+
+    case 'list': {
+      const epicsPath = join(outputDir, 'epics.md');
+      const epicsText = existsSync(epicsPath) ? readFileSync(epicsPath, 'utf8') : '';
+      const domains = listDomains(specsDir, epicsText);
+      if (json) {
+        console.log(JSON.stringify({ domains }, null, 2));
+      } else if (domains.length === 0) {
+        console.log('No domains discovered.');
+        console.log('');
+        console.log('Run `wdf spec sync` to bootstrap specs/ from your PRD.');
+      } else {
+        console.log('Discovered domains:');
+        for (const d of domains) {
+          const specPath = join(specsDir, d, 'spec.md');
+          const exists = existsSync(specPath);
+          const mark = exists ? '✓' : ' ';
+          console.log(`  [${mark}] ${d}`);
+        }
+      }
+      break;
+    }
+
+    case 'validate': {
+      const domain = args[2];
+      const docs = loadSpecDocs(specsDir);
+      const targets = domain ? docs.filter(d => d.domain === domain) : docs;
+      if (targets.length === 0) {
+        console.error(`No spec files found${domain ? ` for domain "${domain}"` : ''}.`);
+        console.error(`Run \`wdf spec sync\` to bootstrap specs/ from your PRD.`);
+        process.exit(1);
+      }
+      const allErrors: Array<{ domain: string; errors: any[] }> = [];
+      for (const doc of targets) {
+        const errors = validateSpec(doc);
+        if (errors.length > 0) allErrors.push({ domain: doc.domain, errors });
+      }
+      if (json) {
+        console.log(JSON.stringify({ results: allErrors, valid: allErrors.length === 0 }, null, 2));
+      } else if (allErrors.length === 0) {
+        console.log(`✓ All ${targets.length} spec(s) valid.`);
+      } else {
+        console.log(`✗ ${allErrors.length} spec(s) with errors:`);
+        for (const { domain, errors } of allErrors) {
+          console.log(`  ${domain}:`);
+          for (const e of errors) {
+            console.log(`    [${e.ruleId}] ${e.message}`);
+          }
+        }
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'sync': {
+      const reverseFlag = args.includes('--reverse');
+      const forwardFlag = args.includes('--forward');
+      // Default: reverse in v3.8.x (PRD -> specs/)
+      const goForward = forwardFlag || (!reverseFlag && cfg.specs.default_sync_direction === 'forward');
+
+      const prdPath = join(outputDir, 'prd.md');
+      const epicsPath = join(outputDir, 'epics.md');
+
+      if (!existsSync(prdPath)) {
+        console.error(`PRD not found at ${prdPath}`);
+        console.error('Run `wdf init` and produce a PRD (phase 2.5) first.');
+        process.exit(1);
+      }
+
+      const prdText = readFileSync(prdPath, 'utf8');
+      const epicsText = existsSync(epicsPath) ? readFileSync(epicsPath, 'utf8') : '';
+      const existing = loadSpecDocs(specsDir);
+
+      const result = goForward
+        ? forwardSync(existing, prdText, prdPath, specConfig)
+        : reverseSync(prdText, epicsText, existing, specConfig);
+
+      if (json) {
+        const summary = {
+          direction: result.direction,
+          writes: result.writes.map(w => ({ path: w.path, action: w.action, bytes: w.content.length })),
+          warnings: result.warnings,
+          dryRun,
+        };
+        console.log(JSON.stringify(summary, null, 2));
+      } else {
+        console.log(`Direction: ${result.direction}`);
+        console.log(`Planned writes: ${result.writes.length}`);
+        for (const w of result.writes) {
+          console.log(`  [${w.action}] ${w.path} (${w.content.length} bytes)`);
+        }
+        for (const warn of result.warnings) {
+          console.log(`⚠ ${warn}`);
+        }
+      }
+
+      if (dryRun) {
+        console.log('');
+        console.log('(--dry-run: no files modified)');
+        break;
+      }
+
+      const { applied, skipped } = applySync(result, false);
+      console.log('');
+      console.log(`Applied: ${applied.length}, Skipped: ${skipped.length}`);
+      break;
+    }
+
+    case 'help':
+    case '--help':
+    case undefined:
+      console.log('Usage: wdf spec <init|list|validate|sync> [options]');
+      console.log('');
+      console.log('Commands:');
+      console.log('  init <domain>                    Scaffold empty specs/<domain>/spec.md');
+      console.log('  list                             List discovered domains (from epics + specs/)');
+      console.log('  validate [<domain>]              Validate against spec-schema.yaml');
+      console.log('  sync [--reverse|--forward]       Bidirectional sync (default: reverse)');
+      console.log('');
+      console.log('Options:');
+      console.log('  --json                           JSON output');
+      console.log('  --dry-run                        Plan only; do not modify files');
+      console.log('  --reverse                        Force PRD → specs/ (default in v3.8.x)');
+      console.log('  --forward                        Force specs/ → PRD (requires [specs] source_of_truth = true)');
+      break;
+
+    default:
+      console.error(`Unknown spec subcommand: ${subCommand}`);
+      console.error('Run `wdf spec help` for usage.');
+      process.exit(1);
   }
 }
 

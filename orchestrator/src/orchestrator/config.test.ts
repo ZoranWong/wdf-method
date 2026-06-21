@@ -13,6 +13,7 @@ import {
   getMergeQueueDir,
   getSignalDir,
   getAuditDir,
+  getSpecsDir,
   DEFAULT_CONFIG,
 } from './config.js';
 
@@ -176,30 +177,30 @@ describe('path helpers', () => {
 
   it('getOutputDir resolves to absolute path under project root', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
-    expect(getOutputDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_bmad-output/web-dev-flow'));
+    expect(getOutputDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_wdf_output'));
   });
 
   it('getSprintTrackingPath resolves to sprint-status.yaml', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
     expect(getSprintTrackingPath(config, tmpRoot)).toBe(
-      resolve(tmpRoot, '_bmad-output/web-dev-flow/sprint-status.yaml')
+      resolve(tmpRoot, '_wdf_output/sprint-status.yaml')
     );
   });
 
   it('getStatusDir resolves to status/', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
-    expect(getStatusDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_bmad-output/web-dev-flow/status'));
+    expect(getStatusDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_wdf_output/status'));
   });
 
   it('getStoriesDir resolves to stories/', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
-    expect(getStoriesDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_bmad-output/web-dev-flow/stories'));
+    expect(getStoriesDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_wdf_output/stories'));
   });
 
   it('getMergeQueueDir falls back to status/merge-queue', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
     expect(getMergeQueueDir(config, tmpRoot)).toBe(
-      resolve(tmpRoot, '_bmad-output/web-dev-flow/status/merge-queue')
+      resolve(tmpRoot, '_wdf_output/status/merge-queue')
     );
   });
 
@@ -222,7 +223,7 @@ signal_dir = "/var/run/wdf-signals"
   it('getAuditDir is sibling to sprint-status.yaml', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
     expect(getAuditDir(config, tmpRoot)).toBe(
-      resolve(tmpRoot, '_bmad-output/web-dev-flow/audit')
+      resolve(tmpRoot, '_wdf_output/audit')
     );
   });
 
@@ -238,5 +239,30 @@ stories_output = "{project-root}/build/wdf/stories"
     expect(getOutputDir(config, tmpRoot)).toBe(resolve(tmpRoot, 'build/wdf'));
     expect(getStatusDir(config, tmpRoot)).toBe(resolve(tmpRoot, 'build/wdf/state'));
     expect(getStoriesDir(config, tmpRoot)).toBe(resolve(tmpRoot, 'build/wdf/stories'));
+  });
+});
+
+describe('specs section (CHG-2026-015 S1)', () => {
+  it('defaults to source_of_truth=false and standard paths', () => {
+    const { config } = loadConfig(tmpRoot, { silent: true });
+    expect(config.specs).toBeDefined();
+    expect(config.specs.source_of_truth).toBe(false);
+    expect(config.specs.default_sync_direction).toBe('reverse');
+    expect(config.specs.managed_region_marker).toBe('wdf:specs-sync');
+    expect(config.specs.enforce_unique_requirement_names).toBe(true);
+    expect(getSpecsDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_wdf_output/specs'));
+  });
+
+  it('honors [specs] override from customize.toml', () => {
+    writeFileSync(join(tmpRoot, 'customize.toml'), `
+[specs]
+source_of_truth = true
+default_sync_direction = "forward"
+specs_dir = "{project-root}/custom-specs"
+`);
+    const { config } = loadConfig(tmpRoot, { silent: true });
+    expect(config.specs.source_of_truth).toBe(true);
+    expect(config.specs.default_sync_direction).toBe('forward');
+    expect(getSpecsDir(config, tmpRoot)).toBe(resolve(tmpRoot, 'custom-specs'));
   });
 });

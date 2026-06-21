@@ -1,0 +1,208 @@
+# ─────────────────────────────────────────
+# Spec Schema — wdf-method V3.8 (CHG-2026-015 S1)
+# Defines the canonical BDD spec format used by specs/<domain>/spec.md.
+#
+# A spec.md is the SINGLE SOURCE OF TRUTH for a domain's behavioral
+# requirements. PRD / epics / api-spec / db-schema become derived views
+# (forward sync) once [specs] source_of_truth = true (v3.9.0 default).
+#
+# Design references:
+#   - OpenSpec specs/<domain>/spec.md layout
+#   - Cucumber / Behave BDD grammar (GIVEN/WHEN/THEN)
+#   - RFC 2119 keyword requirement (MUST/SHALL/SHOULD)
+# ─────────────────────────────────────────
+
+schema: "spec"
+version: "1.0.0"
+
+# ─────────────────────────────────────────
+# Top-level fields
+# ─────────────────────────────────────────
+
+artifact_type:
+  type: "string"
+  description: "Must be 'spec' for BDD domain spec files"
+  required: true
+  enum:
+    - "spec"
+
+domain:
+  type: "string"
+  description: "Lowercase kebab-case domain identifier; MUST match the parent directory name"
+  required: true
+  pattern: "^[a-z][a-z0-9-]{1,30}$"
+  example: "auth"
+
+version:
+  type: "integer"
+  description: "Spec format version (increment on breaking format changes)"
+  required: true
+  example: 1
+
+requirements:
+  type: "list"
+  description: "Ordered list of behavioral requirements"
+  required: true
+  items: "$requirement"
+
+# ─────────────────────────────────────────
+# Requirement: a named behavior with scenarios
+# ─────────────────────────────────────────
+
+requirement:
+  id:
+    type: "string"
+    description: "Stable identifier traceable to PRD; REQUIRED if round-trip with PRD is intended"
+    pattern: "^REQ-\\d{3,4}$"
+    required: false
+    example: "REQ-001"
+
+  name:
+    type: "string"
+    description: "Human-readable behavior name; MUST be unique within the domain"
+    required: true
+    pattern: "^[A-Z][A-Za-z0-9 _-]{2,80}$"
+    example: "User Registration"
+
+  priority:
+    type: "string"
+    description: "MoSCoW-style priority inherited from PRD when reverse-synced"
+    required: false
+    enum:
+      - "P0"   # MUST have — blocks release
+      - "P1"   # SHOULD have — important but not blocking
+      - "P2"   # NICE to have — deferrable
+
+  description:
+    type: "string"
+    description: "Optional one-line summary; full semantics live in scenarios"
+    required: false
+
+  scenarios:
+    type: "list"
+    description: "BDD scenarios proving the requirement; at least one required"
+    required: true
+    items: "$scenario"
+
+# ─────────────────────────────────────────
+# Scenario: a single GIVEN/WHEN/THEN behavior
+# ─────────────────────────────────────────
+
+scenario:
+  name:
+    type: "string"
+    description: "Optional short label; auto-generated as 'Scenario N' when omitted"
+    required: false
+    pattern: "^[A-Z][A-Za-z0-9 _-]{0,80}$"
+
+  given:
+    type: "list[string]"
+    description: "Preconditions; 1+ lines required"
+    required: true
+    min_items: 1
+
+  when:
+    type: "list[string]"
+    description: "Trigger / action under test; 1+ lines required"
+    required: true
+    min_items: 1
+
+  then:
+    type: "list[string]"
+    description: "Observable outcome; MUST contain RFC 2119 keyword (MUST/SHALL/WILL/SHOULD/EXPECTED)"
+    required: true
+    min_items: 1
+
+# ─────────────────────────────────────────
+# Validation rules (machine-checkable; consumed by validateSpec)
+# ─────────────────────────────────────────
+
+validation_rules:
+  - id: "domain_name_format"
+    description: "domain MUST match ^[a-z][a-z0-9-]{1,30}$"
+    severity: "error"
+
+  - id: "requirement_name_unique"
+    description: "requirement.name MUST be unique within the domain"
+    severity: "error"
+
+  - id: "requirement_name_format"
+    description: "requirement.name MUST match ^[A-Z][A-Za-z0-9 _-]{2,80}$ (Title Case or SHOUTING_CASE)"
+    severity: "error"
+
+  - id: "scenario_blocks_nonempty"
+    description: "Each scenario's given/when/then MUST have at least 1 line"
+    severity: "error"
+
+  - id: "scenario_then_rfc2119"
+    description: "Each scenario's THEN block MUST contain an RFC 2119 keyword: MUST|SHALL|WILL|SHOULD|EXPECTED"
+    severity: "error"
+
+  - id: "no_placeholder_tokens"
+    description: "No line may contain TODO, FIXME, xxx, or bare ellipsis (… / ...)"
+    severity: "error"
+
+  - id: "requirement_has_scenario"
+    description: "Each requirement MUST have at least 1 scenario"
+    severity: "error"
+
+  - id: "id_unique_within_domain"
+    description: "When present, requirement.id MUST be unique within the domain"
+    severity: "error"
+
+# ─────────────────────────────────────────
+# Application semantics
+# ─────────────────────────────────────────
+# 1. Sync is idempotent: forwardSync(reverseSync(prd)) produces byte-identical
+#    PRD when [specs] source_of_truth = true.
+# 2. Reverse sync preserves hand-edited requirements whose IDs do not match
+#    any PRD REQ block.
+# 3. Atomic writes: spec.md is written to *.tmp then renamed.
+# 4. Format is canonical: requirements sorted by ID ascending, scenarios in
+#    source order, LF newlines, 2-space metadata bullets.
+
+# ─────────────────────────────────────────
+# Example: minimal valid spec.md body (after frontmatter)
+# ─────────────────────────────────────────
+
+example_minimal: |
+  ---
+  artifact_type: spec
+  domain: auth
+  version: 1
+  ---
+
+  # Spec — Auth
+
+  ## Requirement: User Registration
+  - id: REQ-001
+  - priority: P0
+
+  GIVEN a visitor with a valid email and a password of length >= 8
+  WHEN they submit the registration form
+  THEN the system MUST create the user record and set session cookies
+
+  GIVEN a visitor with an already-registered email
+  WHEN they submit the registration form
+  THEN the system MUST respond 409 with message "email already registered"
+
+# ─────────────────────────────────────────
+# Example: multi-scenario requirement
+# ─────────────────────────────────────────
+
+example_multi_scenario: |
+  ## Requirement: Password Reset
+  - id: REQ-014
+  - priority: P1
+
+  GIVEN a user who has forgotten their password
+  WHEN they request a reset link
+  THEN the system MUST email a time-limited reset token
+
+  GIVEN a user holding an unexpired reset token
+  WHEN they submit a new password of length >= 12
+  THEN the system MUST invalidate the token and update the password hash
+
+  GIVEN a user holding an expired reset token
+  WHEN they submit a new password
+  THEN the system MUST reject with message "token expired"
