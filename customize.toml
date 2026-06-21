@@ -878,3 +878,5 @@ specs_dir = "{project-root}/_wdf_output/specs"
 default_sync_direction = "reverse"       # Bootstrap existing projects: PRD → specs/
 managed_region_marker = "wdf:specs-sync" # HTML comment marker around generated PRD blocks
 enforce_unique_requirement_names = true  # Validator rule: requirement.name unique per domain
+api_spec_path = "{project-root}/_wdf_output/api-spec.yaml"   # S3: forward-sync target
+db_schema_path = "{project-root}/_wdf_output/db-schema.md"   # S3: forward-sync target

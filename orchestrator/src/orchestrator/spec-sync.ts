@@ -31,12 +31,45 @@ export interface Scenario {
   then: string[];
 }
 
+/**
+ * CHG-2026-015 S3 — Structural fields.
+ *
+ * Optional HTTP endpoint declaration on a requirement. Used by specToOpenApi
+ * to derive OpenAPI `paths:` entries. Multiple requirements may declare
+ * endpoints on the same path (e.g. GET and POST on /todos) — they merge.
+ */
+export interface Endpoint {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  path: string;            // MUST start with '/'
+  operationId: string;     // camelCase
+  request?: string;        // schema name (resolved in components.schemas)
+  response?: string;       // "<status> <schema>" or just "<schema>"
+}
+
+export interface EntityField {
+  name: string;
+  type: string;            // UUID/TEXT/INTEGER/...
+  constraints: string[];   // pk, unique, not_null, fk(...), ...
+}
+
+/**
+ * Optional data entity (table) declaration. Entities may repeat across
+ * requirements within a domain; same name MUST agree byte-for-byte or
+ * validateSpec reports entity_name_unique_within_domain.
+ */
+export interface Entity {
+  name: string;            // PascalCase
+  fields: EntityField[];
+}
+
 export interface SpecRequirement {
   id?: string;
   name: string;
   priority?: 'P0' | 'P1' | 'P2';
   description?: string;
   scenarios: Scenario[];
+  endpoints?: Endpoint[];   // S3
+  entities?: Entity[];      // S3
 }
 
 export interface SpecDocument {
@@ -171,8 +204,134 @@ function parseRequirementBlock(block: string): SpecRequirement | null {
   }
 
   const body = lines.slice(metaEndIdx).join('\n');
-  const scenarios = parseScenarios(body);
-  return { id, name, priority, description, scenarios };
+
+  // S3: split off `### Endpoints` / `### Entities` subsections before parsing scenarios
+  const { scenariosBody, endpointsBody, entitiesBody } = splitStructuralSubsections(body);
+  const scenarios = parseScenarios(scenariosBody);
+  const endpoints = endpointsBody ? parseEndpoints(endpointsBody) : undefined;
+  const entities = entitiesBody ? parseEntities(entitiesBody) : undefined;
+
+  const req: SpecRequirement = { id, name, priority, description, scenarios };
+  if (endpoints && endpoints.length > 0) req.endpoints = endpoints;
+  if (entities && entities.length > 0) req.entities = entities;
+  return req;
+}
+
+/**
+ * S3 — Split a requirement body into the scenarios portion and any optional
+ * `### Endpoints` / `### Entities` H3 subsections. Subsection content spans
+ * from the heading to the next H3 (`###`) or H2 (`##`) heading or EOF.
+ */
+function splitStructuralSubsections(body: string): {
+  scenariosBody: string;
+  endpointsBody: string | null;
+  entitiesBody: string | null;
+} {
+  const normalized = body.replace(/\r\n/g, '\n');
+  const endpointsIdx = findH3(normalized, 'Endpoints');
+  const entitiesIdx = findH3(normalized, 'Entities');
+
+  // Determine cut point: whichever H3 appears first ends the scenarios body
+  const firstH3 = [endpointsIdx, entitiesIdx]
+    .filter((x): x is number => x !== -1)
+    .sort((a, b) => a - b)[0];
+
+  const scenariosBody = firstH3 === undefined ? normalized : normalized.slice(0, firstH3);
+  const endpointsBody = endpointsIdx === -1 ? null : extractH3Section(normalized, endpointsIdx);
+  const entitiesBody = entitiesIdx === -1 ? null : extractH3Section(normalized, entitiesIdx);
+  return { scenariosBody, endpointsBody, entitiesBody };
+}
+
+function findH3(text: string, name: string): number {
+  const re = new RegExp(`^###\\s+${name}\\s*$`, 'm');
+  const m = text.match(re);
+  return m ? (m.index ?? -1) : -1;
+}
+
+function extractH3Section(text: string, headingIdx: number): string {
+  // Find the end of the heading line, then capture until next `##` or EOF.
+  const afterHeading = text.indexOf('\n', headingIdx);
+  if (afterHeading === -1) return '';
+  const rest = text.slice(afterHeading + 1);
+  const next = rest.match(/\n##\s/m);
+  const endRel = next ? (next.index ?? rest.length) : rest.length;
+  return rest.slice(0, endRel);
+}
+
+/**
+ * S3 — Parse `### Endpoints` body into Endpoint[].
+ *
+ * Format:
+ *   - POST /auth/register
+ *     - operationId: registerUser
+ *     - request: RegisterInput
+ *     - response: 201 User
+ */
+function parseEndpoints(body: string): Endpoint[] {
+  const endpoints: Endpoint[] = [];
+  const lines = body.split('\n');
+  let current: Endpoint | null = null;
+  for (const raw of lines) {
+    const t = raw.trimEnd();
+    if (!t.trim()) continue;
+    const headMatch = t.match(/^-\s+(GET|POST|PUT|PATCH|DELETE)\s+(\/\S*)\s*$/);
+    if (headMatch) {
+      if (current) endpoints.push(current);
+      current = {
+        method: headMatch[1] as Endpoint['method'],
+        path: headMatch[2],
+        operationId: '', // populated by operationId: line below
+      };
+      continue;
+    }
+    const opIdMatch = t.match(/^\s+-\s+operationId:\s*(.+?)\s*$/);
+    const reqMatch = t.match(/^\s+-\s+request:\s*(.+?)\s*$/);
+    const resMatch = t.match(/^\s+-\s+response:\s*(.+?)\s*$/);
+    if (opIdMatch && current) current.operationId = opIdMatch[1].trim();
+    else if (reqMatch && current) current.request = reqMatch[1].trim();
+    else if (resMatch && current) current.response = resMatch[1].trim();
+  }
+  if (current) endpoints.push(current);
+  // Filter out endpoints with empty operationId (malformed)
+  return endpoints.filter(e => e.operationId);
+}
+
+/**
+ * S3 — Parse `### Entities` body into Entity[].
+ *
+ * Format:
+ *   - User
+ *     - id: UUID pk
+ *     - email: TEXT unique not_null
+ */
+function parseEntities(body: string): Entity[] {
+  const entities: Entity[] = [];
+  const lines = body.split('\n');
+  let current: Entity | null = null;
+  for (const raw of lines) {
+    const t = raw.trimEnd();
+    if (!t.trim()) continue;
+    const nameMatch = t.match(/^-\s+([A-Z][A-Za-z0-9]*)\s*$/);
+    if (nameMatch) {
+      if (current) entities.push(current);
+      current = { name: nameMatch[1], fields: [] };
+      continue;
+    }
+    const fieldMatch = t.match(/^\s+-\s+([a-z][a-z0-9_]*):\s*([A-Z][A-Z0-9_]*)(?:\s+(.+))?$/);
+    if (fieldMatch && current) {
+      const constraintsRaw = (fieldMatch[3] || '').trim();
+      const constraints = constraintsRaw
+        ? constraintsRaw.split(/\s+/).filter(s => s.length > 0)
+        : [];
+      current.fields.push({
+        name: fieldMatch[1],
+        type: fieldMatch[2],
+        constraints,
+      });
+    }
+  }
+  if (current) entities.push(current);
+  return entities.filter(e => e.fields.length > 0);
 }
 
 function parseScenarios(body: string): Scenario[] {
@@ -386,6 +545,214 @@ export function specToPrdRequirements(doc: SpecDocument): string {
 }
 
 // ─────────────────────────────────────────
+// S3 — Structural derivation (specs → OpenAPI / db-schema)
+// ─────────────────────────────────────────
+
+/**
+ * Derive the YAML content for an OpenAPI 3.0.3 fragment covering `paths:`
+ * and `components.schemas:`. The output is intended to live inside a managed
+ * YAML-comment block in `_wdf_output/api-spec.yaml`.
+ *
+ * Behavior:
+ * - Endpoints are grouped by path; same path with multiple methods merges
+ *   into a single `paths.<path>` mapping.
+ * - Entities become `components.schemas.<EntityName>` with `type: object`
+ *   and `properties` enumerated from `fields`. Constraints are NOT translated
+ *   to JSON Schema (out of scope); only field names + types are emitted.
+ *
+ * The output is YAML text (no leading `---`).
+ */
+export function specToOpenApi(docs: SpecDocument[]): string {
+  const pathsByPath = new Map<string, Record<string, unknown>>();
+  const schemasByName = new Map<string, Entity>();
+
+  for (const doc of docs) {
+    for (const req of doc.requirements) {
+      if (req.endpoints) {
+        for (const e of req.endpoints) {
+          const entry = pathsByPath.get(e.path) || {};
+          const opRecord: Record<string, unknown> = { operationId: e.operationId };
+          if (e.request) {
+            opRecord.requestBody = {
+              required: true,
+              content: { 'application/json': { schema: refSchema(e.request) } },
+            };
+          }
+          const status = parseResponseStatus(e.response) || defaultStatus(e.method);
+          const responseSchemaName = parseResponseSchema(e.response);
+          opRecord.responses = {
+            [status]: responseSchemaName
+              ? { description: 'OK', content: { 'application/json': { schema: refSchema(responseSchemaName) } } }
+              : { description: 'OK' },
+          };
+          entry[e.method.toLowerCase()] = opRecord;
+          pathsByPath.set(e.path, entry);
+        }
+      }
+      if (req.entities) {
+        for (const ent of req.entities) {
+          // First-declared wins; validateSpec already enforced equivalence
+          if (!schemasByName.has(ent.name)) schemasByName.set(ent.name, ent);
+        }
+      }
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push('paths:');
+  if (pathsByPath.size === 0) {
+    lines.push('  {}');
+  } else {
+    for (const [path, methods] of [...pathsByPath.entries()].sort()) {
+      lines.push(`  ${path}:`);
+      for (const method of Object.keys(methods).sort()) {
+        lines.push(`    ${method}:`);
+        const op = methods[method] as Record<string, unknown>;
+        for (const [k, v] of Object.entries(op)) {
+          if (v && typeof v === 'object') {
+            lines.push(`      ${k}:`);
+            lines.push(yamlDumpValue(v, 8));
+          } else {
+            lines.push(`      ${k}: ${String(v)}`);
+          }
+        }
+      }
+    }
+  }
+  lines.push('components:');
+  lines.push('  schemas:');
+  if (schemasByName.size === 0) {
+    lines.push('    {}');
+  } else {
+    for (const [name, ent] of [...schemasByName.entries()].sort()) {
+      lines.push(`    ${name}:`);
+      lines.push('      type: object');
+      lines.push('      properties:');
+      for (const f of ent.fields) {
+        lines.push(`        ${f.name}:`);
+        lines.push(`          type: ${sqlTypeToJsonSchema(f.type)}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function refSchema(name: string): Record<string, unknown> {
+  return { $ref: `#/components/schemas/${name}` };
+}
+
+function parseResponseStatus(response?: string): string | null {
+  if (!response) return null;
+  const m = response.match(/^(\d{3})\b/);
+  return m ? m[1] : null;
+}
+
+function parseResponseSchema(response?: string): string | null {
+  if (!response) return null;
+  const m = response.match(/^[A-Z][A-Za-z0-9]*$|^\d{3}\s+([A-Z][A-Za-z0-9]*)$/);
+  if (!m) return null;
+  return m[1] || m[0];
+}
+
+function defaultStatus(method: Endpoint['method']): string {
+  switch (method) {
+    case 'POST': return '201';
+    case 'DELETE': return '204';
+    default: return '200';
+  }
+}
+
+function sqlTypeToJsonSchema(sqlType: string): string {
+  const u = sqlType.toUpperCase();
+  if (u === 'UUID' || u === 'TEXT' || u === 'VARCHAR') return 'string';
+  if (u === 'INTEGER' || u === 'BIGINT' || u === 'SERIAL' || u === 'NUMERIC') return 'integer';
+  if (u === 'BOOLEAN') return 'boolean';
+  if (u === 'TIMESTAMP' || u === 'DATE' || u === 'TIME') return 'string';
+  if (u === 'JSONB') return 'object';
+  return 'string';
+}
+
+/** Tiny YAML value dumper — emits nested mappings/objects as indented YAML. */
+function yamlDumpValue(value: unknown, indent: number): string {
+  const pad = ' '.repeat(indent);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return `${pad}{}: {}`;
+    return entries.map(([k, v]) => {
+      if (v && typeof v === 'object') {
+        return `${pad}${k}:\n${yamlDumpValue(v, indent + 2)}`;
+      }
+      return `${pad}${k}: ${String(v)}`;
+    }).join('\n');
+  }
+  return `${pad}${String(value)}`;
+}
+
+/**
+ * Derive the markdown content for a `## Tables` section covering every
+ * unique entity across all docs. Output is intended to live inside a managed
+ * HTML-comment block in `_wdf_output/db-schema.md`.
+ *
+ * Format per table:
+ *   ### Table: <Name>
+ *   <CREATE TABLE SQL>
+ *   | Column | Type | Constraints |
+ *   | --- | --- | --- |
+ *   | <fields...> |
+ */
+export function specToDbSchema(docs: SpecDocument[]): string {
+  const schemasByName = new Map<string, { entity: Entity; domain: string }>();
+  for (const doc of docs) {
+    for (const req of doc.requirements) {
+      if (!req.entities) continue;
+      for (const ent of req.entities) {
+        if (!schemasByName.has(ent.name)) {
+          schemasByName.set(ent.name, { entity: ent, domain: doc.domain });
+        }
+      }
+    }
+  }
+
+  const blocks: string[] = [];
+  blocks.push('## Tables');
+  blocks.push('');
+  if (schemasByName.size === 0) {
+    blocks.push('<!-- No entities declared in specs/ -->');
+    return blocks.join('\n');
+  }
+
+  for (const [name, { entity, domain }] of [...schemasByName.entries()].sort()) {
+    blocks.push(`### Table: ${name}`);
+    blocks.push('');
+    blocks.push(`> Domain: \`${domain}\``);
+    blocks.push('');
+    blocks.push('```sql');
+    const colLines = entity.fields.map(f => {
+      const tail = f.constraints.length > 0 ? ' ' + f.constraints.join(' ').toUpperCase() : '';
+      return `  ${f.name} ${f.type}${tail}`;
+    });
+    blocks.push(`CREATE TABLE ${snakeCase(name)} (`);
+    blocks.push(colLines.join(',\n'));
+    blocks.push(');');
+    blocks.push('```');
+    blocks.push('');
+    blocks.push('| Column | Type | Constraints |');
+    blocks.push('| --- | --- | --- |');
+    for (const f of entity.fields) {
+      blocks.push(`| ${f.name} | ${f.type} | ${f.constraints.join(', ') || '—'} |`);
+    }
+    blocks.push('');
+  }
+
+  return blocks.join('\n').replace(/\n+$/, '\n');
+}
+
+function snakeCase(pascal: string): string {
+  return pascal.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
+// ─────────────────────────────────────────
 // Sync: reverse (PRD -> specs/)
 // ─────────────────────────────────────────
 
@@ -522,6 +889,132 @@ export function forwardSync(
 }
 
 // ─────────────────────────────────────────
+// S3 — Forward sync: specs/ -> api-spec.yaml + db-schema.md
+// ─────────────────────────────────────────
+
+/**
+ * Replace the managed YAML-comment block in api-spec.yaml with regenerated
+ * `paths:` and `components.schemas:` derived from specs/. Hand-authored
+ * `info`, `servers`, `securitySchemes` etc. are preserved untouched.
+ *
+ * Managed block format (YAML comments, since YAML doesn't allow HTML comments):
+ *   # wdf:specs-sync:start
+ *   <generated paths + components.schemas>
+ *   # wdf:specs-sync:end
+ *
+ * If no managed block exists yet, the new block is inserted at the end of
+ * the existing top-level mapping (heuristic: after the last known top-level
+ * key). If the file is empty, a fresh skeleton is emitted.
+ *
+ * Same source_of_truth gate as PRD forwardSync.
+ */
+export function forwardSyncApiSpec(
+  docs: SpecDocument[],
+  apiText: string,
+  apiPath: string,
+  config: SpecSyncConfig,
+): SyncResult {
+  const warnings: string[] = [];
+  if (!config.sourceOfTruth) {
+    warnings.push(
+      'Forward sync (specs/ -> api-spec.yaml) requires [specs] source_of_truth = true. Skipping.',
+    );
+    return { direction: 'forward', writes: [], warnings };
+  }
+
+  // Determine whether any structural content exists to emit
+  const hasContent = docs.some(d => d.requirements.some(r => (r.endpoints?.length ?? 0) > 0 || (r.entities?.length ?? 0) > 0));
+  if (!hasContent) {
+    // Specs without endpoints/entities are valid (behavioral-only). Treat as silent no-op.
+    return { direction: 'forward', writes: [], warnings };
+  }
+
+  const generated = specToOpenApi(docs);
+  const startMarker = `# ${config.managedRegionMarker}:start`;
+  const endMarker = `# ${config.managedRegionMarker}:end`;
+  const managedBlock = `${startMarker}\n${generated}\n${endMarker}`;
+
+  const startIdx = apiText.indexOf(startMarker);
+  let newApi: string;
+  if (startIdx >= 0) {
+    // Replace existing managed block
+    const endIdx = apiText.indexOf(endMarker, startIdx);
+    if (endIdx === -1) {
+      warnings.push(`Malformed managed block in api-spec.yaml: start marker found but no end marker. Skipping.`);
+      return { direction: 'forward', writes: [], warnings };
+    }
+    const afterEnd = apiText.slice(endIdx + endMarker.length);
+    newApi = apiText.slice(0, startIdx) + managedBlock + afterEnd;
+  } else {
+    // First-time insertion: append at end of file with a separating newline
+    newApi = apiText.trimEnd() + '\n\n' + managedBlock + '\n';
+  }
+
+  return {
+    direction: 'forward',
+    writes: [{ path: apiPath, content: newApi, action: 'update' }],
+    warnings,
+  };
+}
+
+/**
+ * Replace the managed HTML-comment block in db-schema.md with regenerated
+ * `## Tables` derived from specs/. Triggers/extensions/migrations preserved.
+ *
+ * Managed block format (HTML comments, same as PRD):
+ *   <!-- wdf:specs-sync:start -->
+ *   <generated ## Tables section>
+ *   <!-- wdf:specs-sync:end -->
+ *
+ * Same source_of_truth gate as PRD forwardSync.
+ */
+export function forwardSyncDbSchema(
+  docs: SpecDocument[],
+  dbText: string,
+  dbPath: string,
+  config: SpecSyncConfig,
+): SyncResult {
+  const warnings: string[] = [];
+  if (!config.sourceOfTruth) {
+    warnings.push(
+      'Forward sync (specs/ -> db-schema.md) requires [specs] source_of_truth = true. Skipping.',
+    );
+    return { direction: 'forward', writes: [], warnings };
+  }
+
+  const hasContent = docs.some(d => d.requirements.some(r => (r.entities?.length ?? 0) > 0));
+  if (!hasContent) {
+    // Specs without entities are valid (behavioral-only). Treat as silent no-op.
+    return { direction: 'forward', writes: [], warnings };
+  }
+
+  const generated = specToDbSchema(docs);
+  const startMarker = `<!-- ${config.managedRegionMarker}:start -->`;
+  const endMarker = `<!-- ${config.managedRegionMarker}:end -->`;
+  const managedBlock = `${startMarker}\n${generated}\n${endMarker}`;
+
+  const startIdx = dbText.indexOf(startMarker);
+  let newDb: string;
+  if (startIdx >= 0) {
+    const endIdx = dbText.indexOf(endMarker, startIdx);
+    if (endIdx === -1) {
+      warnings.push(`Malformed managed block in db-schema.md: start marker found but no end marker. Skipping.`);
+      return { direction: 'forward', writes: [], warnings };
+    }
+    const afterEnd = dbText.slice(endIdx + endMarker.length);
+    newDb = dbText.slice(0, startIdx) + managedBlock + afterEnd;
+  } else {
+    newDb = dbText.trimEnd() + '\n\n' + managedBlock + '\n';
+  }
+
+  return {
+    direction: 'forward',
+    writes: [{ path: dbPath, content: newDb, action: 'update' }],
+    warnings,
+  };
+}
+
+// ─────────────────────────────────────────
 // Serialization (canonical, byte-stable)
 // ─────────────────────────────────────────
 
@@ -562,6 +1055,29 @@ export function formatSpecDoc(doc: SpecDocument): string {
       lines.push(`THEN ${s.then.join(' and ')}`);
       if (sIdx < req.scenarios.length - 1) lines.push('');
     });
+
+    // S3: optional structural subsections
+    if (req.endpoints && req.endpoints.length > 0) {
+      lines.push('');
+      lines.push('### Endpoints');
+      for (const e of req.endpoints) {
+        lines.push(`- ${e.method} ${e.path}`);
+        lines.push(`  - operationId: ${e.operationId}`);
+        if (e.request) lines.push(`  - request: ${e.request}`);
+        if (e.response) lines.push(`  - response: ${e.response}`);
+      }
+    }
+    if (req.entities && req.entities.length > 0) {
+      lines.push('');
+      lines.push('### Entities');
+      for (const ent of req.entities) {
+        lines.push(`- ${ent.name}`);
+        for (const f of ent.fields) {
+          const tail = f.constraints.length > 0 ? ' ' + f.constraints.join(' ') : '';
+          lines.push(`  - ${f.name}: ${f.type}${tail}`);
+        }
+      }
+    }
 
     if (idx < sorted.length - 1) lines.push('');
   });
@@ -680,10 +1196,79 @@ export function validateSpec(doc: SpecDocument): ValidationError[] {
         }
       }
     });
+
+    // S3: validate endpoints
+    if (req.endpoints) {
+      for (const e of req.endpoints) {
+        if (!e.path.startsWith('/')) {
+          errors.push({
+            ruleId: 'endpoint_path_format',
+            severity: 'error',
+            message: `Endpoint path "${e.path}" must start with /`,
+            path: `${req.name}.endpoints`,
+          });
+        }
+        if (!/^[a-z][a-zA-Z0-9]*$/.test(e.operationId)) {
+          errors.push({
+            ruleId: 'endpoint_operationId_format',
+            severity: 'error',
+            message: `Endpoint operationId "${e.operationId}" must be camelCase (^[a-z][a-zA-Z0-9]*$)`,
+            path: `${req.name}.endpoints`,
+          });
+        }
+      }
+    }
+  }
+
+  // S3: entity_name_unique_within_domain — same name must agree byte-for-byte
+  const entityByName = new Map<string, Entity[]>();
+  for (const req of doc.requirements) {
+    if (!req.entities) continue;
+    for (const ent of req.entities) {
+      const list = entityByName.get(ent.name) || [];
+      list.push(ent);
+      entityByName.set(ent.name, list);
+    }
+  }
+  for (const [name, occurrences] of entityByName) {
+    if (occurrences.length < 2) continue;
+    const first = JSON.stringify(occurrences[0]);
+    for (let i = 1; i < occurrences.length; i++) {
+      if (JSON.stringify(occurrences[i]) !== first) {
+        errors.push({
+          ruleId: 'entity_name_unique_within_domain',
+          severity: 'error',
+          message: `Entity "${name}" declared multiple times in domain "${doc.domain}" with conflicting definitions`,
+        });
+        break;
+      }
+    }
+  }
+
+  // S3: entity_field_type_known
+  for (const req of doc.requirements) {
+    if (!req.entities) continue;
+    for (const ent of req.entities) {
+      for (const f of ent.fields) {
+        if (!KNOWN_ENTITY_TYPES.has(f.type)) {
+          errors.push({
+            ruleId: 'entity_field_type_known',
+            severity: 'error',
+            message: `Entity "${ent.name}" field "${f.name}" has unknown type "${f.type}". Known: ${[...KNOWN_ENTITY_TYPES].join('|')}`,
+            path: `${req.name}.entities`,
+          });
+        }
+      }
+    }
   }
 
   return errors;
 }
+
+const KNOWN_ENTITY_TYPES = new Set<string>([
+  'UUID', 'TEXT', 'INTEGER', 'BIGINT', 'BOOLEAN', 'TIMESTAMP',
+  'JSONB', 'NUMERIC', 'DATE', 'TIME', 'VARCHAR', 'SERIAL',
+]);
 
 // ─────────────────────────────────────────
 // I/O wrapper

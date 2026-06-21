@@ -1,0 +1,20 @@
+# CHG-2026-015 S3 — Minimal OpenAPI skeleton for spec-sync-demo.
+#
+# The `# wdf:specs-sync:start` … `:end` block is regenerated from specs/
+# whenever [specs] source_of_truth = true. Hand-authored content (info,
+# servers, securitySchemes) is preserved untouched.
+openapi: 3.0.3
+info:
+  title: spec-sync-demo API
+  version: 0.1.0
+servers:
+  - url: http://localhost:3000
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+# wdf:specs-sync:start
+# (regenerated from _wdf_output/specs/*/spec.md by forwardSyncApiSpec)
+# wdf:specs-sync:end

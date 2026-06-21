@@ -161,6 +161,9 @@ export interface SpecsSection {
   default_sync_direction: 'forward' | 'reverse';
   managed_region_marker: string;
   enforce_unique_requirement_names: boolean;
+  // S3: paths to derived artifacts that forward-sync regenerates
+  api_spec_path?: string;
+  db_schema_path?: string;
 }
 
 export interface WorkflowConfig {
@@ -285,6 +288,8 @@ export const DEFAULT_CONFIG: WorkflowConfig = {
     default_sync_direction: 'reverse',
     managed_region_marker: 'wdf:specs-sync',
     enforce_unique_requirement_names: true,
+    api_spec_path: `{project-root}/${DEFAULT_OUTPUT_BASE}/api-spec.yaml`,
+    db_schema_path: `{project-root}/${DEFAULT_OUTPUT_BASE}/db-schema.md`,
   },
 };
 
@@ -574,6 +579,16 @@ export function getOutputDir(config: WorkflowConfig, projectRoot: string): strin
 /** Get absolute specs/ directory path (canonical BDD source of truth). */
 export function getSpecsDir(config: WorkflowConfig, projectRoot: string): string {
   return resolvePath(config.specs.specs_dir, projectRoot);
+}
+
+/** S3: Get absolute api-spec.yaml path. */
+export function getApiSpecPath(config: WorkflowConfig, projectRoot: string): string {
+  return resolvePath(config.specs.api_spec_path ?? `{project-root}/_wdf_output/api-spec.yaml`, projectRoot);
+}
+
+/** S3: Get absolute db-schema.md path. */
+export function getDbSchemaPath(config: WorkflowConfig, projectRoot: string): string {
+  return resolvePath(config.specs.db_schema_path ?? `{project-root}/_wdf_output/db-schema.md`, projectRoot);
 }
 
 /** Get absolute sprint-status.yaml path. */

@@ -1956,13 +1956,18 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
     const force = args.includes('--force');
     const dryRun = args.includes('--dry-run');
     const noRewrite = args.includes('--no-rewrite');
+    const noPrdRegen = args.includes('--no-prd-regen');
+    const noApiRegen = args.includes('--no-api-regen');
+    const noDbRegen = args.includes('--no-db-regen');
+    const archiveOpts = { dryRun, noRewrite, noPrdRegen, noApiRegen, noDbRegen };
     try {
-      const result = await archiveAndRewrite(id, projectRoot, { dryRun, noRewrite });
+      const result = await archiveAndRewrite(id, projectRoot, archiveOpts);
       if (json) {
         console.log(JSON.stringify({ change_id: id, ...result }, null, 2));
       } else {
         const patchedPart = result.patched.length ? ` — patched ${result.patched.length} canonical spec(s): ${result.patched.join(', ')}` : '';
-        console.log(`✅ ${dryRun ? '[DRY RUN] ' : ''}Archived changes/${id} → ${result.archived}${patchedPart}`);
+        const warnPart = result.cascadeWarning ? `\n⚠ ${result.cascadeWarning}` : '';
+        console.log(`✅ ${dryRun ? '[DRY RUN] ' : ''}Archived changes/${id} → ${result.archived}${patchedPart}${warnPart}`);
       }
     } catch (err: any) {
       if (err.message?.includes('Already archived') && force) {
@@ -1970,7 +1975,7 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
         const { rmSync } = require('fs') as typeof import('fs');
         const existing = join(projectRoot, 'changes', '_archive', id);
         rmSync(existing, { recursive: true, force: true });
-        const result = await archiveAndRewrite(id, projectRoot, { dryRun, noRewrite });
+        const result = await archiveAndRewrite(id, projectRoot, archiveOpts);
         console.log(`✅ [FORCE] Archived changes/${id} → ${result.archived}`);
       } else {
         console.error(`❌ ${err.message}`);

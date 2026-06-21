@@ -887,6 +887,16 @@ describe('cr-applier — v2 archiveAndRewrite interop', () => {
       `# PRD\n\n## 2. Functional Requirements\n\n(stale)\n\n## 3. Next\n`,
       'utf8',
     );
+    writeFileSync(
+      join(root, '_wdf_output', 'api-spec.yaml'),
+      `openapi: 3.0.3\ninfo:\n  title: t\n  version: 0.1.0\n# wdf:specs-sync:start\n# wdf:specs-sync:end\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(root, '_wdf_output', 'db-schema.md'),
+      `# DB\n\n<!-- wdf:specs-sync:start -->\n<!-- wdf:specs-sync:end -->\n`,
+      'utf8',
+    );
     const result = await archiveAndRewrite('CHG-2026-017', root);
     expect(result.patched).toContain('_wdf_output/specs/auth/spec.md');
     expect(result.patched).toContain('_wdf_output/prd.md');
@@ -901,5 +911,173 @@ describe('cr-applier — v2 archiveAndRewrite interop', () => {
     expect(existsSync(join(root, 'changes', '_archive'))).toBe(false);
     const originalSpec = readFileSync(join(root, '_wdf_output/specs/auth/spec.md'), 'utf8');
     expect(originalSpec).toBe(VALID_AUTH_SPEC);
+  });
+});
+
+// ─────────────────────────────────────────
+// CHG-2026-015 S3 — per-target cascade flags + structural cascade interop
+// ─────────────────────────────────────────
+
+describe('cr-applier — S3 per-target cascade flags', () => {
+  let root: string;
+  beforeEach(() => {
+    root = setupRoot();
+    writeAuthSpec(root);
+    writeFileSync(join(root, 'customize.toml'), `[specs]\nsource_of_truth = true\n`, 'utf8');
+    writeFileSync(
+      join(root, '_wdf_output', 'prd.md'),
+      `# PRD\n\n## 2. Functional Requirements\n\n(old)\n\n## 3. Next\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(root, '_wdf_output', 'api-spec.yaml'),
+      `openapi: 3.0.3\ninfo:\n  title: x\n  version: '1'\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(root, '_wdf_output', 'db-schema.md'),
+      `# DB Schema\n`,
+      'utf8',
+    );
+  });
+
+  function buildPlan(): void {
+    const delta: Delta = {
+      ...V2_HEADER,
+      operations: [
+        {
+          op: 'ADDED', domain: 'auth',
+          requirement: {
+            id: 'REQ-014', name: 'Password Reset',
+            scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+            endpoints: [{ method: 'POST', path: '/auth/password-reset', operationId: 'requestPasswordReset', response: '202 Ack' }],
+            entities: [{ name: 'PasswordResetToken', fields: [{ name: 'token', type: 'TEXT', constraints: ['pk'] }] }],
+          },
+        },
+      ],
+    };
+    const plan = planApplyV2(delta, root);
+    applyPlan(plan);
+  }
+
+  it('--no-prd-regen skips PRD write but writes api + db', () => {
+    buildPlan();
+    // Replicate by directly calling maybeCascadeSpecsSync with flag
+    const plan = {
+      delta: {} as Delta,
+      changes: [{
+        file: join(root, '_wdf_output/specs/auth/spec.md'),
+        relPath: '_wdf_output/specs/auth/spec.md',
+        action: 'write' as const,
+        before: '', after: '',
+        ops: [0],
+      }],
+      dryRun: false,
+    };
+    const cascade = maybeCascadeSpecsSync(root, plan, false, { noPrdRegen: true });
+    expect(cascade.cascadeWrites).not.toContain('_wdf_output/prd.md');
+    expect(cascade.cascadeWrites).toContain('_wdf_output/api-spec.yaml');
+    expect(cascade.cascadeWrites).toContain('_wdf_output/db-schema.md');
+  });
+
+  it('--no-api-regen skips api-spec.yaml but writes PRD + db', () => {
+    buildPlan();
+    const plan = {
+      delta: {} as Delta,
+      changes: [{
+        file: join(root, '_wdf_output/specs/auth/spec.md'),
+        relPath: '_wdf_output/specs/auth/spec.md',
+        action: 'write' as const,
+        before: '', after: '',
+        ops: [0],
+      }],
+      dryRun: false,
+    };
+    const cascade = maybeCascadeSpecsSync(root, plan, false, { noApiRegen: true });
+    expect(cascade.cascadeWrites).toContain('_wdf_output/prd.md');
+    expect(cascade.cascadeWrites).not.toContain('_wdf_output/api-spec.yaml');
+    expect(cascade.cascadeWrites).toContain('_wdf_output/db-schema.md');
+  });
+
+  it('--no-db-regen skips db-schema.md but writes PRD + api', () => {
+    buildPlan();
+    const plan = {
+      delta: {} as Delta,
+      changes: [{
+        file: join(root, '_wdf_output/specs/auth/spec.md'),
+        relPath: '_wdf_output/specs/auth/spec.md',
+        action: 'write' as const,
+        before: '', after: '',
+        ops: [0],
+      }],
+      dryRun: false,
+    };
+    const cascade = maybeCascadeSpecsSync(root, plan, false, { noDbRegen: true });
+    expect(cascade.cascadeWrites).toContain('_wdf_output/prd.md');
+    expect(cascade.cascadeWrites).toContain('_wdf_output/api-spec.yaml');
+    expect(cascade.cascadeWrites).not.toContain('_wdf_output/db-schema.md');
+  });
+});
+
+describe('cr-applier — S3 structural cascade end-to-end (archiveAndRewrite)', () => {
+  let root: string;
+  beforeEach(() => {
+    root = setupRoot();
+    writeAuthSpec(root);
+    writeFileSync(join(root, 'customize.toml'), `[specs]\nsource_of_truth = true\n`, 'utf8');
+    writeFileSync(
+      join(root, '_wdf_output', 'prd.md'),
+      `# PRD\n\n## 2. Functional Requirements\n\n(stale)\n\n## 3. Next\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(root, '_wdf_output', 'api-spec.yaml'),
+      `openapi: 3.0.3\ninfo:\n  title: x\n  version: '1'\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(root, '_wdf_output', 'db-schema.md'),
+      `# DB Schema\n`,
+      'utf8',
+    );
+    const crDir = join(root, 'changes', 'CHG-2026-017-demo');
+    mkdirSync(crDir, { recursive: true });
+    writeFileSync(
+      join(crDir, 'delta.yaml'),
+      JSON.stringify({
+        ...V2_HEADER,
+        operations: [
+          {
+            op: 'ADDED', domain: 'auth',
+            requirement: {
+              id: 'REQ-014', name: 'Password Reset',
+              scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+              endpoints: [{ method: 'POST', path: '/auth/password-reset', operationId: 'requestPasswordReset', response: '202 Ack' }],
+              entities: [{ name: 'PasswordResetToken', fields: [{ name: 'token', type: 'TEXT', constraints: ['pk'] }] }],
+            },
+          },
+        ],
+      }),
+      'utf8',
+    );
+  });
+
+  it('cascades to all three artifacts (PRD + api + db) on full archive', async () => {
+    const result = await archiveAndRewrite('CHG-2026-017', root);
+    expect(result.patched).toContain('_wdf_output/specs/auth/spec.md');
+    expect(result.patched).toContain('_wdf_output/prd.md');
+    expect(result.patched).toContain('_wdf_output/api-spec.yaml');
+    expect(result.patched).toContain('_wdf_output/db-schema.md');
+    // Verify content actually regenerated
+    expect(readFileSync(join(root, '_wdf_output/prd.md'), 'utf8')).toMatch(/Password Reset/);
+    expect(readFileSync(join(root, '_wdf_output/api-spec.yaml'), 'utf8')).toMatch(/requestPasswordReset/);
+    expect(readFileSync(join(root, '_wdf_output/db-schema.md'), 'utf8')).toMatch(/PasswordResetToken/);
+  });
+
+  it('respects --no-api-regen (api-spec.yaml untouched)', async () => {
+    const before = readFileSync(join(root, '_wdf_output/api-spec.yaml'), 'utf8');
+    await archiveAndRewrite('CHG-2026-017', root, { noApiRegen: true });
+    const after = readFileSync(join(root, '_wdf_output/api-spec.yaml'), 'utf8');
+    expect(after).toBe(before);
   });
 });

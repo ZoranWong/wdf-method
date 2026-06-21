@@ -1,5 +1,5 @@
 change_id: CHG-2026-017
-summary: "Demo semantic delta v2 — add Password Reset requirement to auth domain"
+summary: "Demo semantic delta v2 — add Password Reset requirement (with structural fields)"
 
 base_version: "3.9.0"
 target_version: "3.9.1"
@@ -38,4 +38,25 @@ operations:
             - they submit a new password
           then:
             - the system MUST reject the request with message "token expired"
-    rationale: "Reference v2 delta proving the schema_version: 2 path end-to-end."
+
+      # CHG-2026-015 S3 — structural fields exercising the api/db cascade.
+      endpoints:
+        - method: POST
+          path: /auth/password-reset
+          operationId: requestPasswordReset
+          request: PasswordResetRequestInput
+          response: 202 Ack
+        - method: POST
+          path: /auth/password-reset/confirm
+          operationId: confirmPasswordReset
+          request: PasswordResetConfirmInput
+          response: 200 Ack
+
+      entities:
+        - name: PasswordResetToken
+          fields:
+            - { name: token, type: TEXT, constraints: [pk] }
+            - { name: user_id, type: UUID, constraints: [not_null, fk(User.id)] }
+            - { name: expires_at, type: TIMESTAMP, constraints: [not_null] }
+
+    rationale: "Reference v2 delta proving schema_version: 2 + structural fields (S3) end-to-end."

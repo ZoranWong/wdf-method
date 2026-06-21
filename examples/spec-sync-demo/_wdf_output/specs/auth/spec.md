@@ -23,6 +23,19 @@ GIVEN the system is initialized
 WHEN the user performs the documented action
 THEN The system MUST hash the password with bcrypt before storing
 
+### Endpoints
+- POST /auth/register
+  - operationId: registerUser
+  - request: RegisterInput
+  - response: 201 User
+
+### Entities
+- User
+  - id: UUID pk
+  - email: TEXT unique not_null
+  - password_hash: TEXT not_null
+  - created_at: TIMESTAMP not_null
+
 ## Requirement: User Login
 - id: REQ-002
 - priority: P0
@@ -39,3 +52,9 @@ THEN The system MUST reject unknown emails with a 401 response
 GIVEN the system is initialized
 WHEN the user performs the documented action
 THEN The system MUST reject wrong passwords with a 401 response
+
+### Endpoints
+- POST /auth/login
+  - operationId: loginUser
+  - request: LoginInput
+  - response: 200 Session

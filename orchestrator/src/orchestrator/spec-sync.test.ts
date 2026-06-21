@@ -11,10 +11,16 @@ import {
   formatSpecDoc,
   validateSpec,
   forwardSync,
+  forwardSyncApiSpec,
+  forwardSyncDbSchema,
   reverseSync,
   applySync,
+  specToOpenApi,
+  specToDbSchema,
   type SpecDocument,
   type SpecRequirement,
+  type Endpoint,
+  type Entity,
   type ParsedReq,
   type SpecSyncConfig,
 } from './spec-sync.js';
@@ -477,5 +483,347 @@ describe('prdToSpecDocument', () => {
     expect(doc.requirements.length).toBeGreaterThan(0);
     const thenText = doc.requirements[0].scenarios[0].then.join(' ');
     expect(thenText).toMatch(/\bMUST\b/);
+  });
+});
+
+// ─────────────────────────────────────────
+// CHG-2026-015 S3 — Structural fields (endpoints + entities)
+// ─────────────────────────────────────────
+
+const SPEC_WITH_STRUCT = `---
+artifact_type: spec
+domain: auth
+version: 1
+---
+
+# Spec — Auth
+
+## Requirement: User Registration
+- id: REQ-001
+- priority: P0
+
+GIVEN a visitor with valid credentials
+WHEN they submit the registration form
+THEN the system MUST create the user record
+
+### Endpoints
+- POST /auth/register
+  - operationId: registerUser
+  - request: RegisterInput
+  - response: 201 User
+
+### Entities
+- User
+  - id: UUID pk
+  - email: TEXT unique not_null
+  - password_hash: TEXT not_null
+`;
+
+describe('CHG-2026-015 S3 — parseSpecDoc structural fields', () => {
+  it('extracts endpoints from ### Endpoints subsection', () => {
+    const doc = parseSpecDoc(SPEC_WITH_STRUCT, 'auth');
+    expect(doc.requirements).toHaveLength(1);
+    const req = doc.requirements[0];
+    expect(req.endpoints).toBeDefined();
+    expect(req.endpoints).toHaveLength(1);
+    const ep = req.endpoints![0];
+    expect(ep.method).toBe('POST');
+    expect(ep.path).toBe('/auth/register');
+    expect(ep.operationId).toBe('registerUser');
+    expect(ep.request).toBe('RegisterInput');
+    expect(ep.response).toBe('201 User');
+  });
+
+  it('extracts entities from ### Entities subsection', () => {
+    const doc = parseSpecDoc(SPEC_WITH_STRUCT, 'auth');
+    const req = doc.requirements[0];
+    expect(req.entities).toBeDefined();
+    expect(req.entities).toHaveLength(1);
+    const ent = req.entities![0];
+    expect(ent.name).toBe('User');
+    expect(ent.fields).toHaveLength(3);
+    expect(ent.fields[0]).toEqual({ name: 'id', type: 'UUID', constraints: ['pk'] });
+    expect(ent.fields[1]).toEqual({ name: 'email', type: 'TEXT', constraints: ['unique', 'not_null'] });
+  });
+
+  it('omits endpoints/entities arrays when subsections absent', () => {
+    const doc = parseSpecDoc(VALID_SPEC_MD, 'auth');
+    expect(doc.requirements[0].endpoints).toBeUndefined();
+    expect(doc.requirements[0].entities).toBeUndefined();
+  });
+
+  it('scenarios still parse correctly alongside structural subsections', () => {
+    const doc = parseSpecDoc(SPEC_WITH_STRUCT, 'auth');
+    expect(doc.requirements[0].scenarios).toHaveLength(1);
+    expect(doc.requirements[0].scenarios[0].then.join(' ')).toMatch(/\bMUST\b/);
+  });
+});
+
+describe('CHG-2026-015 S3 — formatSpecDoc round-trip with structural fields', () => {
+  it('serializes endpoints and entities idempotently', () => {
+    const doc = parseSpecDoc(SPEC_WITH_STRUCT, 'auth');
+    const out = formatSpecDoc(doc);
+    const reparsed = parseSpecDoc(out, 'auth');
+    const reformatted = formatSpecDoc(reparsed);
+    expect(reformatted).toBe(out);
+  });
+
+  it('emits ### Endpoints and ### Entities subsections in canonical order', () => {
+    const doc = parseSpecDoc(SPEC_WITH_STRUCT, 'auth');
+    const out = formatSpecDoc(doc);
+    const scenariosIdx = out.indexOf('THEN ');
+    const endpointsIdx = out.indexOf('### Endpoints');
+    const entitiesIdx = out.indexOf('### Entities');
+    expect(scenariosIdx).toBeGreaterThan(-1);
+    expect(endpointsIdx).toBeGreaterThan(scenariosIdx);
+    expect(entitiesIdx).toBeGreaterThan(endpointsIdx);
+  });
+});
+
+describe('CHG-2026-015 S3 — validateSpec for structural fields', () => {
+  const baseDoc: SpecDocument = {
+    domain: 'auth',
+    version: 1,
+    requirements: [{
+      id: 'REQ-001', name: 'User Registration',
+      scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+    }],
+  };
+
+  it('flags endpoint path not starting with /', () => {
+    const doc: SpecDocument = {
+      ...baseDoc,
+      requirements: [{
+        ...baseDoc.requirements[0],
+        endpoints: [{ method: 'POST', path: 'auth/register', operationId: 'registerUser' }],
+      }],
+    };
+    const errors = validateSpec(doc);
+    expect(errors.some(e => e.ruleId === 'endpoint_path_format')).toBe(true);
+  });
+
+  it('flags endpoint operationId not camelCase', () => {
+    const doc: SpecDocument = {
+      ...baseDoc,
+      requirements: [{
+        ...baseDoc.requirements[0],
+        endpoints: [{ method: 'POST', path: '/auth/register', operationId: 'RegisterUser' }],
+      }],
+    };
+    const errors = validateSpec(doc);
+    expect(errors.some(e => e.ruleId === 'endpoint_operationId_format')).toBe(true);
+  });
+
+  it('flags conflicting entity definitions with same name', () => {
+    const doc: SpecDocument = {
+      domain: 'auth',
+      version: 1,
+      requirements: [
+        {
+          id: 'REQ-001', name: 'Create User',
+          scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+          entities: [{ name: 'User', fields: [{ name: 'id', type: 'UUID', constraints: ['pk'] }] }],
+        },
+        {
+          id: 'REQ-002', name: 'Read User',
+          scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+          entities: [{ name: 'User', fields: [{ name: 'id', type: 'TEXT', constraints: ['pk'] }] }],
+        },
+      ],
+    };
+    const errors = validateSpec(doc);
+    expect(errors.some(e => e.ruleId === 'entity_name_unique_within_domain')).toBe(true);
+  });
+
+  it('accepts identical entity definitions across requirements', () => {
+    const ent: Entity = { name: 'User', fields: [{ name: 'id', type: 'UUID', constraints: ['pk'] }] };
+    const doc: SpecDocument = {
+      domain: 'auth',
+      version: 1,
+      requirements: [
+        { id: 'REQ-001', name: 'Create User', scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }], entities: [ent] },
+        { id: 'REQ-002', name: 'Read User', scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }], entities: [ent] },
+      ],
+    };
+    const errors = validateSpec(doc);
+    expect(errors.filter(e => e.ruleId === 'entity_name_unique_within_domain')).toHaveLength(0);
+  });
+
+  it('flags unknown entity field type', () => {
+    const doc: SpecDocument = {
+      ...baseDoc,
+      requirements: [{
+        ...baseDoc.requirements[0],
+        entities: [{ name: 'Widget', fields: [{ name: 'data', type: 'BLOB', constraints: [] }] }],
+      }],
+    };
+    const errors = validateSpec(doc);
+    expect(errors.some(e => e.ruleId === 'entity_field_type_known')).toBe(true);
+  });
+
+  it('accepts valid endpoints + entities', () => {
+    const doc: SpecDocument = {
+      ...baseDoc,
+      requirements: [{
+        ...baseDoc.requirements[0],
+        endpoints: [{ method: 'POST', path: '/users', operationId: 'createUser', response: '201 User' }],
+        entities: [{ name: 'User', fields: [{ name: 'id', type: 'UUID', constraints: ['pk'] }] }],
+      }],
+    };
+    expect(validateSpec(doc)).toEqual([]);
+  });
+});
+
+describe('CHG-2026-015 S3 — specToOpenApi derivation', () => {
+  it('emits paths grouped by URL with merged methods', () => {
+    const docs: SpecDocument[] = [{
+      domain: 'todos',
+      version: 1,
+      requirements: [
+        {
+          id: 'REQ-001', name: 'Create Todo',
+          scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+          endpoints: [{ method: 'POST', path: '/todos', operationId: 'createTodo', response: '201 Todo' }],
+        },
+        {
+          id: 'REQ-002', name: 'List Todos',
+          scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+          endpoints: [{ method: 'GET', path: '/todos', operationId: 'listTodos', response: '200 TodoList' }],
+        },
+      ],
+    }];
+    const out = specToOpenApi(docs);
+    expect(out).toMatch(/^paths:/);
+    expect(out).toMatch(/\/todos:/);
+    expect(out).toMatch(/post:/);
+    expect(out).toMatch(/get:/);
+    expect(out).toMatch(/operationId: createTodo/);
+    expect(out).toMatch(/operationId: listTodos/);
+  });
+
+  it('emits components.schemas with one entry per unique entity', () => {
+    const docs: SpecDocument[] = [{
+      domain: 'auth',
+      version: 1,
+      requirements: [{
+        id: 'REQ-001', name: 'User Registration',
+        scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+        entities: [{
+          name: 'User',
+          fields: [
+            { name: 'id', type: 'UUID', constraints: ['pk'] },
+            { name: 'email', type: 'TEXT', constraints: ['unique'] },
+          ],
+        }],
+      }],
+    }];
+    const out = specToOpenApi(docs);
+    expect(out).toMatch(/components:/);
+    expect(out).toMatch(/schemas:/);
+    expect(out).toMatch(/User:/);
+    expect(out).toMatch(/type: object/);
+    expect(out).toMatch(/id:/);
+    expect(out).toMatch(/email:/);
+  });
+});
+
+describe('CHG-2026-015 S3 — specToDbSchema derivation', () => {
+  it('emits CREATE TABLE per entity with column table', () => {
+    const docs: SpecDocument[] = [{
+      domain: 'todos',
+      version: 1,
+      requirements: [{
+        id: 'REQ-001', name: 'Create Todo',
+        scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+        entities: [{
+          name: 'Todo',
+          fields: [
+            { name: 'id', type: 'UUID', constraints: ['pk'] },
+            { name: 'title', type: 'TEXT', constraints: ['not_null'] },
+          ],
+        }],
+      }],
+    }];
+    const out = specToDbSchema(docs);
+    expect(out).toMatch(/^## Tables/);
+    expect(out).toMatch(/### Table: Todo/);
+    expect(out).toMatch(/CREATE TABLE todo \(/);
+    expect(out).toMatch(/id UUID PK/);
+    expect(out).toMatch(/title TEXT NOT_NULL/);
+    expect(out).toMatch(/\| id \| UUID \| pk \|/);
+  });
+});
+
+describe('CHG-2026-015 S3 — forwardSyncApiSpec + forwardSyncDbSchema', () => {
+  const cfg: SpecSyncConfig = {
+    specsDir: '/tmp/specs',
+    sourceOfTruth: true,
+    managedRegionMarker: 'wdf:specs-sync',
+    enforceUniqueRequirementNames: true,
+  };
+
+  const docs: SpecDocument[] = [{
+    domain: 'auth',
+    version: 1,
+    requirements: [{
+      id: 'REQ-001', name: 'User Registration',
+      scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+      endpoints: [{ method: 'POST', path: '/auth/register', operationId: 'registerUser', response: '201 User' }],
+      entities: [{ name: 'User', fields: [{ name: 'id', type: 'UUID', constraints: ['pk'] }] }],
+    }],
+  }];
+
+  it('refuses to write when source_of_truth=false', () => {
+    const result = forwardSyncApiSpec(docs, 'openapi: 3.0.3\n', '/tmp/api.yaml', { ...cfg, sourceOfTruth: false });
+    expect(result.writes).toHaveLength(0);
+    expect(result.warnings.join(' ')).toMatch(/source_of_truth/);
+  });
+
+  it('silently no-ops when no endpoints/entities present (behavioral-only specs are valid)', () => {
+    const noStructDocs: SpecDocument[] = [{
+      domain: 'auth', version: 1,
+      requirements: [{ id: 'REQ-001', name: 'X', scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }] }],
+    }];
+    const result = forwardSyncApiSpec(noStructDocs, 'openapi: 3.0.3\n', '/tmp/api.yaml', cfg);
+    expect(result.writes).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('inserts managed YAML block on first sync', () => {
+    const apiText = `openapi: 3.0.3\ninfo:\n  title: x\n  version: '1'\n`;
+    const result = forwardSyncApiSpec(docs, apiText, '/tmp/api.yaml', cfg);
+    expect(result.writes).toHaveLength(1);
+    const content = result.writes[0].content;
+    expect(content).toMatch(/# wdf:specs-sync:start/);
+    expect(content).toMatch(/# wdf:specs-sync:end/);
+    expect(content).toMatch(/operationId: registerUser/);
+    // Hand-authored content preserved
+    expect(content).toMatch(/title: x/);
+  });
+
+  it('replaces existing managed YAML block idempotently', () => {
+    const apiText = `openapi: 3.0.3\n# wdf:specs-sync:start\n# (old)\n# wdf:specs-sync:end\n`;
+    const first = forwardSyncApiSpec(docs, apiText, '/tmp/api.yaml', cfg);
+    const second = forwardSyncApiSpec(docs, first.writes[0].content, '/tmp/api.yaml', cfg);
+    expect(second.writes[0].content).toBe(first.writes[0].content);
+  });
+
+  it('forwardSyncDbSchema inserts managed HTML block', () => {
+    const dbText = `# DB Schema\n\n## Performance notes\nhand-authored\n`;
+    const result = forwardSyncDbSchema(docs, dbText, '/tmp/db.md', cfg);
+    expect(result.writes).toHaveLength(1);
+    const content = result.writes[0].content;
+    expect(content).toMatch(/<!-- wdf:specs-sync:start -->/);
+    expect(content).toMatch(/<!-- wdf:specs-sync:end -->/);
+    expect(content).toMatch(/### Table: User/);
+    // Hand-authored preserved
+    expect(content).toMatch(/## Performance notes/);
+  });
+
+  it('forwardSyncDbSchema replaces existing managed block idempotently', () => {
+    const dbText = `# DB Schema\n\n<!-- wdf:specs-sync:start -->\n## Tables\n\n(old)\n<!-- wdf:specs-sync:end -->\n`;
+    const first = forwardSyncDbSchema(docs, dbText, '/tmp/db.md', cfg);
+    const second = forwardSyncDbSchema(docs, first.writes[0].content, '/tmp/db.md', cfg);
+    expect(second.writes[0].content).toBe(first.writes[0].content);
   });
 });

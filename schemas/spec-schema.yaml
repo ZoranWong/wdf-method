@@ -84,6 +84,93 @@ requirement:
     required: true
     items: "$scenario"
 
+  endpoints:
+    type: "list"
+    description: |
+      CHG-2026-015 S3 — Optional HTTP endpoints introduced by this requirement.
+      Emitted under spec.md `### Endpoints` subsection. Drives OpenAPI `paths:`
+      derivation via specToOpenApi.
+    required: false
+    items: "$endpoint"
+
+  entities:
+    type: "list"
+    description: |
+      CHG-2026-015 S3 — Optional data entities (tables) created/owned by this
+      requirement. Emitted under spec.md `### Entities` subsection. Drives
+      db-schema.md `## Tables` derivation via specToDbSchema.
+    required: false
+    items: "$entity"
+
+# ─────────────────────────────────────────
+# Endpoint: an HTTP endpoint declared by a requirement (S3)
+# ─────────────────────────────────────────
+
+endpoint:
+  method:
+    type: "string"
+    description: "HTTP method"
+    required: true
+    enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+  path:
+    type: "string"
+    description: "URL path; MUST start with /"
+    required: true
+    pattern: "^/."
+
+  operationId:
+    type: "string"
+    description: "camelCase operation identifier unique across the spec suite"
+    required: true
+    pattern: "^[a-z][a-zA-Z0-9]*$"
+
+  request:
+    type: "string"
+    description: "Optional request schema name (resolved in components.schemas)"
+    required: false
+
+  response:
+    type: "string"
+    description: |
+      Optional response. Format: "<status> <schema>" (e.g. "201 User") or
+      just "<schema>" (status defaults by method: POST=201, DELETE=204, else 200).
+    required: false
+
+# ─────────────────────────────────────────
+# Entity: a data entity / table declared by a requirement (S3)
+# ─────────────────────────────────────────
+
+entity:
+  name:
+    type: "string"
+    description: "PascalCase entity name; same name across requirements MUST agree"
+    required: true
+    pattern: "^[A-Z][A-Za-z0-9]*$"
+
+  fields:
+    type: "list"
+    description: "Columns; at least one required"
+    required: true
+    min_items: 1
+    items: "$entity_field"
+
+entity_field:
+  name:
+    type: "string"
+    required: true
+    pattern: "^[a-z][a-z0-9_]*$"
+
+  type:
+    type: "string"
+    description: "SQL type; one of UUID|TEXT|INTEGER|BIGINT|BOOLEAN|TIMESTAMP|JSONB|NUMERIC|DATE|TIME|VARCHAR|SERIAL"
+    required: true
+
+  constraints:
+    type: "list[string]"
+    description: "Optional column constraints: pk|unique|not_null|fk(...)"
+    required: false
+
 # ─────────────────────────────────────────
 # Scenario: a single GIVEN/WHEN/THEN behavior
 # ─────────────────────────────────────────
@@ -148,6 +235,22 @@ validation_rules:
 
   - id: "id_unique_within_domain"
     description: "When present, requirement.id MUST be unique within the domain"
+    severity: "error"
+
+  - id: "endpoint_path_format"
+    description: "CHG-2026-015 S3 — endpoint.path MUST start with /"
+    severity: "error"
+
+  - id: "endpoint_operationId_format"
+    description: "CHG-2026-015 S3 — endpoint.operationId MUST match ^[a-z][a-zA-Z0-9]*$"
+    severity: "error"
+
+  - id: "entity_name_unique_within_domain"
+    description: "CHG-2026-015 S3 — entity.name may repeat in a domain but definitions MUST be byte-identical"
+    severity: "error"
+
+  - id: "entity_field_type_known"
+    description: "CHG-2026-015 S3 — entity field type MUST be one of UUID|TEXT|INTEGER|BIGINT|BOOLEAN|TIMESTAMP|JSONB|NUMERIC|DATE|TIME|VARCHAR|SERIAL"
     severity: "error"
 
 # ─────────────────────────────────────────

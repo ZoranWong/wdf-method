@@ -26,8 +26,11 @@ import { resolve, join, dirname, isAbsolute, normalize, relative, basename } fro
 import { createHash } from 'crypto';
 import { load as yamlLoad } from 'js-yaml';
 import type { SpecRequirement, SpecDocument } from './spec-sync.js';
-import { parseSpecDoc, formatSpecDoc, validateSpec, loadSpecDocs, forwardSync, applySync } from './spec-sync.js';
-import { loadConfig, getSpecsDir } from './config.js';
+import {
+  parseSpecDoc, formatSpecDoc, validateSpec, loadSpecDocs,
+  forwardSync, forwardSyncApiSpec, forwardSyncDbSchema, applySync,
+} from './spec-sync.js';
+import { loadConfig, getSpecsDir, getApiSpecPath, getDbSchemaPath } from './config.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -1033,7 +1036,13 @@ export function resolveCrDir(changesDir: string, idOrSlug: string): string {
 export async function archiveAndRewrite(
   crId: string,
   projectRoot: string,
-  opts?: { dryRun?: boolean; noRewrite?: boolean },
+  opts?: {
+    dryRun?: boolean;
+    noRewrite?: boolean;
+    noPrdRegen?: boolean;
+    noApiRegen?: boolean;
+    noDbRegen?: boolean;
+  },
 ): Promise<{ archived: string; patched: string[]; cascadeWarning?: string; dryRun: boolean }> {
   const changesDir = join(projectRoot, 'changes');
   const archiveDir = join(changesDir, '_archive');
@@ -1054,10 +1063,15 @@ export async function archiveAndRewrite(
     }
     patched.push(...plan.changes.map(c => c.relPath));
 
-    // CHG-2026-015 S2: cascade regenerate PRD when specs/ was touched AND
-    // source_of_truth is true. If source_of_truth is false but specs/ moved,
+    // CHG-2026-015 S2/S3: cascade regenerate PRD/api-spec/db-schema when specs/
+    // was touched AND source_of_truth is true. Per-target flags allow skipping
+    // individual cascades. If source_of_truth is false but specs/ moved,
     // surface guidance so the user knows to flip the flag manually.
-    const cascade = maybeCascadeSpecsSync(projectRoot, plan, dryRun);
+    const cascade = maybeCascadeSpecsSync(projectRoot, plan, dryRun, {
+      noPrdRegen: opts?.noPrdRegen,
+      noApiRegen: opts?.noApiRegen,
+      noDbRegen: opts?.noDbRegen,
+    });
     patched.push(...cascade.cascadeWrites);
     if (cascade.warning) cascadeWarning = cascade.warning;
   }
@@ -1082,12 +1096,15 @@ export async function archiveAndRewrite(
 }
 
 /**
- * CHG-2026-015 S2 — Cascade regenerate PRD when a v2 delta touched specs/.
+ * CHG-2026-015 S2/S3 — Cascade regenerate derived artifacts when a v2 delta
+ * touched specs/.
  *
  * Runs only after the spec files have been written (so loadSpecDocs sees the
- * new content). If `[specs] source_of_truth = true`, calls forwardSync to
- * regenerate PRD's `## 2. Functional Requirements` section, then applySync to
- * persist. If `source_of_truth = false`, returns guidance but no writes.
+ * new content). If `[specs] source_of_truth = true`, calls:
+ *   - forwardSync         → PRD §2 (skip if noPrdRegen)
+ *   - forwardSyncApiSpec  → api-spec.yaml paths/schemas (skip if noApiRegen)
+ *   - forwardSyncDbSchema → db-schema.md tables (skip if noDbRegen)
+ * If `source_of_truth = false`, returns guidance but no writes.
  *
  * Returns the list of cascade-written relPaths plus an optional warning.
  */
@@ -1095,6 +1112,7 @@ export function maybeCascadeSpecsSync(
   projectRoot: string,
   plan: ChangePlan,
   dryRun: boolean,
+  regenOpts: { noPrdRegen?: boolean; noApiRegen?: boolean; noDbRegen?: boolean } = {},
 ): { cascadeWrites: string[]; warning?: string } {
   const touchedSpecs = plan.changes.filter(c =>
     c.relPath.startsWith('_wdf_output/specs/') && c.relPath.endsWith('/spec.md'),
@@ -1106,6 +1124,8 @@ export function maybeCascadeSpecsSync(
   const { config } = loadConfig(projectRoot);
   const specsDir = getSpecsDir(config, projectRoot);
   const prdPath = join(projectRoot, '_wdf_output', 'prd.md');
+  const apiPath = getApiSpecPath(config, projectRoot);
+  const dbPath = getDbSchemaPath(config, projectRoot);
 
   if (!config.specs.source_of_truth) {
     return {
@@ -1116,27 +1136,66 @@ export function maybeCascadeSpecsSync(
     };
   }
 
-  if (!existsSync(prdPath)) {
-    return {
-      cascadeWrites: [],
-      warning:
-        `specs/ updated and source_of_truth=true, but PRD not found at ` +
-        `${relative(projectRoot, prdPath)}. Skipping cascade.`,
-    };
+  const cascadeWrites: string[] = [];
+  const warnings: string[] = [];
+  const docs = loadSpecDocs(specsDir);
+
+  // PRD cascade
+  if (!regenOpts.noPrdRegen) {
+    if (existsSync(prdPath)) {
+      const prdText = readFileSync(prdPath, 'utf8');
+      const result = forwardSync(docs, prdText, prdPath, {
+        specsDir,
+        sourceOfTruth: config.specs.source_of_truth,
+        managedRegionMarker: config.specs.managed_region_marker,
+        enforceUniqueRequirementNames: config.specs.enforce_unique_requirement_names,
+      });
+      const { applied } = applySync(result, dryRun);
+      cascadeWrites.push(...applied.map(w => relative(projectRoot, w.path)));
+      warnings.push(...result.warnings);
+    } else {
+      warnings.push(`source_of_truth=true but PRD not found at ${relative(projectRoot, prdPath)}; PRD cascade skipped.`);
+    }
   }
 
-  const docs = loadSpecDocs(specsDir);
-  const prdText = readFileSync(prdPath, 'utf8');
-  const result = forwardSync(docs, prdText, prdPath, {
-    specsDir,
-    sourceOfTruth: config.specs.source_of_truth,
-    managedRegionMarker: config.specs.managed_region_marker,
-    enforceUniqueRequirementNames: config.specs.enforce_unique_requirement_names,
-  });
+  // api-spec.yaml cascade
+  if (!regenOpts.noApiRegen) {
+    if (existsSync(apiPath)) {
+      const apiText = readFileSync(apiPath, 'utf8');
+      const result = forwardSyncApiSpec(docs, apiText, apiPath, {
+        specsDir,
+        sourceOfTruth: config.specs.source_of_truth,
+        managedRegionMarker: config.specs.managed_region_marker,
+        enforceUniqueRequirementNames: config.specs.enforce_unique_requirement_names,
+      });
+      const { applied } = applySync(result, dryRun);
+      cascadeWrites.push(...applied.map(w => relative(projectRoot, w.path)));
+      warnings.push(...result.warnings);
+    } else {
+      warnings.push(`api-spec.yaml not found at ${relative(projectRoot, apiPath)}; api cascade skipped.`);
+    }
+  }
 
-  const { applied } = applySync(result, dryRun);
+  // db-schema.md cascade
+  if (!regenOpts.noDbRegen) {
+    if (existsSync(dbPath)) {
+      const dbText = readFileSync(dbPath, 'utf8');
+      const result = forwardSyncDbSchema(docs, dbText, dbPath, {
+        specsDir,
+        sourceOfTruth: config.specs.source_of_truth,
+        managedRegionMarker: config.specs.managed_region_marker,
+        enforceUniqueRequirementNames: config.specs.enforce_unique_requirement_names,
+      });
+      const { applied } = applySync(result, dryRun);
+      cascadeWrites.push(...applied.map(w => relative(projectRoot, w.path)));
+      warnings.push(...result.warnings);
+    } else {
+      warnings.push(`db-schema.md not found at ${relative(projectRoot, dbPath)}; db cascade skipped.`);
+    }
+  }
+
   return {
-    cascadeWrites: applied.map(w => relative(projectRoot, w.path)),
-    warning: result.warnings.length > 0 ? result.warnings.join('; ') : undefined,
+    cascadeWrites,
+    warning: warnings.length > 0 ? warnings.join('; ') : undefined,
   };
 }
