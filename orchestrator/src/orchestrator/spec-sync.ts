@@ -19,6 +19,7 @@ import {
   readdirSync,
 } from 'fs';
 import { join, dirname } from 'path';
+import yaml from 'js-yaml';
 
 // ─────────────────────────────────────────
 // Types
@@ -132,6 +133,23 @@ const DOMAIN_KEYWORD_MAP: Array<{ regex: RegExp; domain: string }> = [
   { regex: /\b(deploy|ci|cd|pipeline|infrastructure|monitoring)\b/i, domain: 'ops' },
   { regex: /\b(test|qa|quality|coverage|lint)\b/i, domain: 'qa' },
 ];
+
+// CHG-2026-015 S4 — OpenAPI → specs bootstrap constants
+const PATH_PREFIX_PATTERN = /^\/([a-z][a-z0-9-]+)/i;
+const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
+const SCHEMA_REF_PATTERN = /^#\/components\/schemas\/(.+)$/;
+const OPENAPI_TYPE_MAP: Record<string, EntityField['type']> = {
+  'string:uuid': 'UUID',
+  'string:date-time': 'TIMESTAMP',
+  'string:date': 'DATE',
+  'string:time': 'TIME',
+  'string': 'TEXT',
+  'integer:int64': 'BIGINT',
+  'integer:int32': 'INTEGER',
+  'integer': 'INTEGER',
+  'number': 'NUMERIC',
+  'boolean': 'BOOLEAN',
+};
 
 // ─────────────────────────────────────────
 // Spec document parsing
@@ -495,6 +513,206 @@ export function prdToSpecDocument(reqs: ParsedReq[], domain: string): SpecDocume
       : [defaultSkeletonScenario()],
   }));
   return { domain, version: 1, requirements };
+}
+
+// ─────────────────────────────────────────
+// CHG-2026-015 S4 — OpenAPI → specs bootstrap
+// ─────────────────────────────────────────
+
+/**
+ * Infer domain from the first non-parameter path segment.
+ * `/auth/register` → 'auth'; `/todos/{id}` → 'todos'; `/{id}` or `/health` → 'general'.
+ */
+export function inferDomainFromPath(path: string): string {
+  const m = path.match(PATH_PREFIX_PATTERN);
+  if (!m) return 'general';
+  const seg = m[1].toLowerCase();
+  // Skip parameter-like segments (e.g. "{id}" already filtered by pattern, but be defensive)
+  if (seg.startsWith('{') || seg.startsWith(':')) return 'general';
+  return seg;
+}
+
+/**
+ * Parse OpenAPI 3.x text into SpecDocument[] (one per inferred domain).
+ * Each (path, method) becomes a requirement; each referenced schema becomes an Entity.
+ * Returns [] on malformed YAML — caller decides fallback.
+ */
+export function openApiToSpecDocuments(openApiText: string): SpecDocument[] {
+  let parsed: unknown;
+  try {
+    parsed = yaml.load(openApiText);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object') return [];
+  const doc = parsed as { paths?: Record<string, Record<string, unknown>>; components?: { schemas?: Record<string, unknown> } };
+  if (!doc.paths || typeof doc.paths !== 'object') return [];
+
+  const schemas = doc.components?.schemas ?? {};
+
+  // Walk paths and collect (domain, requirement-pending, schemaRefs)
+  interface PendingReq {
+    method: string;
+    path: string;
+    operationId?: string;
+    requestSchema?: string;
+    responseSchema?: string;
+    schemaRefs: string[];
+  }
+  const byDomain = new Map<string, PendingReq[]>();
+
+  for (const [path, pathItemRaw] of Object.entries(doc.paths)) {
+    if (!pathItemRaw || typeof pathItemRaw !== 'object') continue;
+    const pathItem = pathItemRaw as Record<string, unknown>;
+    const domain = inferDomainFromPath(path);
+    for (const method of HTTP_METHODS) {
+      const opRaw = pathItem[method];
+      if (!opRaw || typeof opRaw !== 'object') continue;
+      const op = opRaw as Record<string, unknown>;
+      const operationId = typeof op.operationId === 'string' ? op.operationId : undefined;
+
+      const schemaRefs: string[] = [];
+      // Request body
+      const requestBody = op.requestBody as { content?: Record<string, { schema?: { $ref?: string } }> } | undefined;
+      const reqSchema = requestBody?.content?.['application/json']?.schema?.$ref;
+      const requestSchema = reqSchema ? resolveSchemaName(reqSchema) : undefined;
+      if (requestSchema) schemaRefs.push(requestSchema);
+
+      // First 2xx response with schema
+      let responseSchema: string | undefined;
+      const responses = op.responses as Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }> | undefined;
+      if (responses) {
+        const successCodes = Object.keys(responses).filter(c => /^2\d\d$/.test(c)).sort();
+        for (const code of successCodes) {
+          const ref = responses[code]?.content?.['application/json']?.schema?.$ref;
+          if (ref) {
+            const resolved = resolveSchemaName(ref);
+            if (resolved) {
+              responseSchema = resolved;
+              schemaRefs.push(resolved);
+            }
+            break;
+          }
+        }
+      }
+
+      const pending: PendingReq = {
+        method: method.toUpperCase(),
+        path,
+        operationId,
+        requestSchema: requestSchema ?? undefined,
+        responseSchema,
+        schemaRefs,
+      };
+      if (!byDomain.has(domain)) byDomain.set(domain, []);
+      byDomain.get(domain)!.push(pending);
+    }
+  }
+
+  // Build SpecDocuments
+  const docs: SpecDocument[] = [];
+  for (const [domain, pendings] of [...byDomain.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const requirements: SpecRequirement[] = [];
+    const assignedSchemas = new Set<string>();
+
+    pendings.forEach((p, idx) => {
+      // Determine this requirement's entities: refs not yet assigned to an earlier req in this domain
+      const entities: Entity[] = [];
+      for (const ref of p.schemaRefs) {
+        if (assignedSchemas.has(ref)) continue;
+        assignedSchemas.add(ref);
+        const schemaDef = schemas[ref];
+        if (schemaDef && typeof schemaDef === 'object') {
+          const ent = schemaToEntity(ref, schemaDef);
+          if (ent.fields.length > 0) entities.push(ent);
+        }
+      }
+
+      const endpoint: Endpoint = {
+        method: p.method as Endpoint['method'],
+        path: p.path,
+        operationId: p.operationId ?? deriveRequirementName(p.method, p.path),
+      };
+      if (p.requestSchema) endpoint.request = p.requestSchema;
+      if (p.responseSchema) endpoint.response = responseFormatFor(p.method, p.responseSchema);
+
+      requirements.push({
+        id: `REQ-${String(idx + 1).padStart(3, '0')}`,
+        name: deriveRequirementName(p.method, p.path),
+        scenarios: [defaultSkeletonScenario()],
+        endpoints: [endpoint],
+        entities: entities.length > 0 ? entities : undefined,
+      });
+    });
+
+    docs.push({ domain, version: 1, requirements });
+  }
+
+  return docs;
+}
+
+/**
+ * CHG-2026-015 S4 — bootstrap SyncResult from existing api-spec.yaml.
+ * Mirrors reverseSync()'s return shape so applySync() consumes it unchanged.
+ */
+export function reverseSyncFromApiSpec(
+  openApiText: string,
+  existingDocs: SpecDocument[],
+  config: SpecSyncConfig,
+): SyncResult {
+  const warnings: string[] = [];
+  const docs = openApiToSpecDocuments(openApiText);
+  if (docs.length === 0) {
+    warnings.push('Failed to parse api-spec.yaml as OpenAPI (or no paths found).');
+    return { direction: 'reverse', writes: [], warnings };
+  }
+
+  const writes: WriteAction[] = [];
+  for (const doc of docs) {
+    const existing = existingDocs.find(d => d.domain === doc.domain);
+    const merged = existing ? mergeSpecDocs(existing, doc) : doc;
+    const filePath = join(config.specsDir, doc.domain, 'spec.md');
+    const content = formatSpecDoc(merged);
+    const action: WriteAction['action'] = existing ? 'update' : 'create';
+    writes.push({ path: filePath, content, action });
+  }
+
+  return { direction: 'reverse', writes, warnings };
+}
+
+/** '#/components/schemas/User' → 'User'; otherwise null. */
+function resolveSchemaName(ref: string): string | null {
+  const m = ref.match(SCHEMA_REF_PATTERN);
+  return m ? m[1] : null;
+}
+
+/** Convert an OpenAPI schema object to an Entity. */
+function schemaToEntity(name: string, schemaDef: unknown): Entity {
+  const schema = schemaDef as { type?: string; properties?: Record<string, unknown>; required?: string[] };
+  const requiredSet = new Set(schema.required ?? []);
+  const fields: EntityField[] = [];
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const [propName, propDefRaw] of Object.entries(schema.properties)) {
+      if (!propDefRaw || typeof propDefRaw !== 'object') continue;
+      const propDef = propDefRaw as { type?: string; format?: string };
+      const key = `${propDef.type ?? 'string'}:${propDef.format ?? ''}`;
+      const type = OPENAPI_TYPE_MAP[key] ?? OPENAPI_TYPE_MAP[propDef.type ?? ''] ?? 'TEXT';
+      const constraints: string[] = requiredSet.has(propName) ? ['not_null'] : [];
+      fields.push({ name: propName, type, constraints });
+    }
+  }
+  return { name, fields };
+}
+
+/** Build requirement name in the form "METHOD /path" (e.g. "POST /auth/register"). */
+function deriveRequirementName(method: string, path: string): string {
+  return `${method.toUpperCase()} ${path}`;
+}
+
+/** Response format helper: '201 User' for POST, '200 User' otherwise. */
+function responseFormatFor(method: string, schemaName: string): string {
+  const status = method === 'POST' ? '201' : '200';
+  return `${status} ${schemaName}`;
 }
 
 function acToScenario(acText: string, idx: number): Scenario {
@@ -1113,11 +1331,13 @@ export function validateSpec(doc: SpecDocument): ValidationError[] {
     }
     names.add(req.name);
 
-    if (!/^[A-Z][A-Za-z0-9 _-]{2,80}$/.test(req.name)) {
+    // Allow forward slash + braces so OpenAPI-bootstraped names like "POST /auth/login"
+    // and "DELETE /todos/{id}" validate cleanly.
+    if (!/^[A-Z][A-Za-z0-9 _\-/{}]{2,80}$/.test(req.name)) {
       errors.push({
         ruleId: 'requirement_name_format',
         severity: 'error',
-        message: `Requirement name "${req.name}" does not match pattern ^[A-Z][A-Za-z0-9 _-]{2,80}$`,
+        message: `Requirement name "${req.name}" does not match pattern ^[A-Z][A-Za-z0-9 _\-/{}]{2,80}$`,
       });
     }
 

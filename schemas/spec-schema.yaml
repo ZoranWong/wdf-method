@@ -61,7 +61,7 @@ requirement:
     type: "string"
     description: "Human-readable behavior name; MUST be unique within the domain"
     required: true
-    pattern: "^[A-Z][A-Za-z0-9 _-]{2,80}$"
+    pattern: "^[A-Z][A-Za-z0-9 _\\-/{}]{2,80}$"
     example: "User Registration"
 
   priority:
@@ -214,7 +214,7 @@ validation_rules:
     severity: "error"
 
   - id: "requirement_name_format"
-    description: "requirement.name MUST match ^[A-Z][A-Za-z0-9 _-]{2,80}$ (Title Case or SHOUTING_CASE)"
+    description: "requirement.name MUST match ^[A-Z][A-Za-z0-9 _\\-/{}]{2,80}$ (allows endpoint-style names like 'POST /auth/login' from S4 brownfield bootstrap)"
     severity: "error"
 
   - id: "scenario_blocks_nonempty"

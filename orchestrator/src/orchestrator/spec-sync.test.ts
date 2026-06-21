@@ -14,9 +14,12 @@ import {
   forwardSyncApiSpec,
   forwardSyncDbSchema,
   reverseSync,
+  reverseSyncFromApiSpec,
   applySync,
   specToOpenApi,
   specToDbSchema,
+  openApiToSpecDocuments,
+  inferDomainFromPath,
   type SpecDocument,
   type SpecRequirement,
   type Endpoint,
@@ -825,5 +828,210 @@ describe('CHG-2026-015 S3 — forwardSyncApiSpec + forwardSyncDbSchema', () => {
     const first = forwardSyncDbSchema(docs, dbText, '/tmp/db.md', cfg);
     const second = forwardSyncDbSchema(docs, first.writes[0].content, '/tmp/db.md', cfg);
     expect(second.writes[0].content).toBe(first.writes[0].content);
+  });
+});
+
+// ─────────────────────────────────────────
+// CHG-2026-015 S4 — OpenAPI → specs bootstrap
+// ─────────────────────────────────────────
+
+const OPENAPI_FIXTURE = `
+openapi: 3.0.3
+info:
+  title: t
+  version: 0.1.0
+paths:
+  /auth/register:
+    post:
+      operationId: registerUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterInput'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /todos:
+    get:
+      operationId: listTodos
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        created_at: { type: string, format: date-time }
+    RegisterInput:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string }
+        password: { type: string }
+    Todo:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        completed: { type: boolean }
+`;
+
+describe('CHG-2026-015 S4 — inferDomainFromPath', () => {
+  it('extracts first path segment', () => {
+    expect(inferDomainFromPath('/auth/register')).toBe('auth');
+    expect(inferDomainFromPath('/todos/{id}')).toBe('todos');
+  });
+
+  it('returns "general" for parameter-only or root paths', () => {
+    expect(inferDomainFromPath('/{id}')).toBe('general');
+    expect(inferDomainFromPath('/')).toBe('general');
+    expect(inferDomainFromPath('')).toBe('general');
+  });
+});
+
+describe('CHG-2026-015 S4 — openApiToSpecDocuments', () => {
+  it('produces one SpecDocument per path prefix', () => {
+    const docs = openApiToSpecDocuments(OPENAPI_FIXTURE);
+    const domains = docs.map(d => d.domain).sort();
+    expect(domains).toEqual(['auth', 'todos']);
+  });
+
+  it('creates one requirement per (path, method) pair with proper Endpoint', () => {
+    const docs = openApiToSpecDocuments(OPENAPI_FIXTURE);
+    const auth = docs.find(d => d.domain === 'auth')!;
+    expect(auth.requirements).toHaveLength(1);
+    const req = auth.requirements[0];
+    expect(req.name).toBe('POST /auth/register');
+    expect(req.endpoints).toBeDefined();
+    expect(req.endpoints![0]).toEqual({
+      method: 'POST',
+      path: '/auth/register',
+      operationId: 'registerUser',
+      request: 'RegisterInput',
+      response: '201 User',
+    });
+  });
+
+  it('attaches schemas as Entities on the first referencing requirement', () => {
+    const docs = openApiToSpecDocuments(OPENAPI_FIXTURE);
+    const auth = docs.find(d => d.domain === 'auth')!;
+    const entities = auth.requirements[0].entities!;
+    const names = entities.map(e => e.name);
+    expect(names).toContain('RegisterInput');
+    expect(names).toContain('User');
+  });
+
+  it('maps property types correctly (uuid → UUID, date-time → TIMESTAMP, boolean → BOOLEAN)', () => {
+    const docs = openApiToSpecDocuments(OPENAPI_FIXTURE);
+    const auth = docs.find(d => d.domain === 'auth')!;
+    const user = auth.requirements[0].entities!.find(e => e.name === 'User')!;
+    const fields = Object.fromEntries(user.fields.map(f => [f.name, f.type]));
+    expect(fields['id']).toBe('UUID');
+    expect(fields['email']).toBe('TEXT');
+    expect(fields['created_at']).toBe('TIMESTAMP');
+
+    const todos = docs.find(d => d.domain === 'todos')!;
+    const todo = todos.requirements[0].entities!.find(e => e.name === 'Todo')!;
+    const todoFields = Object.fromEntries(todo.fields.map(f => [f.name, f.type]));
+    expect(todoFields['completed']).toBe('BOOLEAN');
+  });
+
+  it('adds not_null constraint to required properties', () => {
+    const docs = openApiToSpecDocuments(OPENAPI_FIXTURE);
+    const auth = docs.find(d => d.domain === 'auth')!;
+    const user = auth.requirements[0].entities!.find(e => e.name === 'User')!;
+    const id = user.fields.find(f => f.name === 'id')!;
+    expect(id.constraints).toContain('not_null');
+    const createdAt = user.fields.find(f => f.name === 'created_at')!;
+    expect(createdAt.constraints).toEqual([]);
+  });
+
+  it('falls back to "METHOD /path" requirement name when operationId missing', () => {
+    const noOpId = `
+openapi: 3.0.3
+paths:
+  /things:
+    get:
+      responses:
+        '200':
+          description: ok
+`;
+    const docs = openApiToSpecDocuments(noOpId);
+    expect(docs[0].requirements[0].name).toBe('GET /things');
+    expect(docs[0].requirements[0].endpoints![0].operationId).toBe('GET /things');
+  });
+
+  it('returns empty array on malformed YAML', () => {
+    expect(openApiToSpecDocuments('not: : valid: yaml: ::')).toEqual([]);
+    expect(openApiToSpecDocuments('')).toEqual([]);
+  });
+});
+
+describe('CHG-2026-015 S4 — reverseSyncFromApiSpec', () => {
+  let tmpRoot: string;
+  let s4Cfg: SpecSyncConfig;
+
+  beforeEach(() => {
+    tmpRoot = join(tmpdir(), `wdf-s4-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(tmpRoot, 'specs'), { recursive: true });
+    s4Cfg = {
+      specsDir: join(tmpRoot, 'specs'),
+      sourceOfTruth: false,
+      managedRegionMarker: 'wdf:specs-sync',
+      enforceUniqueRequirementNames: false,
+    };
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('writes one spec.md per discovered domain', () => {
+    const result = reverseSyncFromApiSpec(OPENAPI_FIXTURE, [], s4Cfg);
+    expect(result.writes.length).toBe(2);
+    const domains = result.writes.map(w => w.path.split('/').slice(-2, -1)[0]).sort();
+    expect(domains).toEqual(['auth', 'todos']);
+  });
+
+  it('produces parseable spec.md content', () => {
+    const result = reverseSyncFromApiSpec(OPENAPI_FIXTURE, [], s4Cfg);
+    const authWrite = result.writes.find(w => w.path.includes('/auth/spec.md'))!;
+    const parsed = parseSpecDoc(authWrite.content, 'auth');
+    expect(parsed.requirements).toHaveLength(1);
+    expect(parsed.requirements[0].endpoints![0].operationId).toBe('registerUser');
+  });
+
+  it('preserves hand-edited existing requirements via merge', () => {
+    const existing: SpecDocument[] = [{
+      domain: 'auth',
+      version: 1,
+      requirements: [{
+        id: 'REQ-999',
+        name: 'Custom Hand-Edited Requirement',
+        scenarios: [{ given: ['a'], when: ['b'], then: ['MUST c'] }],
+      }],
+    }];
+    const result = reverseSyncFromApiSpec(OPENAPI_FIXTURE, existing, s4Cfg);
+    const authWrite = result.writes.find(w => w.path.includes('/auth/spec.md'))!;
+    expect(authWrite.content).toMatch(/Custom Hand-Edited Requirement/);
+    expect(authWrite.content).toMatch(/POST \/auth\/register/);
+  });
+
+  it('returns warning when OpenAPI is malformed', () => {
+    const result = reverseSyncFromApiSpec('not valid yaml: : :', [], s4Cfg);
+    expect(result.writes).toHaveLength(0);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toMatch(/api-spec\.yaml/i);
   });
 });

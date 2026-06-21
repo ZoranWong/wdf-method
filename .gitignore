@@ -8,6 +8,8 @@ _review/
 # Frozen test fixtures bypass the _wdf_output/ ignore above
 !examples/spec-sync-demo/_wdf_output/
 !examples/spec-sync-demo/_wdf_output/**
+!examples/brownfield-demo/_wdf_output/
+!examples/brownfield-demo/_wdf_output/**
 
 # Orchestrator subpackage
 orchestrator/dist/

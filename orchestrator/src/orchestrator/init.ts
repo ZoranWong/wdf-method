@@ -1,6 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, readdirSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import YAML from 'js-yaml';
+import { loadConfig, getSpecsDir, getApiSpecPath } from './config.js';
+import {
+  reverseSync,
+  reverseSyncFromApiSpec,
+  applySync,
+  loadSpecDocs,
+  scaffoldEmptySpec,
+  type SpecSyncConfig,
+} from './spec-sync.js';
 
 // ============================================================
 // Init Command Types
@@ -49,6 +58,10 @@ export interface InitOutput {
   statusDir: string;
   projectName: string;
   filesCreated: string[];
+  /** S4: warnings from specs/ bootstrap (e.g. malformed api-spec.yaml). */
+  bootstrapWarnings?: string[];
+  /** S4: true if specs/ was bootstrapped from existing artifacts. */
+  specsBootstrapped?: boolean;
 }
 
 // ============================================================
@@ -936,6 +949,81 @@ function updateGitignore(projectRoot: string): string {
 }
 
 // ============================================================
+// CHG-2026-015 S4 — Brownfield specs bootstrap
+// ============================================================
+
+/**
+ * Bootstrap `_wdf_output/specs/` from existing project artifacts.
+ *
+ * Trigger: only invoked when `initCommand` is called with `fromExisting: true`.
+ *
+ * Decision tree:
+ *   1. specs/ already populated (any spec.md under a domain subdir) → skip
+ *   2. _wdf_output/api-spec.yaml exists → reverseSyncFromApiSpec
+ *   3. _wdf_output/prd.md exists         → reverseSync (existing PRD to specs)
+ *   4. neither                           → scaffoldEmptySpec('general')
+ *
+ * Returns written relPaths and any warnings. Caller surfaces warnings + hint.
+ */
+function bootstrapSpecsFromArtifacts(projectRoot: string): { writes: string[]; warnings: string[]; bootstrapped: boolean } {
+  const writes: string[] = [];
+  const warnings: string[] = [];
+
+  const { config } = loadConfig(projectRoot, { silent: true });
+  const specsDir = getSpecsDir(config, projectRoot);
+
+  // 1. Skip if specs/ already populated
+  if (existsSync(specsDir)) {
+    const existing = readdirSync(specsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .some(d => existsSync(join(specsDir, d.name, 'spec.md')));
+    if (existing) {
+      return { writes, warnings, bootstrapped: false };
+    }
+  }
+
+  const specConfig: SpecSyncConfig = {
+    specsDir,
+    sourceOfTruth: config.specs.source_of_truth,
+    managedRegionMarker: config.specs.managed_region_marker,
+    enforceUniqueRequirementNames: config.specs.enforce_unique_requirement_names,
+  };
+
+  // 2. Try api-spec.yaml
+  const apiPath = getApiSpecPath(config, projectRoot);
+  if (existsSync(apiPath)) {
+    const apiText = readFileSync(apiPath, 'utf8');
+    const result = reverseSyncFromApiSpec(apiText, loadSpecDocs(specsDir), specConfig);
+    if (result.writes.length > 0) {
+      const applied = applySync(result, false);
+      for (const w of applied.applied) writes.push(w.path);
+      return { writes, warnings: result.warnings, bootstrapped: true };
+    }
+    // OpenAPI parse failed — fall through to PRD
+    warnings.push(...result.warnings);
+  }
+
+  // 3. Try PRD
+  const prdPath = join(projectRoot, '_wdf_output', 'prd.md');
+  if (existsSync(prdPath)) {
+    const prdText = readFileSync(prdPath, 'utf8');
+    const result = reverseSync(prdText, '', loadSpecDocs(specsDir), specConfig);
+    if (result.writes.length > 0) {
+      const applied = applySync(result, false);
+      for (const w of applied.applied) writes.push(w.path);
+      return { writes, warnings: result.warnings, bootstrapped: true };
+    }
+    warnings.push(...result.warnings);
+  }
+
+  // 4. Fall back to empty general/spec.md
+  const action = scaffoldEmptySpec('general', specsDir);
+  const applied = applySync({ direction: 'reverse', writes: [action], warnings: [] }, false);
+  for (const w of applied.applied) writes.push(w.path);
+  return { writes, warnings, bootstrapped: true };
+}
+
+// ============================================================
 // Main Command
 // ============================================================
 
@@ -1000,6 +1088,16 @@ export async function initCommand(options: InitOptions): Promise<InitOutput> {
   // Step 9: Update .gitignore
   filesCreated.push(updateGitignore(options.projectRoot));
 
+  // Step 10 (S4): Bootstrap specs/ from existing artifacts in --from-existing mode
+  let bootstrapWarnings: string[] | undefined;
+  let specsBootstrapped = false;
+  if (options.fromExisting) {
+    const bootstrapped = bootstrapSpecsFromArtifacts(options.projectRoot);
+    filesCreated.push(...bootstrapped.writes);
+    bootstrapWarnings = bootstrapped.warnings.length > 0 ? bootstrapped.warnings : undefined;
+    specsBootstrapped = bootstrapped.bootstrapped;
+  }
+
   const projectName = options.name || deriveProjectName(options.description);
 
   return {
@@ -1008,5 +1106,7 @@ export async function initCommand(options: InitOptions): Promise<InitOutput> {
     statusDir,
     projectName,
     filesCreated,
+    bootstrapWarnings,
+    specsBootstrapped,
   };
 }

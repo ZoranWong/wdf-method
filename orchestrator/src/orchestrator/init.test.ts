@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { tmpdir } from 'os';
-import { mkdtempSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import YAML from 'js-yaml';
 import { initCommand, InitOptions } from './init.js';
@@ -290,6 +290,113 @@ describe('init command', () => {
       expect(existsSync(join(root, '_output', 'planning'))).toBe(true);
       expect(existsSync(join(root, '_output', 'solutioning'))).toBe(true);
       expect(existsSync(join(root, '_output', 'acceptance'))).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // CHG-2026-015 S4 — Brownfield specs bootstrap
+  // ============================================================
+
+  describe('S4: --from-existing specs bootstrap', () => {
+    const OPENAPI = `
+openapi: 3.0.3
+paths:
+  /auth/register:
+    post:
+      operationId: registerUser
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /todos:
+    get:
+      operationId: listTodos
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+    Todo:
+      type: object
+      properties:
+        title: { type: string }
+`;
+
+    const PRD = `# PRD\n\n## 2. Functional Requirements\n\n### REQ-001: User Registration\nThe system MUST register users.\n\n## 3. Next\n`;
+
+    it('bootstraps specs/ from api-spec.yaml when present', async () => {
+      mkdirSync(join(projectRoot, '_wdf_output'), { recursive: true });
+      writeFileSync(join(projectRoot, '_wdf_output', 'api-spec.yaml'), OPENAPI, 'utf8');
+
+      const result = await initCommand({ ...defaultOptions, fromExisting: true });
+
+      expect(result.specsBootstrapped).toBe(true);
+      expect(existsSync(join(projectRoot, '_wdf_output', 'specs', 'auth', 'spec.md'))).toBe(true);
+      expect(existsSync(join(projectRoot, '_wdf_output', 'specs', 'todos', 'spec.md'))).toBe(true);
+      const authSpec = readFileSync(join(projectRoot, '_wdf_output', 'specs', 'auth', 'spec.md'), 'utf8');
+      expect(authSpec).toMatch(/POST \/auth\/register/);
+      expect(authSpec).toMatch(/registerUser/);
+    });
+
+    it('falls back to PRD reverseSync when api-spec.yaml absent but prd.md present', async () => {
+      mkdirSync(join(projectRoot, '_wdf_output'), { recursive: true });
+      writeFileSync(join(projectRoot, '_wdf_output', 'prd.md'), PRD, 'utf8');
+
+      const result = await initCommand({ ...defaultOptions, fromExisting: true });
+
+      expect(result.specsBootstrapped).toBe(true);
+      // PRD reverseSync creates one spec per detected domain (default 'general')
+      const specsDir = join(projectRoot, '_wdf_output', 'specs');
+      const domains = readdirSync(specsDir).filter(d => existsSync(join(specsDir, d, 'spec.md')));
+      expect(domains.length).toBeGreaterThan(0);
+    });
+
+    it('scaffolds empty general/spec.md when neither api-spec.yaml nor prd.md present', async () => {
+      mkdirSync(join(projectRoot, '_wdf_output'), { recursive: true });
+
+      const result = await initCommand({ ...defaultOptions, fromExisting: true });
+
+      expect(result.specsBootstrapped).toBe(true);
+      expect(existsSync(join(projectRoot, '_wdf_output', 'specs', 'general', 'spec.md'))).toBe(true);
+    });
+
+    it('skips spec bootstrap if specs/ already populated', async () => {
+      mkdirSync(join(projectRoot, '_wdf_output', 'specs', 'general'), { recursive: true });
+      writeFileSync(
+        join(projectRoot, '_wdf_output', 'specs', 'general', 'spec.md'),
+        '---\nartifact_type: spec\ndomain: general\nversion: 1\n---\n\n# Spec — General\n',
+        'utf8',
+      );
+      writeFileSync(join(projectRoot, '_wdf_output', 'api-spec.yaml'), OPENAPI, 'utf8');
+
+      const result = await initCommand({ ...defaultOptions, fromExisting: true });
+
+      expect(result.specsBootstrapped).toBe(false);
+      // Existing general/spec.md preserved, no new domains created
+      const specsDir = join(projectRoot, '_wdf_output', 'specs');
+      const domains = readdirSync(specsDir);
+      expect(domains).toEqual(['general']);
+    });
+
+    it('surfaces bootstrapWarnings in InitOutput', async () => {
+      mkdirSync(join(projectRoot, '_wdf_output'), { recursive: true });
+      // Malformed YAML triggers a warning, falls through to "general" fallback
+      writeFileSync(join(projectRoot, '_wdf_output', 'api-spec.yaml'), 'op**enapi: ::: not yaml :::', 'utf8');
+
+      const result = await initCommand({ ...defaultOptions, fromExisting: true });
+
+      expect(result.specsBootstrapped).toBe(true);
+      expect(result.bootstrapWarnings).toBeDefined();
+      expect(result.bootstrapWarnings!.length).toBeGreaterThan(0);
     });
   });
 });

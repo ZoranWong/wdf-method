@@ -509,6 +509,17 @@ async function runInitCommand(args: string[]) {
       if (options.template) {
         console.log(`   Template: ${options.template}`);
       }
+      // S4: surface bootstrap warnings + source_of_truth hint
+      if (result.bootstrapWarnings && result.bootstrapWarnings.length > 0) {
+        for (const w of result.bootstrapWarnings) {
+          console.log(`   ⚠️  ${w}`);
+        }
+      }
+      if (result.specsBootstrapped) {
+        console.log(`   ℹ️  specs/ bootstrapped from existing artifacts.`);
+        console.log(`      Flip [specs] source_of_truth = true in customize.toml to make specs canonical`);
+        console.log(`      and enable forward-sync to PRD/api-spec/db-schema.`);
+      }
     }
     process.exit(0);
   } catch (err: any) {
