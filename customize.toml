@@ -870,10 +870,10 @@ cleanup_on_complete = true               # Remove signal files on agent completi
 #
 # Staging:
 #   v3.8.x: source_of_truth = false (PRD canonical; reverse sync bootstraps specs/)
-#   v3.9.0: source_of_truth = true  (specs/ canonical; forward sync overwrites PRD)
+#   v3.9.0 (CHG-2026-015 S6): source_of_truth = true  (specs/ canonical; forward sync overwrites PRD)
 
 [specs]
-source_of_truth = false                  # v3.8.x: PRD canonical; v3.9.0 flips to true
+source_of_truth = true                   # v3.9.0 default (S6): specs/ canonical
 specs_dir = "{project-root}/_wdf_output/specs"
 default_sync_direction = "reverse"       # Bootstrap existing projects: PRD → specs/
 managed_region_marker = "wdf:specs-sync" # HTML comment marker around generated PRD blocks

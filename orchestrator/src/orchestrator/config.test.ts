@@ -243,25 +243,25 @@ stories_output = "{project-root}/build/wdf/stories"
 });
 
 describe('specs section (CHG-2026-015 S1)', () => {
-  it('defaults to source_of_truth=false and standard paths', () => {
+  it('defaults to source_of_truth=true (CHG-2026-015 S6 flip) and standard paths', () => {
     const { config } = loadConfig(tmpRoot, { silent: true });
     expect(config.specs).toBeDefined();
-    expect(config.specs.source_of_truth).toBe(false);
+    expect(config.specs.source_of_truth).toBe(true);
     expect(config.specs.default_sync_direction).toBe('reverse');
     expect(config.specs.managed_region_marker).toBe('wdf:specs-sync');
     expect(config.specs.enforce_unique_requirement_names).toBe(true);
     expect(getSpecsDir(config, tmpRoot)).toBe(resolve(tmpRoot, '_wdf_output/specs'));
   });
 
-  it('honors [specs] override from customize.toml', () => {
+  it('honors [specs] override from customize.toml (false opt-out)', () => {
     writeFileSync(join(tmpRoot, 'customize.toml'), `
 [specs]
-source_of_truth = true
+source_of_truth = false
 default_sync_direction = "forward"
 specs_dir = "{project-root}/custom-specs"
 `);
     const { config } = loadConfig(tmpRoot, { silent: true });
-    expect(config.specs.source_of_truth).toBe(true);
+    expect(config.specs.source_of_truth).toBe(false);
     expect(config.specs.default_sync_direction).toBe('forward');
     expect(getSpecsDir(config, tmpRoot)).toBe(resolve(tmpRoot, 'custom-specs'));
   });

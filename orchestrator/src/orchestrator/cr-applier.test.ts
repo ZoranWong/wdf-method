@@ -811,7 +811,9 @@ describe('cr-applier — maybeCascadeSpecsSync', () => {
   });
 
   it('returns warning (no writes) when source_of_truth=false', () => {
-    // No customize.toml → DEFAULT_CONFIG has source_of_truth=false
+    // Explicit override: CHG-2026-015 S6 flipped the default to true, so tests
+    // covering the false path must set it explicitly.
+    writeFileSync(join(root, 'customize.toml'), `[specs]\nsource_of_truth = false\n`, 'utf8');
     const delta: Delta = {
       ...V2_HEADER,
       operations: [
@@ -871,6 +873,8 @@ describe('cr-applier — v2 archiveAndRewrite interop', () => {
   });
 
   it('source_of_truth=false: archives, writes spec, returns cascade warning', async () => {
+    // Explicit override: S6 default is true.
+    writeFileSync(join(root, 'customize.toml'), `[specs]\nsource_of_truth = false\n`, 'utf8');
     const result = await archiveAndRewrite('CHG-2026-017', root);
     expect(result.patched).toContain('_wdf_output/specs/auth/spec.md');
     expect(result.cascadeWarning).toMatch(/source_of_truth/);

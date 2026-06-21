@@ -13,6 +13,7 @@ import { statusCommand, renderStatus } from './status.js';
 import { GateEvaluator } from './gate-evaluator.js';
 import { runDoctor, formatDoctorReport } from './doctor.js';
 import { applyDelta, summarizePlan, unifiedDiff, loadDelta, planApply, archiveAndRewrite, resolveCrDir } from './cr-applier.js';
+import { migrateDelta, formatMigrateResult } from './cr-migrate.js';
 import { verifyCrConsistency, formatReport as formatCrVerifyReport } from './cr-verify.js';
 import { renameSync, readdirSync, statSync } from 'fs';
 
@@ -46,10 +47,10 @@ async function main() {
     return;
   }
 
-  // Proposal-level CR ops (cr apply / cr archive / cr verify) work on
+  // Proposal-level CR ops (cr apply / cr archive / cr migrate / cr verify) work on
   // changes/<CHG-id>/ and do NOT require an initialized project; treat cwd
   // as project root.
-  if (command === 'cr' && (args[1] === 'apply' || args[1] === 'archive')) {
+  if (command === 'cr' && (args[1] === 'apply' || args[1] === 'archive' || args[1] === 'migrate')) {
     await runCrProposalCommand(args, process.cwd());
     return;
   }
@@ -143,9 +144,9 @@ async function main() {
       break;
 
     case 'cr':
-      // `cr apply` and `cr archive` operate on changes/<CHG-id>/ source files,
+      // `cr apply`, `cr archive`, `cr migrate` operate on changes/<CHG-id>/ source files,
       // not runtime status — they do NOT require the project to be initialized.
-      if (args[1] === 'apply' || args[1] === 'archive') {
+      if (args[1] === 'apply' || args[1] === 'archive' || args[1] === 'migrate') {
         await runCrProposalCommand(args, projectRoot);
         break;
       }
@@ -358,6 +359,7 @@ CR Commands:
   wdf cr resolve <cr-id>                  Mark CR as resolved
   wdf cr apply <CHG-id> [--dry-run]       Apply delta.yaml from changes/<CHG-id>/
   wdf cr archive <CHG-id>                 Move proposal to changes/_archive/
+  wdf cr migrate <CHG-id> [--dry-run]     Convert v1 delta.yaml to v2 (specs-only)
   wdf cr verify [--json]                  Verify INDEX.md ↔ proposal.md status consistency
 
 Workflow Commands:
@@ -1270,7 +1272,7 @@ async function runCrCommand(args: string[], projectRoot: string, orchestrator: P
       break;
     }
     default:
-      console.log('Usage: wdf cr <list|show|create|resolve|apply|archive> [args] [options]');
+      console.log('Usage: wdf cr <list|show|create|resolve|apply|archive|migrate> [args] [options]');
       console.log('');
       console.log('Runtime CR Commands (status/change-requests.yaml):');
       console.log('  list [--open|--resolved] [--blocking|--non-blocking]  List CRs with optional filters');
@@ -1996,6 +1998,26 @@ async function runCrProposalCommand(args: string[], projectRoot: string) {
         console.error(`❌ ${err.message}`);
         process.exit(1);
       }
+    }
+    return;
+  }
+
+  if (sub === 'migrate') {
+    const dryRun = args.includes('--dry-run');
+    const force = args.includes('--force');
+    try {
+      const result = migrateDelta(proposalDir, { dryRun, force });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(formatMigrateResult(result, dryRun));
+      }
+      process.exit(result.ok ? 0 : 1);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (json) console.error(JSON.stringify({ error: msg }, null, 2));
+      else console.error(`❌ ${msg}`);
+      process.exit(1);
     }
     return;
   }

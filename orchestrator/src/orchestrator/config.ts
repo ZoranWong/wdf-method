@@ -154,8 +154,8 @@ export interface AcceptanceCheckSafetySection {
 }
 
 export interface SpecsSection {
-  // v3.8.x: false (PRD remains canonical; reverse sync bootstraps specs/)
-  // v3.9.0: flipped to true (specs/ becomes source; forward sync overwrites PRD)
+  // v3.8.x: false (PRD remained canonical; reverse sync bootstrapped specs/)
+  // v3.9.0 (CHG-2026-015 S6): flipped to true (specs/ becomes source; forward sync overwrites PRD)
   source_of_truth: boolean;
   specs_dir: string;
   default_sync_direction: 'forward' | 'reverse';
@@ -283,7 +283,8 @@ export const DEFAULT_CONFIG: WorkflowConfig = {
     allowed_exceptions: [],
   },
   specs: {
-    source_of_truth: false,
+    // CHG-2026-015 S6: flipped to true for v3.9.0 enforcement.
+    source_of_truth: true,
     specs_dir: `{project-root}/${DEFAULT_OUTPUT_BASE}/specs`,
     default_sync_direction: 'reverse',
     managed_region_marker: 'wdf:specs-sync',

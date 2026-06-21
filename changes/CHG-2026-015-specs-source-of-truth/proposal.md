@@ -4,7 +4,7 @@
 Change ID: CHG-2026-015
 Proposed: 2026-06-20
 Author: AI Agent
-Status: PROPOSED
+Status: IMPLEMENTED
 Priority: P0
 Target: 3.9.0 (enforcement) / 3.8.1+ (incremental rollout)
 Roadmap: docs/plans/r3-spec-as-truth-roadmap.md (to be created)
@@ -118,12 +118,12 @@ _wdf_output/
 ### 4.1 任务清单（6 个 slice）
 
 ```
-[ ] S1: specs/ 目录结构 + wdf spec sync 双向同步            (v3.8.1, 3 工日)
-[ ] S2: delta.yaml v2 semantic format + cr-applier 升级     (v3.8.2, 4 工日)
-[ ] S3: cr archive cascade regenerate + --no-regenerate flag (v3.8.3, 2 工日)
-[ ] S4: wdf init --existing brownfield 模式                 (v3.8.3, 3 工日)
-[ ] S5: traceability graph 升级支持 specs/ 节点              (v3.8.1, 2 工日)
-[ ] S6: v3.9.0 enforcement (v1 报错 + migrate 命令)          (v3.9.0, 2 工日)
+[x] S1: specs/ 目录结构 + wdf spec sync 双向同步            (v3.8.1, 3 工日)
+[x] S2: delta.yaml v2 semantic format + cr-applier 升级     (v3.8.2, 4 工日)
+[x] S3: cr archive cascade regenerate + --no-regenerate flag (v3.8.3, 2 工日)
+[x] S4: wdf init --existing brownfield 模式                 (v3.8.3, 3 工日)
+[x] S5: traceability graph 升级支持 specs/ 节点              (v3.8.1, 2 工日)
+[x] S6: v3.9.0 enforcement (default flip + migrate 命令)     (v3.9.0, 2 工日)
 ```
 
 详细 task breakdown 见各 slice 的 sub-proposal（实施时补）。

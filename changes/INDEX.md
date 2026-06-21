@@ -50,7 +50,7 @@
 
 | CR ID | 标题 | 优先级 | 目标版本 | 状态 | 负责人 | 关联 R3 |
 |-------|------|--------|----------|------|--------|----------|
-| [CHG-2026-015](CHG-2026-015-specs-source-of-truth/proposal.md) | specs/ Source of Truth + Semantic Delta Archive | **P0** | 3.8.1→3.9.0 | 📝 PROPOSED | AI | R3-01 (S1-S6) |
+| [CHG-2026-015](CHG-2026-015-specs-source-of-truth/proposal.md) | specs/ Source of Truth + Semantic Delta Archive | **P0** | 3.8.1→3.9.0 | ✅ IMPLEMENTED | AI | R3-01 (S1-S6) |
 | [CHG-2026-016](CHG-2026-016-r3-consistency-bugfix/proposal.md) | R3 入口一致性修复（12 bugs + 文档漂移） | **P0** | 3.8.1 | ✅ IMPLEMENTED | AI | R3-00 (CHG-015 前置) |
 | [CHG-2026-017](CHG-2026-017-semantic-delta-demo/proposal.md) | Semantic Delta v2 Demo (CHG-015 S2 reference) | P1 | 3.9.1 | 📝 PROPOSED | AI | R3-02 (CHG-015 S2) |
 
