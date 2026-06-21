@@ -1,0 +1,243 @@
+# ─────────────────────────────────────────
+# CHG-2026-015 — specs/ Source of Truth + Semantic Delta Archive
+#
+# This is CHG-015's own delta.yaml — the meta-level demonstration that
+# wdf dogfoods its own spec-driven flow. It declares the spec/config
+# surface area this CR touches; the implementation lives in commits
+# and tests.
+#
+# Note on schema_version:
+#   This delta uses v1 (mechanical) ops because v2 (semantic) is what
+#   this CR *introduces* — at proposal time, v2 doesn't exist yet.
+#   S2 of this CR will add schema_version=2 support; once shipped,
+#   future CRs use v2.
+#
+# Preview:  wdf cr apply CHG-2026-015 --dry-run
+# Apply:    wdf cr apply CHG-2026-015
+# ─────────────────────────────────────────
+
+change_id: "CHG-2026-015"
+summary: "Introduce specs/<domain>/spec.md as canonical source of truth; upgrade delta.yaml to semantic v2"
+base_version: "3.8.0"
+target_version: "3.9.0"
+
+operations:
+
+  # ── 1. customize.toml: 新增 [specs] section + source_of_truth flag ──
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "specs.source_of_truth"
+    value: false
+    rationale: "Default false in v3.8.x for backward compat; flipped to true at v3.9.0 enforcement"
+
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "specs.output_dir"
+    value: "{project-root}/_wdf_output/specs"
+    rationale: "Where canonical specs/<domain>/spec.md files live"
+
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "specs.scenario_format"
+    value: "bdd"
+    rationale: "GIVEN/WHEN/THEN locked per design decision; only valid value at v3.9.0"
+
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "specs.delta_schema_version_required"
+    value: 2
+    rationale: "From v3.9.0, delta.yaml must declare schema_version: 2 (semantic)"
+
+  # ── 2. customize.toml: 标记 PRD/epics 为 derived ────────────────────
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "workflow.prd_is_derived"
+    value: false
+    rationale: "Default false in v3.8.x; flipped to true when specs.source_of_truth=true"
+
+  - op: set
+    target:
+      kind: toml_key
+      file: customize.toml
+      path: "workflow.epics_is_derived"
+    value: false
+    rationale: "Same as prd_is_derived; toggled together with source_of_truth"
+
+  # ── 3. SPEC.md: 在 §1 概述 后追加 §1.2 specs/ 真相源设计原则 ─────────
+  #    Retargeted from '## 2. 核心架构' (does not exist) to '## 1. 概述'.
+  #    Appends after §1.1 设计原则, before §2 生命周期阶段.
+  - op: append
+    target:
+      kind: spec_section
+      file: SPEC.md
+      section: "## 1. 概述"
+    value: |
+
+      ### 1.2 specs/ 作为真相源 (v3.9.0+)
+
+      从 v3.9.0 起，`_wdf_output/specs/<domain>/spec.md` 是项目行为规范的唯一真相源。
+      PRD/epics/api-spec/db-schema 都是由 `wdf spec sync` 从 specs/ 生成的 derived view。
+
+      Spec 格式遵循 OpenSpec 风格：
+      - `## Purpose` — domain 概述
+      - `### Requirement: <name>` — 单个行为契约，名称在 domain 内 unique
+      - `#### Scenario: <name>` — 具体场景，必须 GIVEN/WHEN/THEN (BDD)
+      - RFC 2119 关键字：SHALL/MUST/SHOULD/MAY
+
+      Delta spec (changes/<id>/specs/) 使用三段式：
+      - `## ADDED Requirements` — 新增行为
+      - `## MODIFIED Requirements` — 修改行为
+      - `## REMOVED Requirements` — 移除行为
+
+      Archive 时 delta 自动合并进 specs/，并 cascade regenerate 所有 derived view。
+
+      详见 `schemas/spec-schema.yaml` 与 `docs/SPEC-AS-TRUTH.md`（CHG-015 S1 引入）。
+    rationale: "Spec-level statement of the new architectural principle; lands in S1"
+
+  # ── 4. TRACEABILITY.md: 在 §8 R2 新增模块表追加 CHG-015 行 ──────────
+  #    Retargeted from '## 4. 实现矩阵' (does not exist) to
+  #    '## 8. R2 新增模块追踪 (v3.7.0)'. Section title will be generalized
+  #    to '## 8. R2/R3 新增模块追踪' by S1 implementer when adding the rows.
+  - op: append
+    target:
+      kind: spec_section
+      file: TRACEABILITY.md
+      section: "## 8. R2 新增模块追踪 (v3.7.0)"
+    value: |
+      | CHG-2026-015 specs/ source of truth | schemas/spec-schema.yaml | orchestrator/src/orchestrator/spec-sync.ts | spec-sync.test.ts |
+      | CHG-2026-015 semantic delta v2 | schemas/change-delta-schema.yaml | orchestrator/src/orchestrator/cr-applier.ts | cr-applier.test.ts (v2 cases) |
+      | CHG-2026-015 brownfield init | commands/wdf-init.md | orchestrator/src/orchestrator/init.ts (--existing branch) | init.test.ts (brownfield cases) |
+    rationale: "Wire CHG-015 into the module-tracking matrix; S5 updates the graph node types. Section title generalization is part of S1."
+
+  # ── 5. 新增 schemas/spec-schema.yaml (S1 引入) ──────────────────────
+  #    The file content is authored in S1; this op declares the create intent.
+  #    expected_hash omitted because the file doesn't exist yet at apply time.
+  - op: create
+    target:
+      kind: file
+      file: schemas/spec-schema.yaml
+    content: |
+      # ─────────────────────────────────────────
+      # Spec Schema — specs/<domain>/spec.md format
+      # Introduced by CHG-2026-015 S1
+      # ─────────────────────────────────────────
+      schema: "spec"
+      version: "1.0.0"
+
+      domain:
+        type: "string"
+        description: "Logical grouping (auth, todos, data, ui, ...)"
+        pattern: "^[a-z][a-z0-9-]*$"
+
+      purpose:
+        type: "string"
+        description: "High-level description of this spec's domain"
+        required: true
+        min_length: 50
+
+      requirements:
+        type: "array"
+        min_items: 1
+        items:
+          name:
+            type: "string"
+            description: "Requirement name, unique within domain"
+            pattern: "^[A-Z][A-Za-z0-9 -]+$"
+          statement:
+            type: "string"
+            description: "Behavior contract using RFC 2119 keywords"
+            must_contain_one_of: ["SHALL", "MUST", "SHOULD", "MAY"]
+          scenarios:
+            type: "array"
+            min_items: 1
+            items:
+              name:
+                type: "string"
+              given:
+                type: "string"
+                required: true
+                pattern: "^GIVEN\\s"
+              when:
+                type: "string"
+                required: true
+                pattern: "^WHEN\\s"
+              then:
+                type: "string"
+                required: true
+                pattern: "^THEN\\s"
+              and:
+                type: "array"
+                items:
+                  type: "string"
+                  pattern: "^AND\\s"
+    rationale: "S1 deliverable; defines the BDD spec format that specs/*.md must conform to"
+
+  # ── 6. 新增 docs/SPEC-AS-TRUTH.md (S1 引入) ─────────────────────────
+  - op: create
+    target:
+      kind: file
+      file: docs/SPEC-AS-TRUTH.md
+    content: |
+      # Specs as Source of Truth
+
+      > Introduced by CHG-2026-015. Active when `customize.toml [specs] source_of_truth = true`.
+
+      ## TL;DR
+
+      `_wdf_output/specs/<domain>/spec.md` is the canonical source of truth.
+      PRD/epics/api-spec/db-schema are derived views, regenerated by `wdf spec sync`.
+
+      ## Lifecycle
+
+      ```
+      specs/ (truth) ──sync──→ PRD/epics/api-spec (derived)
+             ↑                       │
+             │                       │ (read by Phase 3.7 story slicer,
+             │                       │  Phase 4 agents, etc.)
+             │
+      changes/<id>/specs/ (delta) ──archive──→ semantic merge into specs/
+      ```
+
+      ## Commands
+
+      - `wdf spec list` — list all domain specs
+      - `wdf spec show <domain>` — print a domain spec
+      - `wdf spec sync` — regenerate derived views from specs/
+      - `wdf spec sync --reverse` — one-shot extract specs/ from existing PRD (migration)
+      - `wdf spec test-gen <domain>` — generate Cucumber/Playwright skeletons from BDD scenarios
+      - `wdf spec validate [path]` — check format (BDD, RFC 2119, no placeholders)
+
+      ## Brownfield mode
+
+      `wdf init --existing [--from openapi|prisma|jsdoc]` derives initial specs/ from
+      an existing codebase, skipping Phases 1-3.
+
+      ## See also
+
+      - schemas/spec-schema.yaml — format spec
+      - schemas/change-delta-schema.yaml v2 — semantic delta
+      - OpenSpec docs/concepts.md — paradigm reference
+    rationale: "User-facing docs; lands with S1 so early adopters have guidance"
+
+# ─────────────────────────────────────────
+# Why this delta is moderate-length
+# ─────────────────────────────────────────
+# CHG-015 changes the spec surface (SPEC.md, TRACEABILITY.md), the config
+# surface (customize.toml), and introduces two new schema/doc files.
+# The bulk of the implementation — TypeScript in spec-sync.ts, cr-applier
+# v2, init.ts --existing branch — lives in commits and tests, not here.
+#
+# This is intentionally NOT a v2 semantic delta (which CHG-015 itself
+# introduces). At proposal time, schema_version=2 doesn't exist yet.
+# Self-applying a v2 delta would be circular. Once S2 ships, future CRs
+# default to v2; this delta remains v1 for historical accuracy.
