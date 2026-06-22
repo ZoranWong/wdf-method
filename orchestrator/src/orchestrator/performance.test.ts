@@ -12,13 +12,14 @@ import {
 } from './performance.js';
 import { mkdtempSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('performance', () => {
   let tmpDir: string;
 
   beforeEach(() => {
     resetMetrics();
-    tmpDir = mkdtempSync('wdf-perf-test-');
+    tmpDir = mkdtempSync(join(tmpdir(), 'wdf-perf-test-'));
   });
 
   describe('timed', async () => {

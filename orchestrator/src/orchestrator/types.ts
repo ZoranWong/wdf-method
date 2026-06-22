@@ -73,6 +73,30 @@ export interface PipelineDispatchManifest {
     review_notes?: string;
     qa_report?: string;
   };
+  /**
+   * Permission scope the parent Claude session MUST inject into the host
+   * `.claude/settings.local.json` before dispatching this sub-agent. Ensures
+   * the sub-agent can run its acceptance checks without per-step prompts.
+   * The injector tags each entry so it can be revoked after the story closes.
+   */
+  permissions?: DispatchPermissions;
+}
+
+/**
+ * Permission scope attached to a dispatch manifest. Translated 1:1 to
+ * Claude Code's `permissions.allow` / `permissions.deny` arrays.
+ *
+ * Bash entries use the form `Bash(<prefix>:*)` to match Claude Code's
+ * permission grammar. File scope is implicit in `scope_write` (mapped to
+ * `Edit(...)` / `Write(...)`).
+ */
+export interface DispatchPermissions {
+  /** Bash command prefixes the sub-agent may run without prompting. */
+  bash_allow?: string[];
+  /** Bash command prefixes the sub-agent must NEVER run. */
+  bash_deny?: string[];
+  /** Read-only file globs the sub-agent may inspect beyond project root. */
+  scope_read?: string[];
 }
 
 export interface PipelineEscalation {
