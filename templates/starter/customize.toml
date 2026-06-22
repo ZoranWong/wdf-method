@@ -1,0 +1,26 @@
+# Project-level customization for the WDF starter template.
+#
+# Values here OVERRIDE the framework defaults in
+# wdf-method/customize.toml. Strip the keys you don't need.
+
+# Documentation language for Phase 1-3 artefacts.
+# Options: en, zh-CN, ja
+default_language = "en"
+
+# Auto-skip sub-phases that are tagged optional in the framework.
+# When false, every sub-phase runs (useful for first projects).
+auto_skip_optional = true
+
+# Pipeline behavior.
+[pipeline]
+max_pipeline_retries = 5
+inner_fix_retries = 2
+escalation_hold_hours = 24
+auto_fail_on_hold_timeout = true
+
+# Quality gates — minimum thresholds for `wdf gate` to pass.
+[quality]
+test_coverage_min = 80
+lighthouse_performance_min = 90
+lighthouse_accessibility_min = 95
+bundle_size_kb_max = 250

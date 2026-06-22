@@ -118,7 +118,7 @@ async function main() {
     'workspace', 'template', 'preset', 'coverage',
     'schema', 'provider', 'review', 'retro', 'retrospective',
     'health', 'doctor', 'pre-check', 'lint',
-    'spec',
+    'spec', 'tasks',
   ]);
 
   if (!initialized && !FRAMEWORK_LEVEL_COMMANDS.has(command)) {
@@ -358,16 +358,45 @@ async function main() {
       process.exit(result.overall === 'blocked' ? 1 : 0);
     }
 
+    case 'reset': {
+      if (!initialized) {
+        console.error('WDF project not initialized. Run `wdf init` first.');
+        process.exit(1);
+      }
+      await runResetCommand(args, projectRoot);
+      break;
+    }
+
+    case 'escalate': {
+      if (!initialized) {
+        console.error('WDF project not initialized. Run `wdf init` first.');
+        process.exit(1);
+      }
+      await runEscalateCommand(args, projectRoot);
+      break;
+    }
+
+    case 'tasks': {
+      // tasks.md is optional — don't require WDF initialization. The
+      // command is a read-only summarizer, useful even in repos that
+      // haven't gone through `wdf init` yet.
+      await runTasksCommand(args, projectRoot);
+      break;
+    }
+
     case 'help':
     default:
       console.log(`
-web-dev-flow orchestrator v3.8.0
+web-dev-flow orchestrator v3.9.0
 
 Core Commands:
   wdf pre-check [--json]                  Run environment pre-flight checks
   wdf init [options]                      Initialize a new WDF project
   wdf status [--phase=N] [--json] [--short]  Show project status dashboard
   wdf rebuild-status [--backup]            Rebuild derived sprint-status.yaml
+  wdf reset --story=<id> --force           Recover a FAIL story to NOT_STARTED
+  wdf escalate --list|--resolve|--reject   Manage PIPELINE_ESCALATED stories
+  wdf tasks [--json] [--check]             Summarize tasks.md (cross-session continuity)
 
 Phase Commands:
   wdf phase <N>                           Show details for phase N
@@ -403,6 +432,7 @@ Workflow Commands:
       --skip RULE_ID        Skip specific rule(s)
       --list-rules          Show all available rules
       --fix                 Auto-fix fixable issues
+      --strict              Promote warnings to errors (CI gate)
   wdf loop [options]                     Get next dispatch action (auto-loop)
     Options:
       --json                  JSON output (default)
@@ -854,6 +884,23 @@ async function runStartCommand(args: string[], projectRoot: string, orchestrator
       console.log('    1. Read _wdf_output/.dispatch/auto-execute.json');
       console.log('    2. For each entry, write the artifact to the output path');
       console.log('    3. Run /wdf start to re-sync state');
+    }
+
+    // tasks.md cross-session continuity hint. Soft: absent tasks.md is
+    // a valid state (project hasn't opted in yet).
+    try {
+      const { summarizeTasks, formatTasksOneLine } = await import('./tasks-md.js');
+      const taskSummary = summarizeTasks(projectRoot);
+      if (taskSummary) {
+        console.log('');
+        console.log('── tasks.md ──');
+        console.log(`  ${formatTasksOneLine(taskSummary)}`);
+        if (taskSummary.last_note) {
+          console.log(`  Last note: ${taskSummary.last_note}`);
+        }
+      }
+    } catch {
+      // Non-fatal — tasks.md is an opt-in载体, not a requirement.
     }
 
     console.log(`  Next: ${result.nextCommand}`);
@@ -1652,6 +1699,7 @@ async function runLintCommand(args: string[]) {
   const onlyRules: string[] = [];
   const skipRules: string[] = [];
   let fix = false;
+  let strict = false;
   let listRules = false;
   let projectRootPath = process.cwd();
 
@@ -1664,6 +1712,8 @@ async function runLintCommand(args: string[]) {
       skipRules.push(args[++i]);
     } else if (arg === '--fix') {
       fix = true;
+    } else if (arg === '--strict') {
+      strict = true;
     } else if (arg === '--list-rules') {
       listRules = true;
     } else if (!arg.startsWith('-')) {
@@ -1689,8 +1739,8 @@ async function runLintCommand(args: string[]) {
     process.exit(0);
   }
 
-  const report = await linter.lint({ onlyRules, skipRules, fix });
-  console.log(linter.formatReport(report));
+  const report = await linter.lint({ onlyRules, skipRules, fix, strict });
+  console.log(linter.formatReport(report, { strict }));
   process.exit(report.errors > 0 ? 1 : 0);
 }
 
@@ -1723,7 +1773,7 @@ async function runConstitutionCommand(args: string[], projectRoot: string) {
 
   const linter = new SpecLinter(projectRootPath);
   linter.registerRules(BUILTIN_RULES);
-  const report = await linter.lint({ onlyRules: ['CONSTITUTION_THRESHOLDS'] });
+  const report = await linter.lint({ onlyRules: ['CONSTITUTION_CHECK'] });
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
@@ -3390,5 +3440,452 @@ async function runCoverageCommand(args: string[], projectRoot: string) {
   console.error('  check — verify existing coverage report against constitution');
   console.error('  run   — run vitest --coverage then check');
   process.exit(1);
+}
+
+// ============================================================
+// FAIL Recovery & Escalation Management (V3.9)
+// ============================================================
+//
+// Two new commands introduced alongside the FAIL terminal state:
+//
+//   `wdf reset --story=<id> --force`
+//     The ONLY path from FAIL → NOT_STARTED. Marks the story ready for
+//     redispatch, re-initializes the pipeline context, and archives the
+//     ESCALATED.json manifest. Optionally performs L3 git reset when
+//     `--restore-git` is passed.
+//
+//   `wdf escalate <list|--resolve|--reject>`
+//     Manual control over PIPELINE_ESCALATED stories:
+//       - list:    shows all ESCALATED + FAIL stories with hold time
+//       - resolve: PIPELINE_ESCALATED → IN_PROGRESS (human fixed it)
+//       - reject:  PIPELINE_ESCALATED → FAIL (human gives up, bypasses hold)
+
+async function runResetCommand(args: string[], projectRoot: string) {
+  const storyArg = args.find(a => a.startsWith('--story='));
+  const force = args.includes('--force');
+  const dryRun = args.includes('--dry-run');
+  const restoreGit = args.includes('--restore-git');
+  const json = args.includes('--json');
+
+  if (!storyArg) {
+    console.error('Usage: wdf reset --story=<id> --force [--dry-run] [--restore-git] [--json]');
+    console.error('');
+    console.error('Options:');
+    console.error('  --story=<id>     Story to recover (required)');
+    console.error('  --force          Required — confirms destructive intent');
+    console.error('  --dry-run        Show plan without changes');
+    console.error('  --restore-git    Also run L3 git reset to pre-escalation commit');
+    console.error('  --json           JSON output');
+    process.exit(1);
+  }
+
+  const storyId = storyArg.slice('--story='.length);
+
+  const cfg = loadConfig(projectRoot, { silent: true }).config;
+  const trackingPath = getSprintTrackingPath(cfg, projectRoot);
+  if (!existsSync(trackingPath)) {
+    console.error('No sprint-status.yaml found.');
+    process.exit(1);
+  }
+
+  const state = await SprintStatusManager.load(trackingPath);
+
+  let foundSubKey: string | null = null;
+  let story: any = null;
+  for (const subKey of ['phase_4_4', 'phase_4_10']) {
+    const stories = state.getStories(4, subKey);
+    const found = stories.find((s: any) => s.id === storyId);
+    if (found) {
+      story = found;
+      foundSubKey = subKey;
+      break;
+    }
+  }
+
+  if (!story || !foundSubKey) {
+    console.error(`Story not found: ${storyId}`);
+    process.exit(1);
+  }
+
+  if (story.status !== 'FAIL') {
+    console.error(`Story ${storyId} is not in FAIL state (current: ${story.status}).`);
+    console.error('Only FAIL stories can be reset. For PIPELINE_ESCALATED, use `wdf escalate --resolve`.');
+    process.exit(1);
+  }
+
+  if (!force && !dryRun) {
+    console.error(`Refusing to reset ${storyId} without --force.`);
+    console.error('Recovery is destructive — explicit confirmation required.');
+    process.exit(1);
+  }
+
+  // Optional L3 git reset
+  let gitActions: string[] = [];
+  if (restoreGit) {
+    try {
+      const { l3GitReset } = await import('./error-handling.js');
+      // Reset to HEAD by default — preserves the working tree but discards
+      // any uncommitted changes. A more aggressive target would be the
+      // pre-escalation commit, but resolving that requires the original
+      // `started_at` from story status + a git log lookup. Keep it simple.
+      const result = l3GitReset('HEAD', {
+        projectRoot,
+        dryRun,
+        requireConfirmation: false, // --force already confirmed intent
+      });
+      gitActions = result.actions ?? [];
+    } catch (err: any) {
+      console.warn(`Warning: L3 git reset failed: ${err.message}`);
+    }
+  }
+
+  const { initPipelineContext } = await import('./pipeline-engine.js');
+  const { appendAudit } = await import('./audit-logger.js');
+  const { validateStateTransition } = await import('./fsm-engine.js');
+
+  // Sanity check: the FSM should accept this transition when metadata.reset
+  // is set. If it doesn't, we've drifted from fsm-engine — abort loudly.
+  const validation = validateStateTransition('FAIL', 'NOT_STARTED', {
+    metadata: { reset: true },
+  });
+  if (!validation.valid) {
+    console.error(`Internal error: FSM rejected FAIL → NOT_STARTED.`);
+    console.error(`Reason: ${validation.reason}`);
+    process.exit(1);
+  }
+
+  const outputDir = getOutputDir(cfg, projectRoot);
+  const escPath = join(outputDir, '.dispatch', 'pipeline', storyId, 'ESCALATED.json');
+
+  if (dryRun) {
+    const plan: any = {
+      story_id: storyId,
+      action: 'reset',
+      from: 'FAIL',
+      to: 'NOT_STARTED',
+      pipeline_reset: true,
+      git_actions: gitActions,
+    };
+    if (json) console.log(JSON.stringify(plan, null, 2));
+    else {
+      console.log('Dry-run plan:');
+      console.log(`  story: ${storyId}`);
+      console.log(`  transition: FAIL → NOT_STARTED`);
+      console.log(`  pipeline: re-initialized to dev/attempt 1`);
+      if (existsSync(escPath)) console.log(`  archive: ${escPath} → .archived-<ts>`);
+      if (gitActions.length > 0) {
+        console.log(`  git:`);
+        for (const a of gitActions) console.log(`    - ${a}`);
+      }
+    }
+    return;
+  }
+
+  // Archive ESCALATED.json before mutating state (preserves audit trail)
+  let archivedEscPath: string | undefined;
+  if (existsSync(escPath)) {
+    archivedEscPath = `${escPath}.archived-${Date.now()}`;
+    renameSync(escPath, archivedEscPath);
+  }
+
+  // FSM transition: FAIL → NOT_STARTED.
+  // The story-runner / pipeline-runner will treat NOT_STARTED as fresh,
+  // dispatching a new dev agent from scratch on the next `wdf loop` tick.
+  state.updateStoryStatus(4, foundSubKey, {
+    ...story,
+    status: 'NOT_STARTED',
+    pipeline: initPipelineContext(),
+    completed_at: undefined,
+    bmad_story_state: 'ready-for-dev',
+  });
+
+  appendAudit(projectRoot, 'pipeline_reset', {
+    story_id: storyId,
+    status: 'info',
+    message: `FAIL → NOT_STARTED via \`wdf reset --force\``,
+    details: {
+      sub_key: foundSubKey,
+      git_restore_performed: restoreGit,
+      archived_escalation_manifest: archivedEscPath,
+    },
+  });
+
+  if (json) {
+    console.log(JSON.stringify({
+      story_id: storyId,
+      reset: true,
+      from: 'FAIL',
+      to: 'NOT_STARTED',
+      git_restore_performed: restoreGit,
+      archived_manifest: archivedEscPath,
+    }, null, 2));
+  } else {
+    console.log(`✅ ${storyId}: FAIL → NOT_STARTED`);
+    if (archivedEscPath) console.log(`   ESCALATED.json archived → ${pathRelative(projectRoot, archivedEscPath)}`);
+    if (restoreGit) console.log(`   L3 git reset performed`);
+    console.log(`   Run \`wdf loop\` to redispatch.`);
+  }
+}
+
+async function runEscalateCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  const json = args.includes('--json');
+
+  const cfg = loadConfig(projectRoot, { silent: true }).config;
+  const trackingPath = getSprintTrackingPath(cfg, projectRoot);
+  if (!existsSync(trackingPath)) {
+    console.error('No sprint-status.yaml found.');
+    process.exit(1);
+  }
+
+  const state = await SprintStatusManager.load(trackingPath);
+  const outputDir = getOutputDir(cfg, projectRoot);
+
+  // Load hold hours from config (mirror dispatch-loop-engine defaults)
+  let holdHours = 24;
+  try {
+    const pipeline = (cfg as any).pipeline;
+    if (pipeline?.escalation_hold_hours !== undefined) {
+      const v = Number(pipeline.escalation_hold_hours);
+      if (Number.isFinite(v) && v >= 0) holdHours = v;
+    }
+  } catch { /* default */ }
+
+  // ── Subcommand: list (default) ──
+  if (sub === '--list' || sub === 'list' || sub === undefined) {
+    const rows: any[] = [];
+    for (const subKey of ['phase_4_4', 'phase_4_10']) {
+      for (const s of state.getStories(4, subKey)) {
+        if (s.status !== 'PIPELINE_ESCALATED' && s.status !== 'FAIL') continue;
+        const escPath = join(outputDir, '.dispatch', 'pipeline', s.id, 'ESCALATED.json');
+        let escalatedAt: string | undefined;
+        let reason: string | undefined;
+        let failedStage: string | undefined;
+        let holdHoursElapsed: number | undefined;
+        if (existsSync(escPath)) {
+          try {
+            const raw = JSON.parse(readFileSync(escPath, 'utf-8'));
+            escalatedAt = raw.escalated_at ?? raw.created_at;
+            reason = raw.reason;
+            failedStage = raw.failed_stage;
+            if (escalatedAt) {
+              holdHoursElapsed = Math.round((Date.now() - new Date(escalatedAt).getTime()) / 3600000);
+            }
+          } catch { /* skip */ }
+        }
+        rows.push({
+          story_id: s.id,
+          sub_key: subKey,
+          status: s.status,
+          escalated_at: escalatedAt,
+          hold_hours_elapsed: holdHoursElapsed,
+          failed_stage: failedStage,
+          reason,
+        });
+      }
+    }
+
+    if (json) {
+      console.log(JSON.stringify({ stories: rows, hold_limit_hours: holdHours }, null, 2));
+      return;
+    }
+
+    if (rows.length === 0) {
+      console.log('✅ No PIPELINE_ESCALATED or FAIL stories.');
+      return;
+    }
+    console.log(`Escalated / Failed stories (hold limit: ${holdHours}h):`);
+    console.log('');
+    for (const r of rows) {
+      const icon = r.status === 'FAIL' ? '⛔' : '🚨';
+      const hold = r.hold_hours_elapsed !== undefined
+        ? `${r.hold_hours_elapsed}h elapsed / ${holdHours}h limit`
+        : 'unknown hold time';
+      console.log(`${icon} ${r.story_id} [${r.status}] — ${hold}`);
+      if (r.failed_stage) console.log(`     failed stage: ${r.failed_stage}`);
+      if (r.reason) console.log(`     reason: ${r.reason}`);
+      if (r.status === 'PIPELINE_ESCALATED') {
+        console.log(`     → \`wdf escalate --resolve --story=${r.story_id}\` to retry`);
+        console.log(`     → \`wdf escalate --reject  --story=${r.story_id}\` to FAIL`);
+      } else {
+        console.log(`     → \`wdf reset --force --story=${r.story_id}\` to recover`);
+      }
+    }
+    return;
+  }
+
+  // ── Subcommand: resolve ──
+  if (sub === '--resolve' || sub === 'resolve') {
+    const storyArg = args.find(a => a.startsWith('--story='));
+    if (!storyArg) {
+      console.error('Usage: wdf escalate --resolve --story=<id>');
+      process.exit(1);
+    }
+    const storyId = storyArg.slice('--story='.length);
+    const result = await escalateTransition(storyId, 'PIPELINE_ESCALATED', 'IN_PROGRESS', projectRoot, state, { json });
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  // ── Subcommand: reject ──
+  if (sub === '--reject' || sub === 'reject') {
+    const storyArg = args.find(a => a.startsWith('--story='));
+    if (!storyArg) {
+      console.error('Usage: wdf escalate --reject --story=<id>');
+      process.exit(1);
+    }
+    const storyId = storyArg.slice('--story='.length);
+    const result = await escalateTransition(storyId, 'PIPELINE_ESCALATED', 'FAIL', projectRoot, state, { json });
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  console.error('Usage: wdf escalate <list|--list|--resolve|--reject> [options]');
+  console.error('');
+  console.error('Commands:');
+  console.error('  list                          List PIPELINE_ESCALATED and FAIL stories');
+  console.error('  --resolve --story=<id>        Recover: PIPELINE_ESCALATED → IN_PROGRESS');
+  console.error('  --reject  --story=<id>        Force fail: PIPELINE_ESCALATED → FAIL');
+  process.exit(1);
+}
+
+// ============================================================
+// Tasks Command Handler (tasks.md multi-session continuity)
+// ============================================================
+
+/**
+ * `wdf tasks` — read-only summarizer for tasks.md.
+ *
+ * tasks.md is the cross-session continuity载体: the Claude session
+ * writes it (it owns the content), and this command summarizes it so
+ * the user can pick up where they left off after `/clear` or context
+ * compaction. The CLI never writes to tasks.md — that's a deliberate
+ * architectural choice (CLI = state, Claude = intent).
+ *
+ * Returns nonzero exit if --check is passed and open tasks exist, for
+ * CI gates that want to fail when work is unfinished.
+ */
+async function runTasksCommand(args: string[], projectRoot: string) {
+  const json = args.includes('--json');
+  const check = args.includes('--check');
+  // Allow `wdf tasks <path>` to point at a non-default root.
+  let projectRootPath = projectRoot;
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('-')) {
+      projectRootPath = resolve(a);
+      break;
+    }
+  }
+
+  const { summarizeTasks, formatTasksReport, formatTasksOneLine } =
+    await import('./tasks-md.js');
+
+  const summary = summarizeTasks(projectRootPath);
+
+  if (!summary) {
+    if (json) {
+      console.log(JSON.stringify({ present: false, open_count: 0, done_count: 0 }, null, 2));
+      return;
+    }
+    console.log('\n  No tasks.md found.');
+    console.log('  Create one at the project root to enable cross-session continuity.');
+    console.log('  See /wdf-tasks for the format spec.\n');
+    return;
+  }
+
+  if (json) {
+    console.log(JSON.stringify({ present: true, ...summary }, null, 2));
+    return;
+  }
+
+  console.log(formatTasksReport(summary));
+
+  if (check && summary.open_count > 0) {
+    console.error(`✗ ${summary.open_count} open task(s) — failing for CI gate (--check)`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Shared transition helper for `wdf escalate --resolve|--reject`.
+ * Centralizes the lookup + status check + audit pattern so both branches
+ * stay in sync.
+ */
+async function escalateTransition(
+  storyId: string,
+  expectedFrom: string,
+  targetTo: string,
+  projectRoot: string,
+  state: SprintStatusManager,
+  opts: { json?: boolean },
+): Promise<{ ok: boolean }> {
+  let foundSubKey: string | null = null;
+  let story: any = null;
+  for (const subKey of ['phase_4_4', 'phase_4_10']) {
+    const found = state.getStories(4, subKey).find(s => s.id === storyId);
+    if (found) {
+      story = found;
+      foundSubKey = subKey;
+      break;
+    }
+  }
+
+  if (!story || !foundSubKey) {
+    console.error(`Story not found: ${storyId}`);
+    return { ok: false };
+  }
+
+  if (story.status !== expectedFrom) {
+    console.error(`Story ${storyId} is not ${expectedFrom} (current: ${story.status}).`);
+    return { ok: false };
+  }
+
+  const { appendAudit } = await import('./audit-logger.js');
+  const auditEvent = targetTo === 'FAIL' ? 'pipeline_fail' : 'pipeline_reset';
+  const auditMsg = targetTo === 'FAIL'
+    ? `PIPELINE_ESCALATED → FAIL via \`wdf escalate --reject\``
+    : `PIPELINE_ESCALATED → IN_PROGRESS via \`wdf escalate --resolve\``;
+
+  const update: any = {
+    ...story,
+    status: targetTo,
+  };
+  if (targetTo === 'FAIL') {
+    update.completed_at = new Date().toISOString();
+  } else if (targetTo === 'IN_PROGRESS') {
+    const { initPipelineContext } = await import('./pipeline-engine.js');
+    update.pipeline = initPipelineContext();
+  }
+
+  state.updateStoryStatus(4, foundSubKey, update);
+
+  appendAudit(projectRoot, auditEvent, {
+    story_id: storyId,
+    status: targetTo === 'FAIL' ? 'fail' : 'info',
+    message: auditMsg,
+    details: {
+      sub_key: foundSubKey,
+      recovery: targetTo === 'FAIL' ? 'manual-reject' : 'manual-resolve',
+      bypass_hold: targetTo === 'FAIL',
+    },
+  });
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      story_id: storyId,
+      from: expectedFrom,
+      to: targetTo,
+    }));
+  } else {
+    const icon = targetTo === 'FAIL' ? '⛔' : '✅';
+    console.log(`${icon} ${storyId}: ${expectedFrom} → ${targetTo}`);
+    if (targetTo === 'IN_PROGRESS') {
+      console.log(`   Run \`wdf loop\` to redispatch.`);
+    } else {
+      console.log(`   Recovery: \`wdf reset --force --story=${storyId}\``);
+    }
+  }
+  return { ok: true };
 }
 

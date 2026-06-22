@@ -2314,6 +2314,23 @@ export class PhaseOrchestrator {
     lines.push(`Total: ${list.total}`);
     lines.push('');
 
+    // Failure summary banner — surface FAIL/ESCALATED at the top so they
+    // can't hide in the per-track listing. Driven by sprint-status.
+    try {
+      const summary = this.state.getFailureSummary();
+      if (summary.failed_count > 0 || summary.escalated_count > 0) {
+        if (summary.failed_count > 0) {
+          lines.push(`⛔ ${summary.failed_count} story(ies) in FAIL state — run \`wdf reset --force --story=<id>\` to recover`);
+        }
+        if (summary.escalated_count > 0) {
+          lines.push(`🚨 ${summary.escalated_count} story(ies) PIPELINE_ESCALATED — run \`wdf escalate --list\``);
+        }
+        lines.push('');
+      }
+    } catch {
+      // status manager not initialized — skip the banner silently
+    }
+
     const statusIcons: Record<string, string> = {
       NOT_STARTED: '⚪',
       IN_PROGRESS: '🔄',
@@ -2321,6 +2338,9 @@ export class PhaseOrchestrator {
       CODE_ACCEPTED: '✅',
       BLOCKED: '❌',
       BLOCKED_BY_DEPENDENCY: '🔒',
+      FIX_RETRY: '🔧',
+      PIPELINE_ESCALATED: '🚨',
+      FAIL: '⛔',
     };
 
     // Group by track

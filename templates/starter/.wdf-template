@@ -1,0 +1,6 @@
+# Starter template marker — used by `wdf init --template=starter` to
+# locate the template root. Presence of this file also signals to lint
+# that this directory is intentionally a template (placeholders like
+# <PROJECT_NAME> are expected here).
+template_name = "starter"
+template_version = "0.1.0"
