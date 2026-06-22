@@ -888,8 +888,19 @@ async function runCheckCommand(args: string[], projectRoot: string) {
 
 async function runTraceCommand(args: string[], projectRoot: string) {
   const id = args[1];
+
+  // Handle --assert flag
+  if (args.includes('--assert')) {
+    const { assertTraceability } = await import('./trace-cmd.js');
+    const rebuild = args.includes('--rebuild');
+    const result = await assertTraceability({ projectRoot, rebuild });
+    console.log(result.formatted);
+    process.exit(result.ok ? 0 : 1);
+  }
+
   if (!id || id === '--help' || id === '-h') {
     console.error('Usage: wdf trace <id> [--format=text|mermaid] [--rebuild]');
+    console.error('       wdf trace --assert [--rebuild]');
     console.error('');
     console.error('Trace a node through the full JTBD→REQ→EPIC→STORY→API/DB→TEST→COMMIT chain.');
     console.error('');
@@ -897,12 +908,14 @@ async function runTraceCommand(args: string[], projectRoot: string) {
     console.error('  --format=text     Human-readable output (default)');
     console.error('  --format=mermaid  Mermaid.js flowchart for embedding in markdown');
     console.error('  --rebuild         Force rebuild the traceability graph');
+    console.error('  --assert          Verify all stories have complete traceability chains');
     console.error('');
     console.error('Examples:');
     console.error('  wdf trace REQ-7');
     console.error('  wdf trace STORY-001 --format=mermaid');
     console.error('  wdf trace API:GET /todos --rebuild');
     console.error('  wdf trace SPEC:auth:REQ-001');
+    console.error('  wdf trace --assert');
     console.error('');
     console.error('Valid IDs: REQ-N, STORY-NNN, EPIC-N, API:METHOD /path,');
     console.error('            DB:table, JTBD-N, COMMIT:<sha>, SPEC:<domain>:REQ-N');
