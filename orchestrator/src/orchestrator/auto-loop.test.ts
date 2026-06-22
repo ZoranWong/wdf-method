@@ -41,50 +41,26 @@ function init(): { orch: PhaseOrchestrator; root: string } {
     'type_check_required = false',
   ].join('\n'), 'utf8');
 
-  mkdirSync(join(root, '_bmad-output', 'web-dev-flow'), { recursive: true });
-  writeFileSync(join(root, '_bmad-output', 'web-dev-flow', 'sprint-status.yaml'), [
-    'version: "3.7.0"',
-    'project_id: test-project',
-    'global_state:',
-    '  mode: auto',
-    '  requirements_frozen_at: null',
-    '  development_order_frozen_at: null',
-    'phases:',
-    '  phase_1:',
-    '    status: NOT_STARTED',
-    '    label: Analysis',
-    '    gate_card: []',
-    '    substates:',
-    '      phase_1_1: { status: NOT_STARTED, label: "Impact Mapping" }',
-    '  phase_2:',
-    '    status: NOT_STARTED',
-    '    label: Planning',
-    '    gate_card: []',
-    '    substates:',
-    '      phase_2_1: { status: NOT_STARTED, label: "Product Brief" }',
-    '  phase_3:',
-    '    status: NOT_STARTED',
-    '    label: Solutioning',
-    '    gate_card: []',
-    '    substates:',
-    '      phase_3_1: { status: NOT_STARTED, label: "System Context" }',
-    '  phase_4:',
-    '    status: NOT_STARTED',
-    '    label: Implementation',
-    '    gate_card: []',
-    '    substates:',
-    '      phase_4_1: { status: NOT_STARTED, label: "Sprint Planning" }',
-    'change_requests: []',
-    'stories: []',
-  ].join('\n'), 'utf8');
-
-  // The orchestrator's loadConfig reads customize.toml for project
-  // structure. The sprint-status.yaml above is the "unified" format;
-  // the load path depends on customize config.
-  writeFileSync(join(root, '.wdf'), 'project_root: true\n', 'utf8');
+  mkdirSync(join(root, '_wdf_output', 'status'), { recursive: true });
 
   const orch = new PhaseOrchestrator(root);
   return { orch, root };
+}
+
+/**
+ * Give phases 1-3 a single sub-phase each so `startPhase` has work to lock.
+ * The default in-memory status (SprintStatusManager.defaultStatus) intentionally
+ * has NO substates — a substate-less phase never reaches LOCKED, because locking
+ * an empty phase would let runAutoLoop report success on an uninitialised project.
+ * Real projects always carry substates (written by `wdf init`); seeding them here
+ * exercises the same locking path without depending on on-disk status files.
+ */
+function seedSubstates(orch: PhaseOrchestrator, phases: number[]): void {
+  for (const p of phases) {
+    (orch as any).state.data.phases[`phase_${p}`].substates = {
+      [`phase_${p}_1`]: { status: 'NOT_STARTED', label: `Sub ${p}.1` },
+    };
+  }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────
@@ -93,6 +69,7 @@ describe('runAutoLoop', () => {
   it('completes phases 1→3 successfully (no story deps)', async () => {
     const { orch } = init();
     await orch.initialize();
+    seedSubstates(orch, [1, 2, 3]);
     const result = await orch.runAutoLoop({
       verbose: false, maxIterations: 20, startPhase: 1, endPhase: 3,
     });
