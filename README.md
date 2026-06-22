@@ -53,7 +53,7 @@ Your Idea
 | Feature | Description |
 |---------|-------------|
 | **Native Agent System** | 13 role-based AI agents (analyst, PM, architect, developer, reviewer, QA...) |
-| **Pure Orchestrator** | Thin state machine dispatches sub-agents with clean ~38KB context |
+| **Thin Orchestrator** | Thin state machine dispatches sub-agents with clean ~38KB context |
 | **One Story = One Agent** | Each story runs in isolated git worktree — zero write conflicts |
 | **4-Tier Acceptance** | CODE → FEATURE → UI → E2E BROWSER acceptance gates |
 | **Autonomous Execution** | Hands-free auto-run mode from Phase 1 to completion |

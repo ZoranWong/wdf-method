@@ -87,7 +87,11 @@ rules:
   - id: WDF-010
     name: No secrets in source
     description: >
-      No .env files, credentials, API keys, or tokens in tracked files.
+      No hard-coded provider credentials in tracked source. Matches known
+      secret value formats (Stripe sk_live_/sk_test_, GitHub gh[posu]_, AWS
+      AKIA, Slack xox*, Google AIza, PEM private keys) rather than the words
+      "key"/"token"/"secret" — so env-var names and identifiers like
+      `design_tokens` or `API_KEY = process.env.X` are not false positives.
     level: error
-    check: "git ls-files | xargs grep -lE '(API_KEY|SECRET|PASSWORD|TOKEN)' | grep -v '.gitignore' | wc -l"
+    check: 'git ls-files | grep -vE "node_modules" | xargs grep -lE "(sk_live_[A-Za-z0-9]{16,}|sk_test_[A-Za-z0-9]{16,}|gh[posu]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----)" 2>/dev/null | wc -l'
     expected: 0

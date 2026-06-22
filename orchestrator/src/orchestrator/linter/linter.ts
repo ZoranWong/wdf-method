@@ -124,6 +124,13 @@ export class SpecLinter {
       '**/_wdf_output/_output/**',
       '**/.wdf-story-workspaces/**',
       '**/.claude/**',
+      // Test data, not real project artefacts: `fixtures/` holds linter test
+      // inputs and `_test-project/` is a stale pre-rename (_bmad-output/
+      // web-dev-flow) fixture. Linting them as live projects yields spurious
+      // STORY_REFS / VERSION failures. The linter's own test suite builds its
+      // LintContext via makeFile(), so it never touches these on disk.
+      '**/fixtures/**',
+      '**/_test-project/**',
       '**/.DS_Store',
     ];
     const entries: FileEntry[] = [];

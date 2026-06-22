@@ -1,6 +1,6 @@
 {
   "name": "wdf-method",
-  "version": "3.6.0",
+  "version": "3.9.0",
   "description": "Web Dev Flow — Full-lifecycle web development automation. PRD through parallel BE/FE implementation.",
   "keywords": ["web-dev", "workflow", "full-stack", "development", "automation", "agents", "bmad"],
   "license": "MIT",

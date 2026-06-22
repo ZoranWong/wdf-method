@@ -15,7 +15,11 @@ export const SrgIdCompletenessRule: LintRule = {
 
   check(context: LintContext): LintResult[] {
     const results: LintResult[] = [];
-    const srgPattern = /\bSRG-(\d+)\b/g;
+    // SRG IDs are canonically zero-padded two digits (SRG-01..SRG-09).
+    // Requiring `\d{2}` avoids matching partial tokens like the regex literal
+    // `/SRG-0\d/` in story-runner.test.ts, where `\bSRG-(\d+)\b` would
+    // otherwise capture a spurious single-digit `SRG-0`.
+    const srgPattern = /\bSRG-(\d{2})\b/g;
     const foundSrgIds = new Map<string, { file: string; line: number }[]>();
     // Scan all files for SRG references
     for (const file of context.files) {

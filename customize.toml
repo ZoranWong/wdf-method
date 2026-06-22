@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────
 
 [workflow]
-version = "3.8.0"
+version = "3.9.0"
 
 # ── Development mode ──
 # "separated"  — Frontend and backend are separate projects, Phase 4 BE and FE tracks run in parallel

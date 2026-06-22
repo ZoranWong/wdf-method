@@ -39,7 +39,7 @@ default_permissions:
 
 ### Step 1: 工件存在性审计
 验证 7 类工件全部存在且前置元 status 为 locked：
-PRD / Architecture / Epics / Stories / API Spec / DB Schema / Sprint Tracking
+PRD / Architecture / Epics / Stories / API Spec / DB Schema / Status Directory
 
 ### Step 2: 前置元一致性
 每个工件的前置元与实际状态一致。

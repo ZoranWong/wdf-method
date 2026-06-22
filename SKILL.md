@@ -1,6 +1,6 @@
 ---
 name: wdf
-version: "3.8.0"
+version: "3.9.0"
 description: Full-stack web project development workflow. 4-phase FSM-driven process. Claude session executes planning phases; TypeScript CLI manages state, gates, and Phase 4 automated implementation.
 allowed-tools: Read Write Bash Grep Glob Edit Agent Task Skill
 on_activation: "Enter the WDF automation loop. Run `/wdf start` to detect current state. If auto-execute batch exists, consume it programmatically. Repeat until all phases LOCKED."

@@ -167,10 +167,10 @@ For each artifact, verify:
 
 If any inconsistency is found:
 
-> "Frontmatter inconsistency detected: {artifact} frontmatter `status` is '{frontmatter_status}' but sprint tracking shows '{tracking_status}'."
+> "Frontmatter inconsistency detected: {artifact} frontmatter `status` is '{frontmatter_status}' but status directory shows '{tracking_status}'."
 >
-> "[1] Auto-correct frontmatter to match sprint tracking"
-> "[2] Auto-correct sprint tracking to match frontmatter"
+> "[1] Auto-correct frontmatter to match status directory"
+> "[2] Auto-correct status directory to match frontmatter"
 > "[3] Leave as-is (skip — NOT recommended)"
 
 After resolution, re-run the consistency check.

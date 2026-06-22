@@ -21,8 +21,13 @@ export const NoDeprecatedTermsRule: LintRule = {
         since: '3.6.0'
       },
       {
-        term: 'sprint_tracking',
-        pattern: /sprint_tracking/,
+        // Match the deprecated *prose* phrase ("sprint tracking file"),
+        // NOT the underscore identifier `sprint_tracking` — that remains a
+        // live config key (config.ts WorkflowConfig.sprint_tracking) and a
+        // documented template variable ({sprint_tracking}). Flagging the
+        // identifier would be a false positive on correct code/docs.
+        term: 'sprint tracking',
+        pattern: /sprint[ -]tracking/i,
         replacement: 'status directory',
         since: '3.6.0'
       },
@@ -35,15 +40,23 @@ export const NoDeprecatedTermsRule: LintRule = {
     ];
 
     for (const file of context.files) {
+      // Terminology is a property of prose, not code. Only scan Markdown
+      // docs — source (.ts), config (.toml/.yaml) and JSON legitimately
+      // contain identifiers like `sprint_tracking` that are not deprecated.
+      if (!/\.md$/.test(file.path)) continue;
+
       // Skip files whose job is to document old terms:
       //   - CHANGELOG / HISTORY files (record of past state)
       //   - variables.md (reference doc — must enumerate every variable,
       //     including deprecated ones, and explain how to migrate)
+      //   - archive trees (_review/, changes/, docs/plans/) — historical
+      //     records of past decisions; rewriting them would falsify history
       // Without this exemption the linter would force reference docs to
       // pretend the deprecated API never existed, which breaks the migration
       // story for users still on v3.5.
       if (/CHANGELOG|HISTORY|changelog/.test(file.path)) continue;
       if (/references\/variables\.md$/.test(file.path)) continue;
+      if (/(^|\/)(_review|changes|docs\/plans)\//.test(file.path)) continue;
 
       for (let i = 0; i < file.lines.length; i++) {
         const line = file.lines[i];

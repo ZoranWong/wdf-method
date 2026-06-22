@@ -1,7 +1,7 @@
 {
   "name": "@wdf-method/orchestrator",
-  "version": "3.6.0",
-  "description": "wdf-method V3.6 execution engine — drives phase progression, story agent dispatch, merge queue processing, and continuous self-validation",
+  "version": "3.9.0",
+  "description": "wdf-method V3.9 execution engine — drives phase progression, story agent dispatch, merge queue processing, and continuous self-validation",
   "type": "module",
   "main": "dist/orchestrator/index.js",
   "bin": {

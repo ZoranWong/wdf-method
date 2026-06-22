@@ -1,6 +1,6 @@
 # WDF Method Constitution
-> Version: 3.6.0
-> Last Updated: 2026-06-17
+> Version: 3.9.0
+> Last Updated: 2026-06-22
 > Status: ACTIVE
 
 ## 1. 项目宗旨

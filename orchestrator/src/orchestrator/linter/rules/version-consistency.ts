@@ -20,14 +20,20 @@ export const VersionConsistencyRule: LintRule = {
     ];
     // Find canonical version from package.json first
     let canonicalVersion: string | null = null;
-    // Look for any package.json file
+    // Canonical version comes from the framework's own package.json (name
+    // `wdf-method` / `@wdf-method/*`). Example and template apps under
+    // examples/ and templates/ carry their OWN independent versions (e.g.
+    // the todo-app backend at 0.0.1) — picking the first package.json in
+    // walk order would let an example app dictate the framework version and
+    // flag every real doc as a mismatch.
     for (const file of context.files) {
       if (file.path.endsWith('package.json') && !file.path.includes('node_modules')) {
         try {
           const pkg = JSON.parse(file.content);
+          if (pkg.name && !pkg.name.includes('wdf-method')) continue;
           if (pkg.version) {
             canonicalVersion = pkg.version;
-            break; // Use first package.json found
+            break; // Use first framework package.json found
           }
         }
         catch {

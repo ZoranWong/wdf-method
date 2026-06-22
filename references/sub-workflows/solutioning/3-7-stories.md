@@ -572,7 +572,7 @@ Before locking, verify:
 - [ ] Each story defines `code_standards_source` (V3.1 — blocking if missing)
 - [ ] All `acceptance_check` commands pass executable validation (V3.1 — no placeholders)
 - [ ] All stories pass the Contract Freeze Gate (V3.1 — blocking checks all pass)
-- [ ] Sprint tracking has all stories in development order
+- [ ] Status directory has all stories in development order
 - [ ] Development order is frozen in `{sprint_tracking}`
 - [ ] Cross-track dependencies are detected and recorded
 
