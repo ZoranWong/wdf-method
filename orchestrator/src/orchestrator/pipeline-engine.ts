@@ -24,6 +24,7 @@ import type {
   PipelineEscalation,
 } from './types.js';
 import { PIPELINE_STAGES, MAX_PIPELINE_RETRIES } from './types.js';
+import { appendAudit } from './audit-logger.js';
 
 // ── Pipeline Context Management ────────────────────────────
 
@@ -172,15 +173,36 @@ export function readQaReport(storyId: string, reportDir: string): any | null {
 
 /**
  * Write an escalation manifest and return it.
+ *
+ * The manifest doubles as the audit source: callers MUST pass the live
+ * `totalAttempts` and `projectRoot` so the JSON on disk and the audit log
+ * entry stay consistent. The previous signature left `total_attempts: 0`
+ * hardcoded — that bug made every escalation look like a first attempt.
+ *
+ * `failedStages` accumulates across the pipeline life (dev/review/testing/qa
+ * where retries burned) so a human reviewer can see at a glance which stages
+ * were problematic. `escalated_at` is the hold-time baseline used by
+ * `dispatch-loop-engine` to auto-promote stale escalations to FAIL.
  */
 export function writeEscalationManifest(
   story: StoryEntry,
   stage: PipelineStage,
   reason: string,
   outputDir: string,
+  options: {
+    totalAttempts: number;
+    projectRoot: string;
+    failedStages?: PipelineStage[];
+    lastFeedback?: string;
+  },
 ): PipelineEscalation {
   const dir = join(outputDir, '.dispatch', 'pipeline', story.story_id);
   mkdirSync(dir, { recursive: true });
+
+  const escalatedAt = new Date().toISOString();
+  const failedStages = options.failedStages && options.failedStages.length > 0
+    ? options.failedStages
+    : [stage];
 
   const escalation: PipelineEscalation = {
     type: 'pipeline_escalation',
@@ -188,14 +210,34 @@ export function writeEscalationManifest(
     title: story.title,
     track: story.track,
     failed_stage: stage,
-    total_attempts: 0, // caller should set from pipeline context
+    failed_stages: failedStages,
+    total_attempts: options.totalAttempts,
     reason,
-    recommendation: `Story "${story.story_id}" failed at stage "${stage}" after exhausting retry budget. Review the failure reports and either fix manually or skip.`,
+    recommendation: `Story "${story.story_id}" failed at stage "${stage}" after exhausting retry budget (${options.totalAttempts} attempts). Review the failure reports and either fix manually, run \`wdf escalate --resolve\`, or accept failure with \`wdf escalate --reject\`.`,
     manifest_path: join(dir, 'ESCALATED.json'),
-    created_at: new Date().toISOString(),
+    escalated_at: escalatedAt,
+    last_feedback: options.lastFeedback,
+    created_at: escalatedAt, // legacy alias — back-compat for old readers
   };
 
   writeFileSync(escalation.manifest_path, JSON.stringify(escalation, null, 2));
+
+  // Audit: pipeline_escalation fires the moment the manifest is written.
+  // Without this, escalation was invisible — pipeline 三件套 had 0 audit calls.
+  appendAudit(options.projectRoot, 'pipeline_escalation', {
+    story_id: story.story_id,
+    status: 'fail',
+    message: `Pipeline escalated at stage "${stage}" after ${options.totalAttempts} attempts: ${reason}`,
+    details: {
+      failed_stage: stage,
+      failed_stages: failedStages,
+      total_attempts: options.totalAttempts,
+      escalated_at: escalatedAt,
+      manifest_path: escalation.manifest_path,
+      track: story.track,
+    },
+  });
+
   return escalation;
 }
 

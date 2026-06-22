@@ -20,6 +20,8 @@
  * manually driving the loop, it can enter a tight dispatch-next loop.
  */
 
+import { existsSync, readFileSync, statSync } from 'fs';
+import { join } from 'path';
 import { SprintStatusManager } from './sprint-status.js';
 import {
   type StoryEntry,
@@ -36,6 +38,8 @@ import {
   applyRolePermissions,
   revokePermissions,
 } from './permission-injector.js';
+import { appendAudit } from './audit-logger.js';
+import { loadConfig } from './config.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -111,6 +115,116 @@ export interface StoryPipelineSnapshot {
 // ── Core Engine ────────────────────────────────────────────
 
 /**
+ * Promote PIPELINE_ESCALATED stories to FAIL when their hold window expires.
+ *
+ * The hold window is configurable via `[pipeline] escalation_hold_hours` in
+ * customize.toml (default 24h). Set `[pipeline] auto_fail_on_hold_timeout = false`
+ * to disable auto-promotion — the story will stay ESCALATED indefinitely,
+ * forcing the user to resolve it via `wdf escalate --resolve|--reject`.
+ *
+ * Escalation timestamp resolution (most → least reliable):
+ *   1. `escalated_at` field in ESCALATED.json (V3.9+)
+ *   2. `created_at` field in ESCALATED.json (legacy alias)
+ *   3. File mtime (last resort — implies the JSON was rewritten)
+ *
+ * Conservative bias: when in doubt, keep waiting. We only FAIL when we have
+ * a reliable timestamp AND it's clearly past the window.
+ */
+function sweepStaleEscalations(
+  state: SprintStatusManager,
+  outputDir: string,
+  projectRoot: string,
+  frameworkRoot: string,
+): { swept: string[]; skipped: string[] } {
+  // Load config — tolerate failures by falling back to defaults rather
+  // than aborting the dispatch loop.
+  let holdHours = 24;
+  let autoFail = true;
+  try {
+    const { config } = loadConfig(projectRoot, { skillRoot: frameworkRoot });
+    const pipeline = (config as any).pipeline;
+    if (pipeline?.escalation_hold_hours !== undefined) {
+      holdHours = Number(pipeline.escalation_hold_hours);
+      if (!Number.isFinite(holdHours) || holdHours < 0) holdHours = 24;
+    }
+    if (pipeline?.auto_fail_on_hold_timeout === false) {
+      autoFail = false;
+    }
+  } catch {
+    // Use defaults
+  }
+
+  if (!autoFail) return { swept: [], skipped: [] };
+
+  const holdMs = holdHours * 3600 * 1000;
+  const now = Date.now();
+  const swept: string[] = [];
+  const skipped: string[] = [];
+
+  for (const subKey of ['phase_4_4', 'phase_4_10'] as const) {
+    const stories = state.getStories(4, subKey);
+    for (const story of stories) {
+      if (story.status !== 'PIPELINE_ESCALATED') continue;
+
+      const escPath = join(outputDir, '.dispatch', 'pipeline', story.id, 'ESCALATED.json');
+      if (!existsSync(escPath)) {
+        skipped.push(story.id);
+        continue;
+      }
+
+      let escalatedAt: Date | null = null;
+      try {
+        const raw = JSON.parse(readFileSync(escPath, 'utf-8'));
+        const ts = raw.escalated_at ?? raw.created_at;
+        if (ts) {
+          escalatedAt = new Date(ts);
+        } else {
+          escalatedAt = new Date(statSync(escPath).mtimeMs);
+        }
+      } catch {
+        skipped.push(story.id);
+        continue;
+      }
+
+      if (!escalatedAt || Number.isNaN(escalatedAt.getTime())) {
+        skipped.push(story.id);
+        continue;
+      }
+
+      const elapsedMs = now - escalatedAt.getTime();
+      if (elapsedMs < holdMs) {
+        skipped.push(story.id);
+        continue;
+      }
+
+      // Promote to FAIL — terminal, recoverable only via `wdf reset --force`
+      state.updateStoryStatus(4, subKey, {
+        ...story,
+        status: 'FAIL',
+        completed_at: new Date().toISOString(),
+      });
+
+      appendAudit(projectRoot, 'pipeline_fail', {
+        story_id: story.id,
+        status: 'fail',
+        message: `Escalation hold timeout after ${Math.round(elapsedMs / 3600000)}h (limit ${holdHours}h) — auto-promoted PIPELINE_ESCALATED → FAIL`,
+        details: {
+          hold_hours_elapsed: Math.round(elapsedMs / 3600000),
+          hold_limit_hours: holdHours,
+          escalated_at: escalatedAt.toISOString(),
+          sub_key: subKey,
+          recovery: 'Run `wdf reset --force --story=' + story.id + '` to recover',
+        },
+      });
+
+      swept.push(story.id);
+    }
+  }
+
+  return { swept, skipped };
+}
+
+/**
  * Evaluate all stories and return the next action for the parent session.
  *
  * Priority order:
@@ -124,6 +238,19 @@ export function evaluateNextLoopAction(
   projectRoot: string,
   frameworkRoot: string,
 ): LoopNextResult {
+  // ── Sweep stale escalations ──
+  // PIPELINE_ESCALATED is the "awaiting human review" state. If the human
+  // never shows up (default 24h), promote to FAIL. This is the only
+  // automatic path from ESCALATED → FAIL; the other path is
+  // `wdf escalate --reject` (manual).
+  //
+  // Why poll here instead of a background timer: the wdf CLI is a short-
+  // lived process invoked by the parent Claude session — there is no
+  // daemon. The dispatch loop IS the heartbeat. If the parent session
+  // stops calling, nothing should auto-fail; if it keeps calling, the
+  // sweep catches up on every tick.
+  sweepStaleEscalations(state, outputDir, projectRoot, frameworkRoot);
+
   const devOrder = state.data.global_state.development_order ?? [];
   if (devOrder.length === 0) {
     return {

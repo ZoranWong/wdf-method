@@ -235,7 +235,20 @@ export class StoryRunner {
         // spawn sub-processes — it writes a fix-context manifest that the
         // parent session reads and dispatches via the native Agent tool
         // (Claude Code / Codex multi-agent).
-        const maxFixRetries = 2;
+        // Inner fix budget — acceptance-check failures get this many retries
+        // before escalating to the outer pipeline budget (5 attempts across
+        // dev/review/testing/qa). Loaded from `[pipeline] inner_fix_retries`
+        // in customize.toml; defaults to 2 when config unreadable.
+        let maxFixRetries = 2;
+        try {
+          const { loadConfig } = await import('./config.js');
+          const { config } = loadConfig(this.projectRoot);
+          const cfg = (config as any).pipeline;
+          if (cfg?.inner_fix_retries !== undefined) {
+            const v = Number(cfg.inner_fix_retries);
+            if (Number.isFinite(v) && v >= 0) maxFixRetries = v;
+          }
+        } catch { /* use default */ }
         const fixAttempts = this.countFixAttempts(story, storyStatus);
         if (fixAttempts < maxFixRetries) {
           console.log(`    🔧 ${story.story_id}: Writing fix-context for Agent tool retry (${fixAttempts + 1}/${maxFixRetries})`);
@@ -248,11 +261,26 @@ export class StoryRunner {
           });
           return { storyId: story.story_id, status: 'FIX_RETRY', serial_only: gateResult.serial_only };
         } else {
-          console.log(`    ✗ ${story.story_id}: Fix retry budget exhausted (${maxFixRetries}/${maxFixRetries})`);
+          // Inner budget exhausted — escalate to the OUTER pipeline retry loop
+          // rather than BLOCKED. The outer loop (pipeline-engine) has its own
+          // MAX_PIPELINE_RETRIES budget, after which the story goes to
+          // PIPELINE_ESCALATED (human review) and then FAIL (terminal).
+          // Old behavior of setting BLOCKED here broke the escalation chain.
+          console.log(`    ✗ ${story.story_id}: Inner fix budget exhausted (${maxFixRetries}/${maxFixRetries}) — escalating to outer pipeline loop`);
           await this.state.updateStoryStatus(4, subKey, {
             ...storyStatus,
-            status: 'BLOCKED',
+            status: 'PIPELINE_ESCALATED' as PhaseStatus,
             last_completed_substep: isFE ? '4h' : '4g',
+            pipeline: {
+              ...(storyStatus.pipeline ?? {
+                stage: 'dev',
+                attempt: 1,
+                total_retries: maxFixRetries,
+                max_retries: 5,
+              }),
+              stage: 'dev',
+              total_retries: Math.max(storyStatus.pipeline?.total_retries ?? 0, maxFixRetries),
+            } as PipelineContext,
           });
           return null;
         }

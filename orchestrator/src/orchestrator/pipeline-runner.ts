@@ -30,6 +30,7 @@ import {
   advancePipeline,
   isPipelineEscalated,
 } from './pipeline-engine.js';
+import { l2WorktreeRollback } from './error-handling.js';
 
 // Re-export for downstream callers
 export { initPipelineContext };
@@ -66,6 +67,16 @@ export function processStoryPipeline(
     return { kind: 'skip', story_id: story.story_id, reason: 'already merged' };
   }
 
+  // FAIL is terminal — never auto-recover. Return skip so the dispatch loop
+  // ignores this story until the user runs `wdf reset --force`.
+  if (existing?.status === 'FAIL') {
+    return {
+      kind: 'skip',
+      story_id: story.story_id,
+      reason: 'story is in FAIL state — run `wdf reset --force --story=' + story.story_id + '` to recover',
+    };
+  }
+
   // Check if escalated
   if (existing?.status === 'PIPELINE_ESCALATED') {
     const escPath = join(outputDir, '.dispatch', 'pipeline', story.story_id, 'ESCALATED.json');
@@ -86,7 +97,27 @@ export function processStoryPipeline(
       story, pipeline.stage,
       `Exceeded ${pipeline.max_retries} total retries at stage "${pipeline.stage}". Last failure: ${pipeline.last_failure?.error ?? 'unknown'}`,
       outputDir,
+      {
+        totalAttempts: pipeline.total_retries,
+        projectRoot,
+        lastFeedback: pipeline.feedback,
+      },
     );
+    // L2: clear the worktree so the human reviewer starts from a clean state.
+    // Non-fatal — rollback failure must not block the escalation manifest
+    // (the human can always clean up manually). The snapshot created inside
+    // l2WorktreeRollback preserves the failed work for inspection.
+    try {
+      const worktreePath = join(projectRoot, '.wdf-story-workspaces', story.story_id);
+      l2WorktreeRollback(
+        story.story_id,
+        story.scope_write,
+        existsSync(worktreePath) ? worktreePath : undefined,
+        { projectRoot, dryRun: false },
+      );
+    } catch {
+      // Swallow — L2 already wrote its own audit on failure
+    }
     state.updateStoryStatus(4, subKey, {
       ...existing ?? { id: story.story_id, status: 'PIPELINE_ESCALATED' },
       status: 'PIPELINE_ESCALATED',

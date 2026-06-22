@@ -26,6 +26,12 @@ export type AuditEventType =
   | 'agent_dispatch_start'
   | 'agent_dispatch_complete'
   | 'config_change'
+  // Pipeline lifecycle (Phase 4 story agent flow). The three below cover the
+  // terminal arc: retry budget exhausted → human-review window expired/rejected
+  // → user-initiated recovery. Without these, escalation was invisible to audit.
+  | 'pipeline_escalation'  // PIPELINE_ESCALATED fired (retry budget exhausted)
+  | 'pipeline_fail'        // ESCALATED auto-promoted to FAIL (hold timeout or --reject)
+  | 'pipeline_reset'       // FAIL → NOT_STARTED via `wdf reset --force`
   // Party Mode events (party-engine.ts). These flow through the same audit
   // log as orchestration events; the union keeps appendAudit() type-safe.
   | 'party_created'

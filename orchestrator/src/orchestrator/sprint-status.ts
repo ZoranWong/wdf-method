@@ -465,6 +465,52 @@ export class SprintStatusManager {
     return this.status.global_state.development_order ?? [];
   }
 
+  /**
+   * Summarize all FAIL and PIPELINE_ESCALATED stories across Phase 4.
+   *
+   * Used by `wdf status` to surface a top-of-dashboard warning banner so
+   * failed/escalated stories aren't buried in the per-track listing. Without
+   * this, a story stuck in FAIL is invisible unless you happen to scroll to
+   * the right track.
+   */
+  getFailureSummary(): {
+    failed_count: number;
+    escalated_count: number;
+    details: Array<{
+      story_id: string;
+      status: 'FAIL' | 'PIPELINE_ESCALATED';
+      sub_key: string;
+      title?: string;
+    }>;
+  } {
+    const details: Array<{ story_id: string; status: 'FAIL' | 'PIPELINE_ESCALATED'; sub_key: string; title?: string }> = [];
+    let failedCount = 0;
+    let escalatedCount = 0;
+
+    for (let p = 1; p <= 4; p++) {
+      const phase = this.getPhase(p);
+      if (!phase?.substates) continue;
+      for (const [subKey, sub] of Object.entries(phase.substates)) {
+        if (!sub?.stories) continue;
+        for (const s of sub.stories) {
+          if (s.status === 'FAIL') {
+            failedCount++;
+            details.push({ story_id: s.id, status: 'FAIL', sub_key: subKey });
+          } else if (s.status === 'PIPELINE_ESCALATED') {
+            escalatedCount++;
+            details.push({ story_id: s.id, status: 'PIPELINE_ESCALATED', sub_key: subKey });
+          }
+        }
+      }
+    }
+
+    return {
+      failed_count: failedCount,
+      escalated_count: escalatedCount,
+      details,
+    };
+  }
+
   async setDevelopmentOrder(order: StoryEntry[]): Promise<void> {
     this.status.global_state.development_order = order;
     await this.save();

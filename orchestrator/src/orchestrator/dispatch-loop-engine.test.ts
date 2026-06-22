@@ -203,4 +203,120 @@ describe('dispatch-loop-engine', () => {
       }).not.toThrow();
     });
   });
+
+  // ─────────────────────────────────────────────────────────
+  // V3.9 — ESCALATED → FAIL auto-promotion (hold timeout sweep)
+  // ─────────────────────────────────────────────────────────
+  describe('hold timeout sweep (V3.9)', () => {
+    const HOURS = 3600 * 1000;
+    const escPath = (id: string) => join(projectRoot, '_wdf_output', '.dispatch', 'pipeline', id, 'ESCALATED.json');
+
+    function writeEscalated(id: string, escalatedAt: string, extra: Record<string, any> = {}) {
+      mkdirSync(join(projectRoot, '_wdf_output', '.dispatch', 'pipeline', id), { recursive: true });
+      writeFileSync(escPath(id), JSON.stringify({
+        type: 'pipeline_escalation',
+        story_id: id,
+        title: `Story ${id}`,
+        track: 'backend',
+        failed_stage: 'review',
+        failed_stages: ['review'],
+        total_attempts: 5,
+        reason: 'Exceeded retry budget',
+        recommendation: 'Manual review',
+        manifest_path: escPath(id),
+        escalated_at: escalatedAt,
+        created_at: escalatedAt,
+        ...extra,
+      }));
+    }
+
+    it('promotes PIPELINE_ESCALATED to FAIL when hold > 24h', async () => {
+      const stories = [makeStory('S-001')];
+      const state = await makeStateManager(projectRoot, stories);
+
+      // Seed: story in PIPELINE_ESCALATED, escalated 25h ago
+      await state.updateStoryStatus(4, 'phase_4_4', {
+        id: 'S-001',
+        status: 'PIPELINE_ESCALATED',
+        pipeline: { stage: 'dev', attempt: 5, total_retries: 5, max_retries: 5 },
+      });
+      writeEscalated('S-001', new Date(Date.now() - 25 * HOURS).toISOString());
+
+      const result = evaluateNextLoopAction(state, join(projectRoot, '_wdf_output'), projectRoot, projectRoot);
+
+      // Story should now be FAIL (terminal)
+      const updated = state.getStories(4, 'phase_4_4').find(s => s.id === 'S-001');
+      expect(updated?.status).toBe('FAIL');
+      expect(updated?.completed_at).toBeDefined();
+
+      // FAIL stories return as 'skip' from processStoryPipeline, so loop sees
+      // a complete summary (only story in dev_order is now terminal)
+      expect(['complete', 'dispatch', 'escalation', 'blocked']).toContain(result.action.kind);
+    });
+
+    it('does NOT promote when hold < 24h', async () => {
+      const stories = [makeStory('S-001')];
+      const state = await makeStateManager(projectRoot, stories);
+
+      await state.updateStoryStatus(4, 'phase_4_4', {
+        id: 'S-001',
+        status: 'PIPELINE_ESCALATED',
+        pipeline: { stage: 'dev', attempt: 5, total_retries: 5, max_retries: 5 },
+      });
+      writeEscalated('S-001', new Date(Date.now() - 1 * HOURS).toISOString());
+
+      evaluateNextLoopAction(state, join(projectRoot, '_wdf_output'), projectRoot, projectRoot);
+
+      // Still PIPELINE_ESCALATED (within hold window)
+      const updated = state.getStories(4, 'phase_4_4').find(s => s.id === 'S-001');
+      expect(updated?.status).toBe('PIPELINE_ESCALATED');
+    });
+
+    it('falls back to created_at when escalated_at missing (legacy manifests)', async () => {
+      const stories = [makeStory('S-001')];
+      const state = await makeStateManager(projectRoot, stories);
+
+      await state.updateStoryStatus(4, 'phase_4_4', {
+        id: 'S-001',
+        status: 'PIPELINE_ESCALATED',
+        pipeline: { stage: 'dev', attempt: 5, total_retries: 5, max_retries: 5 },
+      });
+      // Legacy manifest: only created_at, no escalated_at
+      writeEscalated('S-001', new Date(Date.now() - 30 * HOURS).toISOString(), { escalated_at: undefined });
+
+      evaluateNextLoopAction(state, join(projectRoot, '_wdf_output'), projectRoot, projectRoot);
+
+      const updated = state.getStories(4, 'phase_4_4').find(s => s.id === 'S-001');
+      expect(updated?.status).toBe('FAIL');
+    });
+
+    it('writes pipeline_fail audit entry on promotion', async () => {
+      const stories = [makeStory('S-001')];
+      const state = await makeStateManager(projectRoot, stories);
+
+      await state.updateStoryStatus(4, 'phase_4_4', {
+        id: 'S-001',
+        status: 'PIPELINE_ESCALATED',
+        pipeline: { stage: 'dev', attempt: 5, total_retries: 5, max_retries: 5 },
+      });
+      writeEscalated('S-001', new Date(Date.now() - 25 * HOURS).toISOString());
+
+      evaluateNextLoopAction(state, join(projectRoot, '_wdf_output'), projectRoot, projectRoot);
+
+      // Audit file should exist and contain a pipeline_fail event
+      const today = new Date();
+      const yyyy = today.getUTCFullYear();
+      const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(today.getUTCDate()).padStart(2, '0');
+      const auditFile = join(projectRoot, '_wdf_output', 'audit', `${yyyy}-${mm}-${dd}.jsonl`);
+      const { existsSync, readFileSync } = await import('fs');
+      expect(existsSync(auditFile)).toBe(true);
+      const lines = readFileSync(auditFile, 'utf-8').split('\n').filter(l => l);
+      const events = lines.map(l => JSON.parse(l));
+      const failEvent = events.find((e: any) => e.event === 'pipeline_fail' && e.story_id === 'S-001');
+      expect(failEvent).toBeDefined();
+      expect(failEvent.status).toBe('fail');
+      expect(failEvent.details.hold_limit_hours).toBe(24);
+    });
+  });
 });

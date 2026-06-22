@@ -880,3 +880,21 @@ managed_region_marker = "wdf:specs-sync" # HTML comment marker around generated 
 enforce_unique_requirement_names = true  # Validator rule: requirement.name unique per domain
 api_spec_path = "{project-root}/_wdf_output/api-spec.yaml"   # S3: forward-sync target
 db_schema_path = "{project-root}/_wdf_output/db-schema.md"   # S3: forward-sync target
+
+# ─────────────────────────────────────────
+# Pipeline Escalation & FAIL Terminal State (V3.9)
+# ─────────────────────────────────────────
+# Phase 4 dev→review→testing→QA retry budget (MAX_PIPELINE_RETRIES=5).
+# When exhausted, story enters PIPELINE_ESCALATED awaiting human review.
+# If the human never shows up within escalation_hold_hours, the story
+# auto-promotes to FAIL (terminal) — recoverable only via `wdf reset --force`.
+#
+# Set auto_fail_on_hold_timeout = false to disable auto-promotion; the
+# story will stay ESCALATED indefinitely, forcing manual resolution via
+# `wdf escalate --resolve|--reject`.
+
+[pipeline]
+max_pipeline_retries = 5                # Outer retry budget across all stages
+inner_fix_retries = 2                   # Inner budget for acceptance-check fix loops (story-runner)
+escalation_hold_hours = 24              # ESCALATED → FAIL auto-promotion window
+auto_fail_on_hold_timeout = true        # Safety: false keeps ESCALATED forever until manual action

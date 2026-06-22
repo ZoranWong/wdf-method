@@ -229,6 +229,8 @@ export class SprintStatusValidator {
       'QUEUED', 'WAITING_DEPENDENCY', 'MERGING', 'FAILED',
       'INTEGRATED', 'RETRO_COMPLETED', 'complete', 'blocked', 'not_started', 'ready_for_integration',
       'be_complete_awaiting_fe', 'fe_complete_awaiting_be',
+      // V3.9 FAIL terminal state — pipeline escalation exhausted or rejected
+      'FAIL', 'PIPELINE_ESCALATED', 'FIX_RETRY',
     ]);
     return valid.has(status);
   }

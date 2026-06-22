@@ -43,16 +43,20 @@ export const VALID_TRANSITIONS: Record<PhaseStatus, PhaseStatus[]> = {
   BLOCKED_BY_DEPENDENCY: ['IN_PROGRESS', 'MERGE_QUEUED'],
   // Pipeline retry / escalation (Phase 4 story agent lifecycle)
   FIX_RETRY: ['IN_PROGRESS', 'PIPELINE_ESCALATED'],
-  PIPELINE_ESCALATED: ['IN_PROGRESS', 'LOCKED'],
+  PIPELINE_ESCALATED: ['IN_PROGRESS', 'LOCKED', 'FAIL'],
+  // FAIL is terminal — only recoverable via `wdf reset --force`
+  // (validateStateTransition gates this on metadata.reset === true)
+  FAIL: ['NOT_STARTED'],
 };
 
 /**
- * Terminal states — no further transitions allowed.
+ * Terminal states — no further transitions allowed (except explicit recovery).
  */
 export const TERMINAL_STATES: PhaseStatus[] = [
   'LOCKED',
   'SKIPPED',
   'MERGED',
+  'FAIL',
 ];
 
 /**
@@ -114,25 +118,47 @@ export interface TransitionValidationResult {
 }
 
 /**
+ * Options that gate special-case transitions in validateStateTransition.
+ * Currently the only special case is FAIL → NOT_STARTED via `wdf reset --force`,
+ * gated on `metadata.reset === true`. This makes "user explicit recovery" an
+ * opt-in flag rather than something any caller can trigger.
+ */
+export interface TransitionValidationOptions {
+  metadata?: Record<string, any>;
+}
+
+/**
  * Validate if a state transition is allowed.
  * Returns validation result with reason if invalid.
+ *
+ * Special cases:
+ * - LOCKED → UNLOCK_RESOLVE: allowed (CR-driven rework)
+ * - FAIL → NOT_STARTED: allowed only when `options.metadata.reset === true`
+ *   (signals an explicit `wdf reset --force` from the user)
  */
 export function validateStateTransition(
   from: PhaseStatus,
   to: PhaseStatus,
+  options: TransitionValidationOptions = {},
 ): TransitionValidationResult {
   // Same state is always valid (no-op)
   if (from === to) {
     return { valid: true };
   }
-  // Terminal states can only transition to UNLOCK_RESOLVE (for LOCKED)
+  // Terminal states have explicit recovery channels
   if (TERMINAL_STATES.includes(from)) {
     if (from === 'LOCKED' && to === 'UNLOCK_RESOLVE') {
       return { valid: true };
     }
+    // FAIL is recoverable ONLY via explicit user-initiated reset
+    if (from === 'FAIL' && to === 'NOT_STARTED' && options.metadata?.reset === true) {
+      return { valid: true };
+    }
     return {
       valid: false,
-      reason: `State "${from}" is terminal. Cannot transition to "${to}".`,
+      reason: from === 'FAIL'
+        ? `State "FAIL" is terminal. Recovery requires \`wdf reset --force\` (metadata.reset === true). Cannot transition to "${to}".`
+        : `State "${from}" is terminal. Cannot transition to "${to}".`,
     };
   }
   // Check if transition is allowed
@@ -216,8 +242,11 @@ export function transitionState(
   currentHistory: StateHistoryEntry[],
   options: TransitionOptions = {},
 ): StateTransitionResult {
-  // Validate the transition
-  const validation = validateStateTransition(currentState, targetState);
+  // Validate the transition — pass options.metadata so gated transitions
+  // (e.g. FAIL → NOT_STARTED via metadata.reset) can be authorized by callers
+  const validation = validateStateTransition(currentState, targetState, {
+    metadata: options.metadata,
+  });
   if (!validation.valid) {
     return {
       success: false,
@@ -305,7 +334,11 @@ export function aggregateSubPhaseStates(
   if (effectiveStates.length === 0) {
     return 'SKIPPED';
   }
-  // Check for BLOCKED (highest priority)
+  // Check for FAIL (highest priority — terminal, must surface immediately)
+  if (effectiveStates.some((s) => s === 'FAIL')) {
+    return 'FAIL';
+  }
+  // Check for BLOCKED (next priority — recoverable)
   if (effectiveStates.some((s) => s === 'BLOCKED' || s === 'BLOCKED_BY_DEPENDENCY')) {
     return 'BLOCKED';
   }

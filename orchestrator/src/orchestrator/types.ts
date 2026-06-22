@@ -31,7 +31,8 @@ export type PhaseStatus =
   | 'MERGED'
   | 'BLOCKED_BY_DEPENDENCY'
   | 'FIX_RETRY'
-  | 'PIPELINE_ESCALATED';  // retry budget exhausted — main agent must review
+  | 'PIPELINE_ESCALATED'  // retry budget exhausted — awaiting human review (recoverable)
+  | 'FAIL';               // escalation rejected or hold timed out — terminal, requires `wdf reset --force`
 
 /** Pipeline stages for per-story dev→review→testing→QA flow */
 export type PipelineStage = 'dev' | 'review' | 'testing' | 'qa';
@@ -111,11 +112,14 @@ export interface PipelineEscalation {
   title: string;
   track: string;
   failed_stage: PipelineStage;
-  total_attempts: number;
+  failed_stages: PipelineStage[];   // cumulative stages that have failed
+  total_attempts: number;           // cumulative retries when escalation fired
   reason: string;
   recommendation: string;
   manifest_path: string;
-  created_at: string;
+  escalated_at: string;             // ISO timestamp — hold-time baseline for auto-fail
+  last_feedback?: string;           // most recent failure feedback
+  created_at: string;               // legacy alias for escalated_at (back-compat)
 }
 
 /**
