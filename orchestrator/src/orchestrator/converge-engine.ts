@@ -1,5 +1,5 @@
 /**
- * converge-engine — brownfield code/spec gap analysis.
+ * converge-engine — brownfield code/spec gap analysis + runtime drift detection.
  *
  * Compares declared requirements (in `_wdf_output/specs/<domain>/spec.md` for
  * V3.9+ projects, or `_wdf_output/prd.md` for legacy V3.8 projects) against
@@ -13,6 +13,13 @@
  * This keeps the engine language-agnostic and dependency-free. False positives
  * are surfaced in the report so humans can adjudicate.
  *
+ * Also supports runtime drift detection via `detectRuntimeDrift()`, which
+ * checks FSM state consistency:
+ *   - Phase artifacts match declared phase state
+ *   - Story states match actual progress (code exists, tests pass)
+ *   - Pipeline stages have corresponding reports on disk
+ *   - Story dependencies are satisfied
+ *
  * Inspired by SpecKit's `/speckit.converge` flow; differs by reading the
  * wdf-method requirement vocabulary (REQ-NNN) instead of an external spec
  * format.
@@ -21,6 +28,8 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { join, relative, basename } from 'path';
 import { createHash } from 'crypto';
+import { load as yamlLoad } from 'js-yaml';
+import { SprintStatusManager } from './sprint-status.js';
 
 const REQ_PATTERN = /\bREQ-(\d{3,4})\b/g;
 const DEFAULT_IGNORES = new Set([
@@ -359,4 +368,289 @@ function renderGapStory(id: string, req: Requirement | undefined, date: string):
     `- [ ] \`wdf converge\` reports ${id} as IMPLEMENTED`,
     '',
   ].join('\n');
+}
+
+// ── Runtime Drift Detection ──────────────────────────────────────────────────
+
+export interface DriftIssue {
+  type: 'phase_artifact_missing' | 'story_state_mismatch' | 'pipeline_report_missing' | 'dependency_not_met';
+  severity: 'error' | 'warning';
+  message: string;
+  phase?: number;
+  sub_phase?: string;
+  story_id?: string;
+  expected?: string;
+  actual?: string;
+}
+
+export interface DriftReport {
+  generatedAt: string;
+  projectRoot: string;
+  issues: DriftIssue[];
+  summary: {
+    total: number;
+    errors: number;
+    warnings: number;
+  };
+}
+
+/**
+ * Detect runtime drift: inconsistencies between FSM state and actual project state.
+ *
+ * Checks:
+ *   1. Phase artifacts match declared phase state (e.g., PRD exists if Phase 2 is DONE)
+ *   2. Story states match actual progress (e.g., MERGED stories have code files)
+ *   3. Pipeline stages have corresponding reports on disk
+ *   4. Story dependencies are satisfied (dependency stories are MERGED)
+ */
+export async function detectRuntimeDrift(projectRoot: string): Promise<DriftReport> {
+  const issues: DriftIssue[] = [];
+  const outputDir = join(projectRoot, '_wdf_output');
+
+  // Load sprint status
+  const statusPath = join(outputDir, 'sprint-status.yaml');
+  if (!existsSync(statusPath)) {
+    return {
+      generatedAt: new Date().toISOString(),
+      projectRoot,
+      issues: [{
+        type: 'phase_artifact_missing',
+        severity: 'error',
+        message: 'sprint-status.yaml not found — project not initialized or state corrupted',
+      }],
+      summary: { total: 1, errors: 1, warnings: 0 },
+    };
+  }
+
+  const state = await SprintStatusManager.load(statusPath);
+  const globalState = state.data.global_state;
+  const currentPhase = globalState.current_phase ?? 1;
+
+  // ── Check 1: Phase artifacts ─────────────────────────────────────────────
+  if (currentPhase >= 2) {
+    const prdPath = join(outputDir, 'prd.md');
+    if (!existsSync(prdPath)) {
+      issues.push({
+        type: 'phase_artifact_missing',
+        severity: 'error',
+        message: `Phase 2 PRD missing (current phase: ${currentPhase})`,
+        phase: 2,
+        expected: '_wdf_output/prd.md',
+        actual: 'not found',
+      });
+    }
+  }
+
+  if (currentPhase >= 3) {
+    const epicsPath = join(outputDir, 'epics.md');
+    const storiesDir = join(outputDir, 'stories');
+    if (!existsSync(epicsPath)) {
+      issues.push({
+        type: 'phase_artifact_missing',
+        severity: 'warning',
+        message: `Phase 3 epics.md missing (current phase: ${currentPhase})`,
+        phase: 3,
+        expected: '_wdf_output/epics.md',
+        actual: 'not found',
+      });
+    }
+    if (!existsSync(storiesDir) || readdirSync(storiesDir).length === 0) {
+      issues.push({
+        type: 'phase_artifact_missing',
+        severity: 'warning',
+        message: `Phase 3 stories directory empty or missing (current phase: ${currentPhase})`,
+        phase: 3,
+        expected: '_wdf_output/stories/*.md',
+        actual: 'no stories found',
+      });
+    }
+  }
+
+  // ── Check 2: Story states ────────────────────────────────────────────────
+  const devOrder = globalState.development_order ?? [];
+  for (const storyEntry of devOrder) {
+    const storyId = storyEntry.story_id;
+    const track = storyEntry.track;
+    const subKey = track === 'frontend' ? 'phase_4_10' : 'phase_4_4';
+
+    const stories = state.getStories(4, subKey);
+    const story = stories.find(s => s.id === storyId);
+
+    if (!story) {
+      // Story in development_order but not in phase_4 state
+      issues.push({
+        type: 'story_state_mismatch',
+        severity: 'warning',
+        message: `Story ${storyId} in development_order but not in phase 4 state`,
+        phase: 4,
+        story_id: storyId,
+        expected: 'story entry in phase_4 state',
+        actual: 'not found',
+      });
+      continue;
+    }
+
+    // Check MERGED stories have code
+    if (story.status === 'MERGED') {
+      const scopeFiles = storyEntry.scope_write ?? [];
+      if (scopeFiles.length > 0) {
+        const missingFiles = scopeFiles.filter(f => !existsSync(join(projectRoot, f)));
+        if (missingFiles.length > 0) {
+          issues.push({
+            type: 'story_state_mismatch',
+            severity: 'error',
+            message: `Story ${storyId} marked MERGED but scope_write files missing`,
+            phase: 4,
+            sub_phase: subKey,
+            story_id: storyId,
+            expected: 'all scope_write files exist',
+            actual: `${missingFiles.length} file(s) missing: ${missingFiles.slice(0, 3).join(', ')}`,
+          });
+        }
+      }
+    }
+
+    // Check pipeline stages have reports
+    if (story.pipeline) {
+      const pipeline = story.pipeline;
+      const stage = pipeline.stage;
+
+      // If pipeline is at review/testing/qa, check for reports
+      if (stage === 'review' || stage === 'testing' || stage === 'qa') {
+        const reportDir = stage === 'review' ? 'review' : stage === 'testing' ? 'test-reports' : 'qa';
+        const reportFile = join(outputDir, reportDir, `${storyId}-${stage === 'review' ? 'review' : stage === 'testing' ? 'test' : 'qa'}.json`);
+        if (!existsSync(reportFile)) {
+          issues.push({
+            type: 'pipeline_report_missing',
+            severity: 'warning',
+            message: `Story ${storyId} pipeline at ${stage} but no ${stage} report found`,
+            phase: 4,
+            sub_phase: subKey,
+            story_id: storyId,
+            expected: reportFile,
+            actual: 'not found',
+          });
+        }
+      }
+    }
+
+    // Check dependencies are satisfied
+    const deps = storyEntry.depends_on ?? [];
+    for (const dep of deps) {
+      const depSubKey = dep.track === 'frontend' ? 'phase_4_10' : 'phase_4_4';
+      const depStories = state.getStories(4, depSubKey);
+      const depStory = depStories.find(s => s.id === dep.story_id);
+
+      if (!depStory || depStory.status !== 'MERGED') {
+        issues.push({
+          type: 'dependency_not_met',
+          severity: 'error',
+          message: `Story ${storyId} depends on ${dep.story_id} which is not MERGED`,
+          phase: 4,
+          story_id: storyId,
+          expected: `dependency ${dep.story_id} status = MERGED`,
+          actual: depStory ? depStory.status : 'not found',
+        });
+      }
+    }
+  }
+
+  const errors = issues.filter(i => i.severity === 'error').length;
+  const warnings = issues.filter(i => i.severity === 'warning').length;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    projectRoot,
+    issues,
+    summary: {
+      total: issues.length,
+      errors,
+      warnings,
+    },
+  };
+}
+
+/** Render a DriftReport as a markdown report. */
+export function renderDriftReport(report: DriftReport): string {
+  const lines: string[] = [];
+  lines.push('# Runtime Drift Report');
+  lines.push('');
+  lines.push(`**Generated:** ${report.generatedAt}`);
+  lines.push(`**Project:** \`${relative('', report.projectRoot) || '.'}\``);
+  lines.push('');
+  lines.push('## Summary');
+  lines.push('');
+  lines.push('| Metric | Value |');
+  lines.push('|---|---|');
+  lines.push(`| Total issues | ${report.summary.total} |`);
+  lines.push(`| Errors | ${report.summary.errors} |`);
+  lines.push(`| Warnings | ${report.summary.warnings} |`);
+  lines.push('');
+
+  if (report.issues.length === 0) {
+    lines.push('✅ **No drift detected.** FSM state is consistent with project artifacts.');
+    lines.push('');
+    return lines.join('\n') + '\n';
+  }
+
+  // Group by type
+  const byType = new Map<string, DriftIssue[]>();
+  for (const issue of report.issues) {
+    const list = byType.get(issue.type) ?? [];
+    list.push(issue);
+    byType.set(issue.type, list);
+  }
+
+  const typeLabels: Record<string, string> = {
+    phase_artifact_missing: 'Phase Artifacts Missing',
+    story_state_mismatch: 'Story State Mismatches',
+    pipeline_report_missing: 'Pipeline Reports Missing',
+    dependency_not_met: 'Unsatisfied Dependencies',
+  };
+
+  for (const [type, issues] of byType) {
+    lines.push(`## ${typeLabels[type] ?? type}`);
+    lines.push('');
+
+    if (type === 'phase_artifact_missing' || type === 'story_state_mismatch') {
+      lines.push('| Severity | Message | Phase | Story | Expected | Actual |');
+      lines.push('|---|---|---|---|---|---|');
+      for (const issue of issues) {
+        const sev = issue.severity === 'error' ? '🔴' : '🟡';
+        const phase = issue.phase ? `Phase ${issue.phase}` : '-';
+        const story = issue.story_id ?? '-';
+        const expected = issue.expected ? `\`${issue.expected}\`` : '-';
+        const actual = issue.actual ? `\`${issue.actual}\`` : '-';
+        lines.push(`| ${sev} | ${issue.message} | ${phase} | ${story} | ${expected} | ${actual} |`);
+      }
+    } else if (type === 'pipeline_report_missing') {
+      lines.push('| Story | Stage | Expected Report |');
+      lines.push('|---|---|---|');
+      for (const issue of issues) {
+        lines.push(`| ${issue.story_id} | ${issue.expected?.split('/').pop()?.replace('.json', '')} | \`${issue.expected}\` |`);
+      }
+    } else if (type === 'dependency_not_met') {
+      lines.push('| Story | Dependency | Expected | Actual |');
+      lines.push('|---|---|---|---|');
+      for (const issue of issues) {
+        const depId = issue.expected?.match(/(\S+) status/)?.[1] ?? '-';
+        lines.push(`| ${issue.story_id} | ${depId} | ${issue.expected} | ${issue.actual} |`);
+      }
+    }
+    lines.push('');
+  }
+
+  lines.push('## Recommendations');
+  lines.push('');
+  if (report.summary.errors > 0) {
+    lines.push('🔴 **Errors must be resolved before proceeding.** These indicate state corruption or incomplete work.');
+    lines.push('');
+  }
+  if (report.summary.warnings > 0) {
+    lines.push('🟡 **Warnings should be reviewed.** These may indicate missing artifacts or incomplete transitions.');
+    lines.push('');
+  }
+  lines.push('Run `wdf doctor` for automated diagnostics, or manually inspect the flagged items.');
+
+  return lines.join('\n') + '\n';
 }

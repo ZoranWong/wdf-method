@@ -988,25 +988,53 @@ async function runPermissionsCommand(args: string[], projectRoot: string) {
 async function runConvergeCommand(args: string[], projectRoot: string) {
   const sub = args[1];
   if (sub === '--help' || sub === '-h' || sub === undefined) {
-    console.error('Usage: wdf converge [--source=PATH] [--specs=PATH] [--prd=PATH] [--to-stories] [--json]');
+    console.error('Usage: wdf converge [--source=PATH] [--specs=PATH] [--prd=PATH] [--to-stories] [--mode=runtime-drift] [--json]');
     console.error('');
     console.error('Brownfield gap analysis: compare declared requirements against code references.');
     console.error('Reads _wdf_output/specs/ (V3.9+) or _wdf_output/prd.md (V3.8 legacy), scans src/ for');
     console.error('REQ-NNN references, and emits a gap report.');
     console.error('');
     console.error('Options:');
-    console.error('  --source=PATH     Source root to scan (default: src/, also backend/src/ if present)');
-    console.error('  --specs=PATH      Specs directory (default: _wdf_output/specs/)');
-    console.error('  --prd=PATH        Legacy PRD path (default: _wdf_output/prd.md)');
-    console.error('  --to-stories      Emit draft stories for each gap into _wdf_output/stories/converge-<date>/');
-    console.error('  --json            Emit machine-readable JSON instead of writing a report file');
+    console.error('  --source=PATH          Source root to scan (default: src/, also backend/src/ if present)');
+    console.error('  --specs=PATH           Specs directory (default: _wdf_output/specs/)');
+    console.error('  --prd=PATH             Legacy PRD path (default: _wdf_output/prd.md)');
+    console.error('  --to-stories           Emit draft stories for each gap into _wdf_output/stories/converge-<date>/');
+    console.error('  --mode=runtime-drift   Detect FSM drift: phase artifacts, story states, pipeline reports, dependencies');
+    console.error('  --json                 Emit machine-readable JSON instead of writing a report file');
     console.error('');
     console.error('Examples:');
     console.error('  wdf converge');
     console.error('  wdf converge --source=backend/src --to-stories');
+    console.error('  wdf converge --mode=runtime-drift');
     process.exit(sub === undefined ? 1 : 0);
   }
 
+  const asJson = args.includes('--json');
+  const mode = args.find(a => a.startsWith('--mode='))?.split('=')[1];
+
+  // Runtime drift detection mode
+  if (mode === 'runtime-drift') {
+    const { detectRuntimeDrift, renderDriftReport } = await import('./converge-engine.js');
+    const report = await detectRuntimeDrift(projectRoot);
+
+    if (asJson) {
+      console.log(JSON.stringify(report, null, 2));
+      process.exit(report.summary.errors > 0 ? 1 : 0);
+    } else {
+      console.log(renderDriftReport(report));
+      if (report.summary.errors > 0) {
+        console.error(`\n❌ ${report.summary.errors} error(s) detected. Review the drift report above.`);
+        process.exit(1);
+      } else if (report.summary.warnings > 0) {
+        console.log(`\n🟡 ${report.summary.warnings} warning(s) detected. No errors.`);
+      } else {
+        console.log('\n✅ No drift detected.');
+      }
+    }
+    process.exit(0);
+  }
+
+  // Default: spec/code converge analysis
   const { runConverge, writeConvergeArtifacts } = await import('./converge-engine.js');
   const opts: { projectRoot: string; sourceDir?: string; specsDir?: string; prdPath?: string; toStories?: boolean } = {
     projectRoot,
@@ -1017,7 +1045,6 @@ async function runConvergeCommand(args: string[], projectRoot: string) {
     else if (a.startsWith('--prd=')) opts.prdPath = resolve(projectRoot, a.slice(6));
     else if (a === '--to-stories') opts.toStories = true;
   }
-  const asJson = args.includes('--json');
 
   const result = runConverge(opts);
   if (asJson) {
