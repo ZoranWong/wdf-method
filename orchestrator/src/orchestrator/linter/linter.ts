@@ -64,6 +64,15 @@ export class SpecLinter {
     if (options.fix) {
       await this.applyFixes(results);
     }
+    // 5. Strict mode: promote warnings to errors. The rule's own level is
+    // preserved on the result (so the report still shows the original
+    // severity), but `errors` reflects the strict-adjusted count. This
+    // keeps CI exit codes honest without lying about which rule fired.
+    if (options.strict) {
+      for (const r of results) {
+        if (r.level === 'warning') r.level = 'error';
+      }
+    }
     return {
       results,
       errors: results.filter(r => r.level === 'error').length,
@@ -87,7 +96,36 @@ export class SpecLinter {
 
   private async collectFiles(options: LintOptions): Promise<FileEntry[]> {
     const include = options.include ?? ['**/*.md', '**/*.toml', '**/*.yaml', '**/*.yml', '**/*.ts', '**/*.json'];
-    const exclude = options.exclude ?? ['node_modules/**', '.git/**', '_*/**', 'dist/**'];
+    // Default exclude list — tuned to scan spec artefacts (stories, prd,
+    // epics, api-spec, db-schema) while skipping transient state.
+    //
+    // The previous default `_*/**` was too aggressive: it also skipped
+    // `_wdf_output/stories/*.md`, `_wdf_output/prd.md` etc., which meant
+    // STORY_REFS_REQUIRED / STORY_REFS_RESOLVE never actually ran against
+    // real projects. We now enumerate the transient subdirs instead.
+    //
+    // Patterns use `**/<dir>/**` so they match nested cases like
+    // `examples/todo-app/backend/node_modules/...` — plain `node_modules/**`
+    // would only catch top-level node_modules.
+    const exclude = options.exclude ?? [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/_wdf_output/.dispatch/**',
+      '**/_wdf_output/.prompts/**',
+      '**/_wdf_output/status/**',
+      '**/_wdf_output/audit/**',
+      '**/_wdf_output/backup/**',
+      '**/_wdf_output/signals/**',
+      '**/_wdf_output/test-reports/**',
+      '**/_wdf_output/qa/**',
+      '**/_wdf_output/review/**',
+      '**/_wdf_output/party/**',
+      '**/_wdf_output/_output/**',
+      '**/.wdf-story-workspaces/**',
+      '**/.claude/**',
+      '**/.DS_Store',
+    ];
     const entries: FileEntry[] = [];
     // Simple recursive walk (no glob dependency)
     const walk = async (dir: string): Promise<void> => {
@@ -123,11 +161,54 @@ export class SpecLinter {
 
   private matchesPatterns(path: string, patterns: string[]): boolean {
     return patterns.some(pattern => {
-      // Simple glob matching: **/foo, *.md
-      const regex = pattern
-        .replace(/\./g, '\\.')
-        .replace(/\*\*/g, '.*')
-        .replace(/\*/g, '[^/]*');
+      // Glob → regex translation.
+      //
+      // The previous implementation did three sequential `.replace` calls
+      // which produced incorrect output for `**/*.md`-style patterns: it
+      // translated `**/*` into `.[^/]*/[^/]*`, which only matched paths
+      // with exactly one directory segment. As a result, deeply nested
+      // artefacts like `_wdf_output/stories/S-001.md` were silently
+      // skipped by every rule keyed on `**/*.md`.
+      //
+      // The transform below handles the cases this codebase actually uses:
+      //   `*`    → `[^/]*`  (no slash)
+      //   `**/`  → `(.*/)?` (zero or more directory segments + slash)
+      //   `**`   → `.*`     (anything, including slashes)
+      //   `?`    → `[^/]`   (single non-slash)
+      // Regex metacharacters in the source pattern are escaped first.
+      const escaped = pattern.replace(/[\\^$.|?*+()[\]{}]/g, ch => {
+        if (ch === '*') return ch; // handled below
+        if (ch === '?') return ch; // handled below
+        return '\\' + ch;
+      });
+      let regex = '';
+      let i = 0;
+      while (i < escaped.length) {
+        const c = escaped[i];
+        if (c === '*' && escaped[i + 1] === '*') {
+          // ** — check for trailing slash
+          if (escaped[i + 2] === '/') {
+            regex += '(.*\\/)?';
+            i += 3;
+          } else {
+            regex += '.*';
+            i += 2;
+          }
+        } else if (c === '*') {
+          regex += '[^/]*';
+          i++;
+        } else if (c === '?') {
+          regex += '[^/]';
+          i++;
+        } else if (c === '\\' && escaped[i + 1]) {
+          // Preserved escape (e.g. `\.`)
+          regex += '\\' + escaped[i + 1];
+          i += 2;
+        } else {
+          regex += c;
+          i++;
+        }
+      }
       return new RegExp(`^${regex}$`).test(path);
     });
   }
@@ -155,6 +236,9 @@ export class SpecLinter {
     lines.push('');
     lines.push('╔══════════════════════════════════════════════════╗');
     lines.push('║         wdf-method Specification Linter          ║');
+    if (options.strict) {
+      lines.push('║  (strict mode: warnings promoted to errors)     ║');
+    }
     lines.push('╚══════════════════════════════════════════════════╝');
     lines.push('');
     // Summary

@@ -26,7 +26,7 @@ function makeTempProject(): string {
   return dir;
 }
 
-function makeStory(id: string, track: 'backend' | 'frontend' = 'backend', deps?: { story_id: string; track: string }[]): StoryEntry {
+function makeStory(id: string, track: 'backend' | 'frontend' = 'backend', deps?: { story_id: string; track: 'backend' | 'frontend' }[]): StoryEntry {
   return {
     story_id: id,
     title: `Story ${id}`,

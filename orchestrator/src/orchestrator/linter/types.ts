@@ -52,4 +52,11 @@ export interface LintOptions {
   include?: string[];
   /** File patterns to exclude */
   exclude?: string[];
+  /**
+   * Strict mode: promote every `warning` result to `error`. Useful in CI
+   * when the project has decided "warnings are debt we don't carry" —
+   * the linter returns non-zero exit on any finding rather than only
+   * on hard errors.
+   */
+  strict?: boolean;
 }
