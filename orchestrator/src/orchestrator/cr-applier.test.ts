@@ -481,7 +481,7 @@ const V2_HEADER = {
   change_id: 'CHG-2026-017',
   base_version: '3.9.0',
   target_version: '3.9.1',
-  schema_version: 2,
+  schema_version: 2 as const,
 };
 
 function writeAuthSpec(root: string, content = VALID_AUTH_SPEC): void {

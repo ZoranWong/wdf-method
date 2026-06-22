@@ -123,7 +123,7 @@ describe('error-handling', () => {
     it('restores modified files in scope_write', () => {
       // Create a tracked file
       writeFileSync(join(projectRoot, 'src.ts'), 'original');
-      execSync('git add . && git commit -m "add src"', { cwd: projectRoot, projectRoot, stdio: 'pipe' });
+      execSync('git add . && git commit -m "add src"', { cwd: projectRoot, stdio: 'pipe' });
 
       // Modify it
       writeFileSync(join(projectRoot, 'src.ts'), 'modified');

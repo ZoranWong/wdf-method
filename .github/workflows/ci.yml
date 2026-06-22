@@ -84,9 +84,6 @@ jobs:
       - name: tsc --noEmit (orchestrator)
         working-directory: orchestrator
         run: npx tsc --noEmit
-        # Note: pre-existing errors in some orchestrator modules are tolerated
-        # until the full type-cleanup pass. Only NEW errors should fail CI.
-        continue-on-error: true
 
       - name: tsc --noEmit (backend)
         working-directory: examples/todo-app/backend
@@ -97,9 +94,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: wdf lint --strict
-        run: |
-          npm run wdf -- lint --strict || echo "wdf lint not yet runnable from npm script"
-        continue-on-error: true
+        run: npm run lint
 
   test-orchestrator:
     name: Test — orchestrator
@@ -261,4 +256,4 @@ jobs:
             echo "| $job | $status |" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** `test-orchestrator` and `lint` (orchestrator tsc) tolerate pre-existing failures until cleanup pass. `test-backend` and `test-frontend` MUST be green." >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** `lint` (orchestrator tsc + wdf lint --strict) is now enforced — it must be green. `test-orchestrator` still tolerates pre-existing failures. `test-backend` and `test-frontend` MUST be green." >> $GITHUB_STEP_SUMMARY

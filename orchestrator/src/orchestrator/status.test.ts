@@ -16,6 +16,7 @@ describe('status command', () => {
       complexity: 'standard',
       devMode: 'separated',
       triageMode: 'parallel',
+      executionMode: 'interactive',
       frontend: 'react',
       backend: 'express',
       database: 'postgresql',

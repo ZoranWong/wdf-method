@@ -25,7 +25,8 @@
     "test:cli": "vitest run",
     "test:orchestrator": "npm --prefix orchestrator run build && npm --prefix orchestrator run test",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "npm --prefix orchestrator run build && node orchestrator/dist/orchestrator/index.js lint --strict"
   },
   "devDependencies": {
     "vitest": "^1.2.0"
