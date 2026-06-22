@@ -1,3 +1,15 @@
+---
+name: analyst
+description: Senior product analyst — brainstorming, domain research, product brief. Read/write only to _wdf_output.
+default_permissions:
+  bash_allow: []
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: analyst
 # 对应 BMAD: /bmad-brainstorming, /bmad-domain-research
 # 适用阶段: Phase 1.1 (Brainstorming), 1.2 (Domain Research), 1.3 (Product Brief)

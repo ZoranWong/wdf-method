@@ -1,3 +1,15 @@
+---
+name: story-planner
+description: Senior technical PM — Epic → Feature → Story decomposition, development order freeze, contract gate enforcement.
+default_permissions:
+  bash_allow: []
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: story-planner
 # 对应 BMAD: /bmad-create-epics-and-stories, /bmad-create-story
 # 适用阶段: Phase 3.6 (Epics), 3.7 (Story Design + Development Order Freeze)

@@ -1,3 +1,16 @@
+---
+name: api-designer
+description: Senior API designer + DB architect — OpenAPI 3.0, schema design, contract compliance.
+default_permissions:
+  bash_allow:
+    - npm run lint
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: api-designer
 # 对应 BMAD: N/A (BMAD 无独立 API 设计 agent，此项为 web-dev-flow 专属)
 # 适用阶段: Phase 3.8 (API & Data Design)

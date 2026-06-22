@@ -39,4 +39,6 @@ coverage/
 *.tmp.*
 wdf-atomic-test-*/
 wdf-doctor-test-*/
+wdf-perf-test-*/
 .tmp_*
+.wdf-doctor-test-*

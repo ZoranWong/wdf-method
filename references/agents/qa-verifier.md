@@ -1,3 +1,22 @@
+---
+name: qa-verifier
+description: Senior QA engineer — feature, UI, a11y, perf, E2E browser, contract verification.
+default_permissions:
+  bash_allow:
+    - npx playwright
+    - npm run e2e
+    - docker compose up
+    - docker compose down
+    - curl
+    - npm test
+  bash_deny:
+    - docker push
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: qa-verifier
 # 对应 BMAD: /bmad-feature-verify, /bmad-ui-verify, /bmad-a11y-verify, /bmad-perf-verify, /bmad-e2e-browser-test, /bmad-visual-regression, /bmad-cross-browser-verify, /bmad-contract-verify
 # 适用阶段: Phase 4.11 (A11y & Perf Audit), 4.13 (Integration + Acceptance Gates)

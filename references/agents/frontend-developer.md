@@ -1,3 +1,21 @@
+---
+name: frontend-developer
+description: Senior frontend developer — component-driven + TDD across scaffolding, design system, API client, pages, A11y/Perf, UI acceptance.
+default_permissions:
+  bash_allow:
+    - npm test
+    - npm run dev
+    - npx vite
+    - npx tsc
+    - npx playwright
+  bash_deny:
+    - git push
+    - rm -rf
+    - docker push
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: frontend-developer
 # 对应 BMAD: /bmad-dev-story (frontend track)
 # 适用阶段: Phase 4.7-4.12 (FE Scaffolding → Design System → API Client → Pages → A11y/Perf → UI Acceptance)

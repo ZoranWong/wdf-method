@@ -73,6 +73,70 @@ Six op types cover the surface area of wdf-method artifacts. See
 | `create` | `file` | Create a new file (fails if it exists) |
 | `delete` | `file` | Delete a file (optional `expected_hash`) |
 
+## v2 Semantic Operations (schema_version: 2)
+
+The six v1 ops above operate on **raw file regions** — they are mechanical
+and content-agnostic. For **spec governance** (CHG-2026-015 S2), v2 introduces
+three semantic ops that target **requirements** inside
+`_wdf_output/specs/<domain>/spec.md`:
+
+| Op | Behavior | Target |
+|---|---|---|
+| `ADDED` | Insert a new requirement (fails if id exists) | `_wdf_output/specs/<domain>/spec.md` |
+| `MODIFIED` | Replace an existing requirement wholesale (scenarios included) | same |
+| `REMOVED` | Delete a requirement by id (fails if missing) | same |
+
+### When to use v1 vs v2
+
+```
+Is the change about a requirement in specs/<domain>/spec.md?
+├── YES → schema_version: 2 + ADDED/MODIFIED/REMOVED
+│         (cascade regenerates PRD's Functional Requirements section
+│          when [specs] source_of_truth = true)
+└── NO  → schema_version: 1 (default) + set/modify/append/create/delete
+         (TOML/YAML/markdown/non-spec files)
+```
+
+A single delta MUST NOT mix v1 and v2 ops. Split into two CRs if both surfaces
+need to change.
+
+### v2 example
+
+```yaml
+change_id: CHG-2026-017
+summary: "Add Password Reset requirement to auth domain"
+base_version: "3.9.0"
+target_version: "3.9.1"
+schema_version: 2
+operations:
+  - op: ADDED
+    domain: auth
+    requirement:
+      id: REQ-014
+      name: Password Reset
+      priority: P1
+      scenarios:
+        - given: ['a user who forgot their password']
+          when: ['they request a reset link']
+          then: ['the system MUST email a time-limited reset token']
+```
+
+### v2 validation guarantees
+
+- `domain` matches `^[a-z][a-z0-9-]{1,30}$`
+- `requirement.id` matches `^REQ-\d{3,4}$`
+- Every scenario has at least one `given` / `when` / `then`
+- RFC 2119 keywords (MUST/SHALL/SHOULD/MAY) appear in `then` clauses
+- No placeholder text (TODO / TBD / 待实现 / placeholder)
+- After mutation, the spec.md passes `validateSpec()` before any disk write
+- Structural fields (`endpoints`, `entities`) cascade to `api-spec.yaml` /
+  `db-schema.md` (CHG-2026-015 S3)
+
+### Migrating a legacy v1 delta
+
+`wdf cr migrate <id>` upgrades a v1 delta to v2 in-place when its ops only
+touch spec files; mixed deltas are reported with a recommendation to split.
+
 ### Path syntax (toml_key / yaml_key)
 
 ```

@@ -1,3 +1,17 @@
+---
+name: retrospective-host
+description: Senior agile coach — quantitative cycle analysis, qualitative feedback, improvement actions.
+default_permissions:
+  bash_allow:
+    - git log
+    - git status
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: retrospective-host
 # 对应 BMAD: /bmad-retrospective
 # 适用阶段: Phase 4.14 (Retrospective)

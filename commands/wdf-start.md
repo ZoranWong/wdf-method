@@ -67,6 +67,33 @@ Start or resume the current phase. Evaluates the Gate Card and enters the execut
    - Auto-progress through phases without user prompts (see Auto-Run Mode section)
    - Halt only on gate failures, story errors, merge conflicts, or blocking CRs
 
+## Phase 4 dispatch loop (with permission injection)
+
+When the parent session is about to dispatch a sub-agent via Agent tool (dev / review / testing / QA stage of a story), the loop is:
+
+```
+1. Identify next story+stage from pipeline manifest (.dispatch/pipeline/<id>/<stage>.json)
+2. Read the story file:
+   - scope_write   → file Edit/Write scope
+   - acceptance_check → bash commands the sub-agent must run
+   - maps_to_req   → business logic (no extra permissions usually)
+3. Model-driven permission inference (parent session, not the sub-agent):
+   - For each acceptance_check entry, derive Bash(prefix:*) entries
+   - For each scope_write glob, derive Edit/Write entries
+   - Add default denies: Bash(git push:*), Bash(rm -rf:*)
+   - Optionally read tech stack (e.g. docker in architecture.md) to widen allow
+4. Construct inline manifest: { story_id, stage, scope_write, permissions: inferred }
+5. applyPermissions(manifest, projectRoot) — writes tagged entries to
+   .claude/settings.local.json
+6. Agent tool dispatch — sub-agent inherits host's newly-injected permissions,
+   runs without per-step prompts
+7. On sub-agent return (PASS or FAIL):
+   - revokePermissions(story_id, stage, projectRoot) — clean up
+   - proceed to next stage or escalate per pipeline-runner logic
+```
+
+See `commands/wdf-permissions.md` Mode A for the inference heuristics.
+
 ## Failure Recovery
 
 If a gate check fails:

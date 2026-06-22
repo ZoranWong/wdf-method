@@ -1,3 +1,15 @@
+---
+name: product-manager
+description: Senior PM — Impact Mapping, Story Mapping, Kano+RICE, PRD writing.
+default_permissions:
+  bash_allow: []
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: product-manager
 # 对应 BMAD: /bmad-create-prd, /bmad-product-brief
 # 适用阶段: Phase 2.1 (Impact Mapping), 2.4 (Story Mapping), 2.5 (Kano+RICE+PRD)

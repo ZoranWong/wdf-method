@@ -1,3 +1,21 @@
+---
+name: backend-developer
+description: Senior backend developer — Clean Architecture + TDD across scaffolding, DB, endpoints, and code acceptance.
+default_permissions:
+  bash_allow:
+    - npm test
+    - npm run
+    - npx vitest
+    - npx tsc
+    - npm run migrate
+  bash_deny:
+    - git push
+    - rm -rf
+    - docker push
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: backend-developer
 # 对应 BMAD: /bmad-dev-story (backend track)
 # 适用阶段: Phase 4.2-4.6 (BE Scaffolding → Database → Endpoints → Testing → Code Acceptance)

@@ -1,3 +1,19 @@
+---
+name: readiness-auditor
+description: Senior technical auditor — artifact completeness, traceability, implementation boundary generation. Last gate before Phase 4.
+default_permissions:
+  bash_allow:
+    - npm run lint
+    - npx tsc --noEmit
+    - wdf lint
+    - wdf trace
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: readiness-auditor
 # 对应 BMAD: /bmad-check-implementation-readiness
 # 适用阶段: Phase 3.9 (Readiness Check)

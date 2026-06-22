@@ -1,3 +1,17 @@
+---
+name: sprint-planner
+description: Senior Scrum Master — capacity, parallel groups, dependency timeline, scope verification, git baseline.
+default_permissions:
+  bash_allow:
+    - git status
+    - git log
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: sprint-planner
 # 对应 BMAD: /bmad-sprint-planning
 # 适用阶段: Phase 4.1 (Sprint Planning)

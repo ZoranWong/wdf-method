@@ -1,3 +1,15 @@
+---
+name: ux-designer
+description: Senior UX designer — user flows, wireframes, design system, interaction patterns.
+default_permissions:
+  bash_allow: []
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: ux-designer
 # 对应 BMAD: /bmad-create-ux-design
 # 适用阶段: Phase 2.6 (User Flows), 2.7 (Wireframes), 2.8 (Design System), 2.9 (Interaction Design)

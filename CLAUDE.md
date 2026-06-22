@@ -50,6 +50,8 @@ wdf-method 严格分两层。**CLI 不调度 Agent，不执行 AI 工作**——
 ```bash
 wdf init <path>              # 初始化项目
 wdf start                    # 查询当前状态，输出下一步提示词（驱动主循环）
+wdf loop [--json]            # 自动调度：评估所有 story pipeline，返回下一步动作
+wdf loop --post-dispatch     # agent 完成后清理权限 + 获取下一步
 wdf check [--artifact=...]   # 检查产物质量是否合规
 wdf gate                     # 检查门禁是否通过
 wdf accept <type>            # 验收 code/ui/feature/e2e
@@ -59,6 +61,7 @@ wdf trace <id>               # 追溯需求链路 (JTBD→REQ→Story→Test→C
 wdf snapshot list|create     # 状态快照管理
 wdf lint --strict            # 规范一致性检查 (含宪法校验)
 wdf cr list|create|apply     # 变更请求管理
+wdf permissions list|apply   # V3 权限注入管理
 ```
 
 ### 主循环（Claude 视角）
@@ -119,10 +122,13 @@ wdf-method/
 │       ├── agent-dispatcher.ts # Phase 4 story agent 分派
 │       ├── pipeline-engine.ts  # dev→review→testing→QA 流水线引擎
 │       ├── pipeline-runner.ts  # 流水线调度器 + 升级通知
+│       ├── dispatch-loop-engine.ts # 自动调度协议引擎 (wdf loop)
 │       ├── signal-manager.ts   # Agent 通信 (heartbeat/checkpoint)
 │       ├── snapshot.ts         # 状态快照/时间旅行
 │       ├── story-slicing.ts    # Story P0/P1 切片引擎
 │       ├── error-handling.ts   # L1/L2/L3 错误恢复
+│       ├── permission-injector.ts # V3 三层权限注入
+│       ├── converge-engine.ts  # brownfield gap 分析引擎
 │       ├── subphase-executor.ts # Phase 1-3 提示词构建
 │       └── trace-cmd.ts        # 追溯查询 CLI
 ├── specs/                      # 设计规范文档

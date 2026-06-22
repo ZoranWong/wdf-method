@@ -1,3 +1,17 @@
+---
+name: architect
+description: Senior system architect — C4 model, ADRs, architecture style evaluation. Read-only role.
+default_permissions:
+  bash_allow:
+    - npm run lint
+    - npx tsc --noEmit
+  bash_deny:
+    - git push
+    - rm -rf
+  scope_read:
+    - _wdf_output/**
+---
+
 # Native Agent: architect
 # 对应 BMAD: /bmad-create-architecture
 # 适用阶段: Phase 3.1-3.5 (C4 System Context → Architecture Style → Container Design → Quality Attributes → Component Design)
