@@ -170,16 +170,21 @@ export function processStoryPipeline(
         break;
       }
       case 'dev': {
-        // Check if we just came from a failed stage (fix iteration)
+        // Dev stage never auto-advances. The pipeline only moves dev→review
+        // via postDispatchNext() after the dev agent actually completes.
+        // Auto-advancing here would skip the dev dispatch entirely on the
+        // next loop call (the original bug).
+        //
+        // The fix-iteration case (existing.stage !== 'dev') is already handled
+        // upstream: review/testing/qa FAIL branches above set stage='dev' and
+        // handled=true, exiting this loop before we reach here. So by the time
+        // we reach this case with existing.stage !== 'dev', the upstream FAIL
+        // branch didn't fire — which means we should just dispatch dev.
         if (existing?.pipeline?.stage && existing.pipeline.stage !== 'dev') {
           pipeline.stage = 'dev';
           pipeline.attempt += 1;
-          handled = true; // stop loop — need new dev dispatch for fix
-        } else if (existing?.pipeline?.stage === 'dev') {
-          // Dev was dispatched previously. Advance to review to check
-          // for review reports on the same invocation.
-          pipeline = advancePipeline(pipeline, true);
         }
+        handled = true; // always stop here — dev needs a real dispatch
         break;
       }
     }
