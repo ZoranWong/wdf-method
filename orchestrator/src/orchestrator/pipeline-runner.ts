@@ -207,6 +207,7 @@ export function processStoryPipeline(
     existsSync(worktreePath) ? worktreePath : undefined,
     pipeline.feedback,
     previousOutput,
+    projectRoot,
   );
 
   const manifestPath = writePipelineManifest(manifest, outputDir);

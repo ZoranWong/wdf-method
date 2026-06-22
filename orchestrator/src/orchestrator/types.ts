@@ -80,6 +80,12 @@ export interface PipelineDispatchManifest {
    * The injector tags each entry so it can be revoked after the story closes.
    */
   permissions?: DispatchPermissions;
+  /**
+   * Constitution rules extracted from the project's constitution.yaml.
+   * Injected into the dispatch prompt so every sub-agent sees the
+   * project's non-negotiable quality gates and coding standards.
+   */
+  constitution_rules?: string[];
 }
 
 /**

@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { load as yamlLoad } from 'js-yaml';
 import type {
   StoryEntry,
   PipelineStage,
@@ -101,10 +102,16 @@ export function buildPipelineManifest(
   worktreePath?: string,
   feedback?: string,
   previousOutput?: PipelineDispatchManifest['previous_output'],
+  projectRoot?: string,
 ): PipelineDispatchManifest {
   const role = stageToRole(story.track, stage);
 
-  const prompt = buildDispatchPrompt(story, stage, pipeline, feedback, previousOutput);
+  // Load project constitution rules for injection into the dispatch prompt
+  const constitutionRules = projectRoot
+    ? loadConstitutionRules(projectRoot, story.track, stage)
+    : [];
+
+  const prompt = buildDispatchPrompt(story, stage, pipeline, feedback, previousOutput, constitutionRules);
 
   return {
     type: 'pipeline_dispatch',
@@ -121,6 +128,7 @@ export function buildPipelineManifest(
     prompt,
     previous_output: previousOutput,
     permissions: inferPermissions(story, stage),
+    constitution_rules: constitutionRules.length > 0 ? constitutionRules : undefined,
   };
 }
 
@@ -223,6 +231,7 @@ function buildDispatchPrompt(
   pipeline: PipelineContext,
   feedback?: string,
   previousOutput?: PipelineDispatchManifest['previous_output'],
+  constitutionRules: string[] = [],
 ): string {
   const role = stageToRole(story.track, stage);
   const lines: string[] = [];
@@ -239,6 +248,18 @@ function buildDispatchPrompt(
     lines.push('## Feedback from Prior Stage');
     lines.push('');
     lines.push(feedback);
+    lines.push('');
+  }
+
+  // Inject constitution rules before scope so they are always visible
+  if (constitutionRules.length > 0) {
+    lines.push('## Project Constitution (non-negotiable)');
+    lines.push('');
+    lines.push('These rules MUST be followed. Violations will fail review and QA.');
+    lines.push('');
+    for (const rule of constitutionRules) {
+      lines.push(`- ${rule}`);
+    }
     lines.push('');
   }
 
@@ -335,4 +356,117 @@ function inferPermissions(
     bash_deny,
     scope_read: ['_wdf_output/**'],
   };
+}
+
+/**
+ * Load constitution rules from the project's constitution.yaml file.
+ *
+ * Searches in:
+ *   1. <projectRoot>/_wdf_output/constitution.yaml
+ *   2. <projectRoot>/constitution.yaml
+ *
+ * Returns an array of human-readable rule strings, filtered by track and stage.
+ * For dev stage: includes general rules + track-specific rules.
+ * For review/testing/qa: includes quality gates and testing requirements.
+ */
+function loadConstitutionRules(
+  projectRoot: string,
+  track: string,
+  stage: PipelineStage,
+): string[] {
+  const rules: string[] = [];
+
+  // Try to find constitution.yaml
+  let constitutionPath = join(projectRoot, '_wdf_output', 'constitution.yaml');
+  if (!existsSync(constitutionPath)) {
+    constitutionPath = join(projectRoot, 'constitution.yaml');
+    if (!existsSync(constitutionPath)) {
+      return rules; // No constitution found
+    }
+  }
+
+  try {
+    const content = readFileSync(constitutionPath, 'utf-8');
+    const constitution = yamlLoad(content) as any;
+
+    if (!constitution) return rules;
+
+    // Extract quality gates
+    if (constitution.quality_gates) {
+      const qg = constitution.quality_gates;
+
+      if (qg.test_coverage) {
+        const backendMin = qg.test_coverage.backend_min_pct;
+        const frontendMin = qg.test_coverage.frontend_min_pct;
+        if (backendMin || frontendMin) {
+          rules.push(`Test coverage: backend >= ${backendMin ?? 'N/A'}%, frontend >= ${frontendMin ?? 'N/A'}%`);
+        }
+      }
+
+      if (qg.type_safety?.strict_mode) {
+        rules.push('TypeScript strict mode required (no implicit any)');
+      }
+
+      if (qg.security?.input_validation_all_endpoints) {
+        rules.push('All endpoints must have input validation (Zod/Joi/class-validator)');
+      }
+
+      if (qg.security?.no_shell_injection) {
+        rules.push('No shell injection vulnerabilities — use parameterized queries');
+      }
+    }
+
+    // Extract coding standards
+    if (constitution.coding_standards?.rules) {
+      for (const rule of constitution.coding_standards.rules) {
+        rules.push(rule);
+      }
+    }
+
+    // Add track-specific rules
+    if (constitution.coding_standards) {
+      const cs = constitution.coding_standards;
+
+      if (track === 'frontend' && cs.frontend_rules) {
+        for (const rule of cs.frontend_rules) {
+          rules.push(`[frontend] ${rule}`);
+        }
+      }
+
+      if (track === 'backend' && cs.backend_rules) {
+        for (const rule of cs.backend_rules) {
+          rules.push(`[backend] ${rule}`);
+        }
+      }
+
+      if (cs.database_rules && (track === 'backend' || track === 'full-stack')) {
+        for (const rule of cs.database_rules) {
+          rules.push(`[database] ${rule}`);
+        }
+      }
+
+      if (cs.auth_rules && (track === 'backend' || track === 'full-stack')) {
+        for (const rule of cs.auth_rules) {
+          rules.push(`[auth] ${rule}`);
+        }
+      }
+    }
+
+    // Add testing requirements for dev stage
+    if (stage === 'dev' && constitution.testing_requirements) {
+      const tr = constitution.testing_requirements;
+      if (tr.unit?.required) {
+        rules.push(`Unit tests required: minimum ${tr.unit.per_story_min ?? 1} per story`);
+      }
+      if (tr.integration?.required) {
+        rules.push(`Integration tests required: minimum ${tr.integration.per_api_endpoint_min ?? 1} per endpoint`);
+      }
+    }
+
+  } catch (err) {
+    // Constitution load failure is non-fatal — just skip injection
+    console.warn(`[pipeline-engine] Failed to load constitution: ${err}`);
+  }
+
+  return rules;
 }
