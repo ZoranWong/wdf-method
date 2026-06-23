@@ -111,11 +111,17 @@ jobs:
         working-directory: orchestrator
         run: npm ci --ignore-scripts
 
-      - name: vitest run (orchestrator)
+      - name: vitest run (orchestrator) with coverage
         working-directory: orchestrator
-        run: npx vitest run --reporter=default --reporter=json --outputFile=test-results.json
-        # Pre-existing failures in some orchestrator modules tolerated until fixed.
-        continue-on-error: true
+        run: npx vitest run --coverage --reporter=default --reporter=json --outputFile=test-results.json
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-coverage
+          path: orchestrator/coverage/
+          if-no-files-found: ignore
 
       - name: Upload test results
         if: always()
@@ -256,4 +262,4 @@ jobs:
             echo "| $job | $status |" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** `lint` (orchestrator tsc + wdf lint --strict) is now enforced — it must be green. `test-orchestrator` still tolerates pre-existing failures. `test-backend` and `test-frontend` MUST be green." >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** all jobs (`lint`, `test-orchestrator`, `test-backend`, `test-frontend`, `constitution`, `dispatch-audit`) are enforced — any failure blocks merge." >> $GITHUB_STEP_SUMMARY
