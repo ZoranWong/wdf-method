@@ -1613,3 +1613,155 @@ function lowerFirst(s: string): string {
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// ─── Phase B (V3.10.2): spec analyze ─────────────────────────────
+
+/**
+ * Result of running the semantic cross-artifact rules against a project.
+ *
+ * `findings` groups results by rule so the markdown report can render
+ * per-rule sections. `ok` is true only when zero findings (regardless of
+ * severity) — callers wanting strict-mode semantics can re-compute from
+ * the raw findings.
+ */
+export interface AnalyzeConsistencyResult {
+  ok: boolean;
+  findings: Array<{
+    ruleId: string;
+    severity: 'error' | 'warning';
+    file?: string;
+    line?: number;
+    message: string;
+  }>;
+  reportPath: string;
+  reportMarkdown: string;
+}
+
+/**
+ * Run every semantic cross-artifact lint rule against the project and
+ * emit a markdown consistency report.
+ *
+ * Drives the 4 Phase B rules:
+ *   - REQ_COVERAGE        — every PRD REQ has a covering story
+ *   - API_SCOPE_MAPPING   — every api-spec.yaml endpoint is claimed
+ *   - DB_API_CONSISTENCY  — every API $ref entity exists in db-schema.md
+ *   - AC_TEST_BINDING     — every AC has a TEST bound to it
+ *
+ * The report is written to `_wdf_output/_output/solutioning/consistency-report.md`
+ * so it sits alongside the other planning artifacts and survives across
+ * re-syncs. Findings are also returned in-memory so callers (CI, programmatic
+ * consumers) can branch on them without re-parsing markdown.
+ *
+ * @param projectRoot absolute path to the project
+ * @param outputRoot  override for `_wdf_output` location (defaults to standard)
+ */
+export async function analyzeConsistency(
+  projectRoot: string,
+  outputRoot?: string,
+): Promise<AnalyzeConsistencyResult> {
+  const outRoot = outputRoot ?? join(projectRoot, '_wdf_output');
+  const { BUILTIN_RULES } = await import('./linter/rules/index.js');
+  const semanticRuleIds = new Set([
+    'REQ_COVERAGE',
+    'API_SCOPE_MAPPING',
+    'DB_API_CONSISTENCY',
+    'AC_TEST_BINDING',
+  ]);
+
+  const findings: AnalyzeConsistencyResult['findings'] = [];
+  for (const rule of BUILTIN_RULES) {
+    if (!semanticRuleIds.has(rule.id)) continue;
+    const ctx = { projectRoot, files: [], config: {} };
+    const results = await rule.check(ctx);
+    for (const r of results) {
+      findings.push({
+        ruleId: r.ruleId,
+        severity: r.level,
+        file: r.file,
+        line: r.line,
+        message: r.message,
+      });
+    }
+  }
+
+  const reportMarkdown = renderConsistencyReport(findings, projectRoot);
+  const reportDir = join(outRoot, '_output', 'solutioning');
+  const reportPath = join(reportDir, 'consistency-report.md');
+  // mkdirSync + writeFileSync — keep this side-effecting so callers can
+  // open the report from disk after the command returns.
+  const { mkdirSync, writeFileSync } = await import('fs');
+  mkdirSync(reportDir, { recursive: true });
+  writeFileSync(reportPath, reportMarkdown, 'utf-8');
+
+  return {
+    ok: findings.length === 0,
+    findings,
+    reportPath,
+    reportMarkdown,
+  };
+}
+
+function renderConsistencyReport(
+  findings: AnalyzeConsistencyResult['findings'],
+  projectRoot: string,
+): string {
+  const lines: string[] = [];
+  lines.push('# Spec Consistency Report');
+  lines.push('');
+  lines.push(`**Generated:** ${new Date().toISOString()}`);
+  lines.push(`**Project:** ${projectRoot}`);
+  lines.push('');
+
+  if (findings.length === 0) {
+    lines.push('✅ **All semantic cross-artifact checks passed.**');
+    lines.push('');
+    lines.push('No coverage gaps, orphan endpoints, phantom entities, or unbound acceptance criteria detected.');
+    return lines.join('\n');
+  }
+
+  const byRule = new Map<string, AnalyzeConsistencyResult['findings']>();
+  for (const f of findings) {
+    const arr = byRule.get(f.ruleId) ?? [];
+    arr.push(f);
+    byRule.set(f.ruleId, arr);
+  }
+
+  const sections: Record<string, { title: string; description: string }> = {
+    REQ_COVERAGE: {
+      title: 'Coverage Gaps',
+      description: 'PRD requirements with no covering story. Each gap means work the PM signed off on that engineering never picked up.',
+    },
+    API_SCOPE_MAPPING: {
+      title: 'API Mapping Gaps',
+      description: 'Endpoints declared in api-spec.yaml but not claimed by any story scope_write. Either no story implements them or the story forgot to claim the spec.',
+    },
+    DB_API_CONSISTENCY: {
+      title: 'DB/API Inconsistencies',
+      description: 'Entities referenced by API endpoints that are missing from db-schema.md. Either rename to match or add the missing entity declaration.',
+    },
+    AC_TEST_BINDING: {
+      title: 'Unbound Acceptance Criteria',
+      description: 'Story acceptance criteria with no test bound to them. The story can complete without the AC ever being verified.',
+    },
+  };
+
+  lines.push(`Total findings: **${findings.length}** (${findings.filter(f => f.severity === 'error').length} errors, ${findings.filter(f => f.severity === 'warning').length} warnings)`);
+  lines.push('');
+
+  for (const [ruleId, group] of byRule) {
+    const meta = sections[ruleId] ?? { title: ruleId, description: '' };
+    lines.push(`## ${meta.title}`);
+    lines.push('');
+    if (meta.description) {
+      lines.push(`${meta.description}`);
+      lines.push('');
+    }
+    for (const f of group) {
+      const loc = f.file ? ` (\`${f.file}\`${f.line ? `:${f.line}` : ''})` : '';
+      lines.push(`- [${f.severity}] ${f.message}${loc}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}

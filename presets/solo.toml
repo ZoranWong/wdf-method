@@ -1,0 +1,21 @@
+# solo — single-developer mode.
+#
+# Forces serial story execution (one story at a time) so a lone developer
+# isn't juggling parallel agent worktrees and merge contention. The merge
+# queue still runs, but with no concurrency there's nothing to race. Quality
+# gates are left at their defaults — solo doesn't mean sloppy.
+#
+# Activate:  wdf preset apply solo
+# Layer:     defaults < skill-base < [solo] < project overrides
+
+[preset]
+name = "solo"
+description = "Single-developer mode: serial story execution (no concurrency), default quality gates."
+version = "1.0.0"
+category = "team-shape"
+
+[auto_run.concurrency]
+max_concurrent_stories = 1
+
+[auto_run]
+cross_story_validation = false

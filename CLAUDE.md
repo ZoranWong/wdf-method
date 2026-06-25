@@ -22,6 +22,7 @@ wdf init "project description"     ← 初始化项目，创建状态文件
 │  Phase 3: Solutioning (架构 + Stories)              │
 │  3.1-3.5 C4 Architecture (L1→L2→L3)               │
 │  3.6 Epics → 3.7 Stories → 3.8 API+DB             │
+│  3.7.5 Checklist (CHK### 需求质量门，可选)          │
 │  3.4 Quality Attributes (auto-skip)                │
 │  3.9 Readiness Check → READY TO BUILD              │
 ├────────────────────────────────────────────────────┤
@@ -54,12 +55,21 @@ wdf loop [--json]            # 自动调度：评估所有 story pipeline，返�
 wdf loop --post-dispatch     # agent 完成后清理权限 + 获取下一步
 wdf check [--artifact=...]   # 检查产物质量是否合规
 wdf gate                     # 检查门禁是否通过
+wdf gate phase4              # 预检 Phase 3.9→4 入口门禁 (语义+追溯+checklist，CI 可用)
+wdf gate exit [--story=X]    # 预检 Phase 4→MERGED 出口门禁 (测试绑定+STORY_NO_TEST+漂移，CI 可用)
 wdf accept <type>            # 验收 code/ui/feature/e2e
 wdf status                   # 查看完整仪表盘
 wdf doctor                   # 环境诊断
 wdf trace <id>               # 追溯需求链路 (JTBD→REQ→Story→Test→Commit)
+wdf trace blame <file>:<line> # 反向追溯：代码行 → commit → story → REQ → JTBD
+wdf checklist <story-id>     # 生成/查看 story 需求质量 checklist (CHK###)
+wdf checklist verify <id>    # 校验该 story 所有 CHK 项是否 [x]
+wdf clarify [verify]         # 扫描 PRD 模糊点 (含建议选项)；verify 要求每项有 Answer
+wdf hooks install [--strict] # 安装 commit-msg 钩子 (校验 [story:S-XXX] 追溯)
 wdf snapshot list|create     # 状态快照管理
 wdf lint --strict            # 规范一致性检查 (含宪法校验)
+wdf constitution             # 运行宪法 CONSTITUTION_CHECK
+wdf constitution show|bump|diff # 宪法演进：查看/语义化升版+changelog+快照/sync-impact 差异
 wdf cr list|create|apply     # 变更请求管理
 wdf permissions list|apply   # V3 权限注入管理
 ```

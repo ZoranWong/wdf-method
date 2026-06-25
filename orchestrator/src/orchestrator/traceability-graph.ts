@@ -39,7 +39,11 @@ export type EdgeKind =
   | 'belongs_to'     // STORY → EPIC
   | 'implements'     // STORY → API/DB
   | 'tests'          // TEST → STORY (or TEST → AC, surfaced as STORY here)
-  | 'references';    // generic catch-all
+  | 'references'     // generic catch-all
+  // ── Phase B (V3.10.2) semantic edges ──
+  | 'covers'         // STORY → REQ (explicit requirement coverage)
+  | 'binds_endpoint' // STORY scope_write path → API endpoint it implements
+  | 'uses_entity';   // API endpoint → DB entity referenced in request/response
 
 export interface TraceNode {
   id: string;          // canonical (e.g. "STORY-001", "REQ-7", "API:GET /todos")
@@ -139,12 +143,17 @@ export function buildTraceabilityGraph(opts: BuildOptions): TraceabilityGraph {
   const b = new GraphBuilder();
 
   // Order matters only for nicer debugging — every parser is idempotent.
+  // Phase B (V3.10.2): db-schema.md parses first so its entity declarations
+  // win the source attribution race (real source vs. api-spec stub).
+  // api-spec.yaml follows so its $refs can link to already-declared DB
+  // nodes or create clearly-stamped stubs. Stories come last so they can
+  // bind to fully-populated API and DB nodes.
   parsePrd(b, outRoot);
   parseEpics(b, outRoot);
-  parseStories(b, outRoot);
-  parseApiSpec(b, outRoot);
   parseDbSchema(b, outRoot);
+  parseApiSpec(b, outRoot);
   parseSpecs(b, outRoot);
+  parseStories(b, outRoot);
   parseJtbd(b, outRoot);
   parseTests(b, testRoots, root);
   parseCommits(b, root);
@@ -294,7 +303,7 @@ export function parseEpics(b: GraphBuilder, outRoot: string): void {
   }
 }
 
-/** Parse stories/*.md — story_id + refs: + acceptance_criteria. */
+/** Parse stories/*.md — story_id + refs: + acceptance_criteria + scope_write. */
 export function parseStories(b: GraphBuilder, outRoot: string): void {
   const dir = join(outRoot, 'stories');
   if (!existsSync(dir)) return;
@@ -310,15 +319,78 @@ export function parseStories(b: GraphBuilder, outRoot: string): void {
     const fm = parseFrontmatter(content);
     const storyId = fm['story_id'] || basename(f, '.md');
     if (!storyId) continue;
+    const scopeWrite = readFmList(fmRaw, 'scope_write');
     b.addNode({
       id: storyId, kind: 'STORY',
       title: fm['title'] || undefined,
       source: relative(outRoot, path),
-      meta: { acceptance_criteria: readFmList(fmRaw, 'acceptance_criteria') },
+      meta: {
+        acceptance_criteria: readFmList(fmRaw, 'acceptance_criteria'),
+        scope_write: scopeWrite,
+      },
     });
     for (const ref of readFmList(fmRaw, 'refs')) {
       b.addNode(refStub(ref));
       b.addEdge({ from: storyId, to: ref, kind: edgeKindForRef(ref), source: relative(outRoot, path) });
+    }
+
+    // Phase B (V3.10.2): semantic coverage + endpoint binding edges.
+    //
+    // `covers` makes STORY → REQ explicit so REQ_COVERAGE lint can answer
+    // "is every PRD requirement covered by at least one story?" without
+    // inferring from `derives_from` (which is overloaded with REQ→JTBD).
+    //
+    // `binds_endpoint` connects a story's declared scope_write path to the
+    // API endpoints it implements. Heuristic: if scope_write lists
+    // `api-spec.yaml`, the story touches the global spec; if it lists a
+    // path under a `routes/`, `api/`, or `controllers/` dir, we look for
+    // a known API node whose path matches. Both signal API_SCOPE_MAPPING
+    // (B2 rule) that the story contributes to that endpoint.
+    for (const ref of readFmList(fmRaw, 'refs')) {
+      if (/^REQ-\d+$/.test(ref)) {
+        b.addEdge({ from: storyId, to: ref, kind: 'covers', source: relative(outRoot, path) });
+      }
+    }
+
+    // Stories commonly declare their requirement via `maps_to_req:` rather
+    // than listing it in `refs:`. Treat it as a first-class STORY → REQ edge
+    // so reverse traceability (`wdf trace blame`) and REQ_COVERAGE see it.
+    // `maps_to_req` is usually a scalar (`maps_to_req: REQ-001`), so fall back
+    // to a scalar match when the list readers find nothing.
+    const mappedReqs = readFmList(fmRaw, 'maps_to_req');
+    if (mappedReqs.length === 0) {
+      const scalar = fmRaw.match(/^maps_to_req:\s*["']?(REQ-[A-Za-z0-9-]+)["']?\s*$/m);
+      if (scalar) mappedReqs.push(scalar[1]);
+    }
+    for (const ref of mappedReqs) {
+      if (!/^REQ-/.test(ref)) continue;
+      b.addNode(refStub(ref));
+      b.addEdge({ from: storyId, to: ref, kind: 'derives_from', source: relative(outRoot, path) });
+      b.addEdge({ from: storyId, to: ref, kind: 'covers', source: relative(outRoot, path) });
+    }
+
+    for (const sw of scopeWrite) {
+      if (/api-spec\.ya?ml$/i.test(sw)) {
+        // Story edits the global API spec — link to every currently-known
+        // API node so REQ_COVERAGE / API_SCOPE_MAPPING treat the spec file
+        // as transitively covered.
+        for (const node of b['nodes'].values()) {
+          if (node.kind === 'API') {
+            b.addEdge({ from: storyId, to: node.id, kind: 'binds_endpoint', source: relative(outRoot, path) });
+          }
+        }
+      } else if (/(routes|api|controllers|endpoints)\//i.test(sw)) {
+        // Path-based heuristic: extract the last segment matching an API
+        // path fragment. We just stamp the file path as edge source; the
+        // semantic lint rule (api-scope-mapping) will reconcile.
+        b.addNode({
+          id: `FILE:${sw}`,
+          kind: 'SPEC',
+          title: sw,
+          source: sw,
+        });
+        b.addEdge({ from: storyId, to: `FILE:${sw}`, kind: 'binds_endpoint', source: relative(outRoot, path) });
+      }
     }
   }
 }
@@ -338,7 +410,13 @@ function edgeKindForRef(ref: string): EdgeKind {
   return 'derives_from';
 }
 
-/** Parse api-spec.yaml — extracts paths + methods as API nodes. */
+/** Parse api-spec.yaml — extracts paths + methods as API nodes.
+ *
+ * Phase B (V3.10.2): also extracts entity references from inline schemas
+ * (`$ref: '#/components/schemas/<EntityName>'`) and emits `uses_entity`
+ * edges (API endpoint → DB entity). These edges power the DB_API_CONSISTENCY
+ * lint rule (B2).
+ */
 export function parseApiSpec(b: GraphBuilder, outRoot: string): void {
   const file = join(outRoot, 'api-spec.yaml');
   if (!existsSync(file)) return;
@@ -346,19 +424,76 @@ export function parseApiSpec(b: GraphBuilder, outRoot: string): void {
   const lines = content.split('\n');
   // Look for `paths:` section, then 2-space indented `<path>:` then 4-space `<method>:`
   const pathsIdx = lines.findIndex(l => /^paths:\s*$/.test(l));
-  if (pathsIdx === -1) return;
   const methods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
-  let currentPath: string | null = null;
-  for (let i = pathsIdx + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\S/.test(line)) break; // back to top-level
-    const pm = line.match(/^ {2}([^\s:]+):\s*$/);
-    if (pm) { currentPath = pm[1]; continue; }
-    if (currentPath) {
-      const mm = line.match(/^ {4}([a-z]+):\s*$/);
-      if (mm && methods.includes(mm[1])) {
-        const id = `API:${mm[1].toUpperCase()} ${currentPath}`;
-        b.addNode({ id, kind: 'API', title: id, source: 'api-spec.yaml', line: i + 1 });
+
+  if (pathsIdx !== -1) {
+    let currentPath: string | null = null;
+    let currentMethod: string | null = null;
+    let currentApiId: string | null = null;
+
+    for (let i = pathsIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\S/.test(line)) break; // back to top-level
+
+      const pm = line.match(/^ {2}([^\s:]+):\s*$/);
+      if (pm) {
+        currentPath = pm[1];
+        currentMethod = null;
+        currentApiId = null;
+        continue;
+      }
+
+      if (currentPath) {
+        const mm = line.match(/^ {4}([a-z]+):\s*$/);
+        if (mm && methods.includes(mm[1])) {
+          currentMethod = mm[1].toUpperCase();
+          currentApiId = `API:${currentMethod} ${currentPath}`;
+          b.addNode({ id: currentApiId, kind: 'API', title: currentApiId, source: 'api-spec.yaml', line: i + 1 });
+          continue;
+        }
+
+        // Within an endpoint block, look for `$ref: '#/components/schemas/<Name>'`
+        // and link the endpoint to the corresponding DB entity. The schema
+        // name is lowercased to match `parseDbSchema`'s `## <name>` heading
+        // convention. Source is stamped as 'api-spec.yaml' so the
+        // DB_API_CONSISTENCY lint rule can tell stub-from-ref apart from
+        // real declarations in db-schema.md.
+        if (currentApiId) {
+          const ref = line.match(/\$ref:\s*['"]#\/components\/schemas\/([A-Za-z0-9_]+)['"]/);
+          if (ref) {
+            const dbId = `DB:${ref[1].toLowerCase()}`;
+            // Only stamp source='api-spec.yaml' when the DB node doesn't
+            // already exist with a stronger source (e.g. db-schema.md).
+            if (!b.hasNode(dbId)) {
+              b.addNode({ id: dbId, kind: 'DB', title: ref[1], source: 'api-spec.yaml' });
+            }
+            b.addEdge({
+              from: currentApiId,
+              to: dbId,
+              kind: 'uses_entity',
+              source: 'api-spec.yaml',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Also extract top-level `components/schemas/<Name>:` declarations so
+  // entities referenced only by name (without a $ref) still get DB nodes
+  // when they appear in db-schema.md. This is a best-effort hint — the
+  // DB_API_CONSISTENCY rule does the authoritative reconciliation.
+  const schemaSectionIdx = lines.findIndex(l => /^components:\s*$/.test(l) || /^  schemas:\s*$/.test(l));
+  if (schemaSectionIdx !== -1) {
+    for (let i = schemaSectionIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      const sm = line.match(/^ {4}([A-Za-z0-9_]+):\s*$/);
+      if (sm) {
+        const dbId = `DB:${sm[1].toLowerCase()}`;
+        // Don't overwrite if already present with stronger metadata
+        if (!b.hasNode(dbId)) {
+          b.addNode({ id: dbId, kind: 'DB', title: sm[1], source: 'api-spec.yaml', line: i + 1 });
+        }
       }
     }
   }
@@ -590,10 +725,20 @@ export function downstream(
 
   while (queue.length) {
     const cur = queue.shift()!;
-    // Children-of via incoming derives_from / belongs_to / implements
+    // Children-of via incoming derives_from / belongs_to / implements / tests
+    // Phase B (V3.10.2): also traverse `covers` (REQ ← STORY) and
+    // `binds_endpoint` (API ← STORY) so impact questions from a requirement
+    // or endpoint reach all covering/binding stories.
     const incoming = index.in.get(cur) ?? [];
     for (const e of incoming) {
-      if (e.kind === 'derives_from' || e.kind === 'belongs_to' || e.kind === 'implements' || e.kind === 'tests') {
+      if (
+        e.kind === 'derives_from' ||
+        e.kind === 'belongs_to' ||
+        e.kind === 'implements' ||
+        e.kind === 'tests' ||
+        e.kind === 'covers' ||
+        e.kind === 'binds_endpoint'
+      ) {
         if (!visited.has(e.from)) { visited.add(e.from); queue.push(e.from); }
       }
     }
@@ -619,12 +764,16 @@ export function upstream(
   while (queue.length) {
     const cur = queue.shift()!;
     // Parents via outgoing derives_from / belongs_to / implements
+    // Phase B: also traverse `covers` and `binds_endpoint` so asking
+    // "which REQs/APIs does this story touch?" returns the semantic answer.
     const outgoing = index.out.get(cur) ?? [];
     for (const e of outgoing) {
       if (
         e.kind === 'derives_from' ||
         e.kind === 'belongs_to' ||
-        e.kind === 'implements'
+        e.kind === 'implements' ||
+        e.kind === 'covers' ||
+        e.kind === 'binds_endpoint'
       ) {
         if (!visited.has(e.to)) {
           visited.add(e.to);

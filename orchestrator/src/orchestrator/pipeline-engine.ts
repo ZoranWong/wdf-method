@@ -18,6 +18,8 @@ import { join, dirname } from 'path';
 import { load as yamlLoad } from 'js-yaml';
 import type {
   StoryEntry,
+  Track,
+  ExecutionUnit,
   PipelineStage,
   PipelineContext,
   PipelineDispatchManifest,
@@ -25,6 +27,7 @@ import type {
 } from './types.js';
 import { PIPELINE_STAGES, MAX_PIPELINE_RETRIES } from './types.js';
 import { appendAudit } from './audit-logger.js';
+import { distillContext, renderDistilledContext } from './context-distiller.js';
 
 // ── Pipeline Context Management ────────────────────────────
 
@@ -104,6 +107,7 @@ export function buildPipelineManifest(
   feedback?: string,
   previousOutput?: PipelineDispatchManifest['previous_output'],
   projectRoot?: string,
+  unitId?: string,
 ): PipelineDispatchManifest {
   const role = stageToRole(story.track, stage);
 
@@ -112,7 +116,39 @@ export function buildPipelineManifest(
     ? loadConstitutionRules(projectRoot, story.track, stage)
     : [];
 
-  const prompt = buildDispatchPrompt(story, stage, pipeline, feedback, previousOutput, constitutionRules);
+  // When unitId is provided AND the story declares execution_units, scope
+  // the manifest to that unit. Falls through to story-level scoping when
+  // the unit is unknown or the story has no units (legacy format).
+  const activeUnit = unitId && story.execution_units ? story.execution_units[unitId] : undefined;
+  const effectiveScope = activeUnit ? activeUnit.scope_write : story.scope_write;
+  const effectiveAcceptance = activeUnit ? activeUnit.acceptance_check : story.acceptance_check;
+
+  const unitContext = activeUnit && unitId ? { unitId, unit: activeUnit } : undefined;
+
+  // Graph-driven distillation: pre-compute the spec slice this story touches
+  // so the agent doesn't have to read all of _wdf_output/. Best-effort — a
+  // missing graph or story node yields an empty block that is simply omitted.
+  let distilledMarkdown = '';
+  if (projectRoot) {
+    try {
+      distilledMarkdown = renderDistilledContext(
+        distillContext(story.story_id, projectRoot),
+      );
+    } catch {
+      distilledMarkdown = '';
+    }
+  }
+
+  const prompt = buildDispatchPrompt(
+    story,
+    stage,
+    pipeline,
+    feedback,
+    previousOutput,
+    constitutionRules,
+    unitContext,
+    distilledMarkdown,
+  );
 
   return {
     type: 'pipeline_dispatch',
@@ -122,53 +158,187 @@ export function buildPipelineManifest(
     stage,
     attempt: pipeline.attempt,
     max_retries: pipeline.max_retries,
-    scope_write: story.scope_write,
-    acceptance_check: story.acceptance_check,
+    scope_write: effectiveScope,
+    acceptance_check: effectiveAcceptance,
     worktree_path: worktreePath,
     feedback,
     prompt,
     previous_output: previousOutput,
-    permissions: inferPermissions(story, stage),
+    permissions: inferPermissions({ ...story, scope_write: effectiveScope, acceptance_check: effectiveAcceptance }, stage),
     constitution_rules: constitutionRules.length > 0 ? constitutionRules : undefined,
   };
 }
 
 /**
+ * Phase C (V3.10.3): build a manifest for a downstream stage (review /
+ * testing / qa) with auto-injected upstream artifacts.
+ *
+ * When `auto_dispatch = true` in customize.toml, the loop engine calls
+ * this instead of the plain buildPipelineManifest so that:
+ *
+ *   - review stage:   the prompt auto-includes the dev agent's files_changed
+ *                     list as the review scope, plus the dev dispatch
+ *                     manifest path for diff lookup.
+ *   - testing stage:  the prompt auto-includes the acceptance_check list
+ *                     as a numbered "must-run" set.
+ *   - qa stage:       the prompt auto-includes all prior reports
+ *                     (review-report.json, test-report.json) as re-run
+ *                     context.
+ *
+ * Returns the manifest with previous_output enriched. Pure function —
+ * no I/O. Caller is responsible for actually writing the manifest.
+ */
+export function buildAutoDispatchManifest(
+  story: StoryEntry,
+  stage: PipelineStage,
+  pipeline: PipelineContext,
+  opts: {
+    worktreePath?: string;
+    feedback?: string;
+    previousOutput?: PipelineDispatchManifest['previous_output'];
+    projectRoot?: string;
+    unitId?: string;
+    /**
+     * Path to the prior stage's dispatch manifest (e.g. the dev manifest
+     * when building a review manifest). Used to populate the review scope.
+     */
+    priorManifestPath?: string;
+    /**
+     * List of files the prior dev stage modified. Surfaced as review scope.
+     */
+    devFilesChanged?: string[];
+    /**
+     * Path to review/test reports — forwarded to qa as re-run context.
+     */
+    reviewReportPath?: string;
+    testReportPath?: string;
+  } = {},
+): PipelineDispatchManifest {
+  const enrichedPrevious: NonNullable<PipelineDispatchManifest['previous_output']> = {
+    ...(opts.previousOutput ?? {}),
+  };
+
+  if (stage === 'review' && opts.devFilesChanged && opts.devFilesChanged.length > 0) {
+    enrichedPrevious.code_files = opts.devFilesChanged;
+  }
+  if (stage === 'testing') {
+    // acceptance_check is already on the manifest; surface it explicitly
+    // in previous_output so the testing-focused reviewer sees a numbered
+    // checklist without re-parsing the story frontmatter.
+    enrichedPrevious.code_files = opts.devFilesChanged ?? enrichedPrevious.code_files;
+  }
+  if (stage === 'qa') {
+    if (opts.reviewReportPath) enrichedPrevious.review_notes = opts.reviewReportPath;
+    if (opts.testReportPath) enrichedPrevious.test_files = [opts.testReportPath];
+  }
+
+  return buildPipelineManifest(
+    story,
+    stage,
+    pipeline,
+    opts.worktreePath,
+    opts.feedback,
+    Object.keys(enrichedPrevious).length > 0 ? enrichedPrevious : undefined,
+    opts.projectRoot,
+    opts.unitId,
+  );
+}
+
+/**
  * Write a dispatch manifest to disk.
  * Returns the path it was written to.
+ *
+ * When `frameworkRoot` is provided AND the manifest is for the dev stage,
+ * starter handoff.md/self-check.md files are also written to
+ * `_wdf_output/handoff/{story_id}/`. The dev agent fills these in; the
+ * pipeline validates required sections before advancing dev→review.
+ * Idempotent — existing files are preserved.
  */
 export function writePipelineManifest(
   manifest: PipelineDispatchManifest,
   outputDir: string,
+  frameworkRoot?: string,
 ): string {
   const dir = join(outputDir, '.dispatch', 'pipeline', manifest.story_id);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${manifest.stage}.json`);
   writeFileSync(path, JSON.stringify(manifest, null, 2));
+
+  if (frameworkRoot && manifest.stage === 'dev') {
+    writeStarterHandoffForManifest(manifest, outputDir, frameworkRoot);
+  }
+
   return path;
+}
+
+/**
+ * Lazy import + call to writeStarterHandoffFiles. Kept in a separate
+ * function to avoid a circular import (handoff-writer imports types,
+ * pipeline-engine imports types — keeping the dep one-directional).
+ */
+function writeStarterHandoffForManifest(
+  manifest: PipelineDispatchManifest,
+  outputDir: string,
+  frameworkRoot: string,
+): void {
+  try {
+    // Inline require to avoid circular import at module load time.
+    const { writeStarterHandoffFiles } = require('./handoff-writer.js') as typeof import('./handoff-writer.js');
+    const story: StoryEntry = {
+      story_id: manifest.story_id,
+      title: manifest.title,
+      track: manifest.track as Track,
+      order: 0,
+      scope_write: manifest.scope_write,
+      acceptance_check: manifest.acceptance_check,
+      code_standards_source: [],
+    };
+    writeStarterHandoffFiles(story, outputDir, frameworkRoot);
+  } catch {
+    // Non-fatal — handoff files are a convenience, not a correctness gate.
+    // Pipeline still works if templates are missing.
+  }
 }
 
 // ── Report Readers ─────────────────────────────────────────
 
 /**
+ * Path of a story's review report on disk. Single source of truth shared by
+ * the readers below and by verdict-verifier (which rewrites the file).
+ */
+export function reviewReportPath(storyId: string, reportDir: string): string {
+  return join(reportDir, 'review', `${storyId}-review.json`);
+}
+
+/** Path of a story's test report on disk. */
+export function testReportPath(storyId: string, reportDir: string): string {
+  return join(reportDir, 'test-reports', `${storyId}-test.json`);
+}
+
+/** Path of a story's QA report on disk. */
+export function qaReportPath(storyId: string, reportDir: string): string {
+  return join(reportDir, 'qa', `${storyId}-qa.json`);
+}
+
+/**
  * Read a review report for a story. Returns null if not found or invalid.
  */
 export function readReviewReport(storyId: string, reportDir: string): any | null {
-  return readReportJson(join(reportDir, 'review', `${storyId}-review.json`));
+  return readReportJson(reviewReportPath(storyId, reportDir));
 }
 
 /**
  * Read a test report for a story. Returns null if not found or invalid.
  */
 export function readTestReport(storyId: string, reportDir: string): any | null {
-  return readReportJson(join(reportDir, 'test-reports', `${storyId}-test.json`));
+  return readReportJson(testReportPath(storyId, reportDir));
 }
 
 /**
  * Read a QA report for a story. Returns null if not found or invalid.
  */
 export function readQaReport(storyId: string, reportDir: string): any | null {
-  return readReportJson(join(reportDir, 'qa', `${storyId}-qa.json`));
+  return readReportJson(qaReportPath(storyId, reportDir));
 }
 
 /**
@@ -267,6 +437,40 @@ export function stageToRole(track: string, stage: PipelineStage): string {
   }
 }
 
+/**
+ * Select the next execution unit to dispatch for a Story Pack v1.0 story.
+ *
+ * Strategy: return the first unit (by insertion order) whose code_acceptance
+ * has not yet passed. When every unit has passed, return null — the story
+ * is ready for story-level review/testing/QA.
+ *
+ * For stories WITHOUT execution_units (legacy format), returns null
+ * unconditionally — the caller should fall back to story-level dispatch.
+ *
+ * @param story         The story to inspect.
+ * @param unitStatuses  Per-unit status map from StoryStatus.units. May be
+ *                      undefined for stories that have never been dispatched.
+ * @returns unitId of the next unit needing work, or null.
+ */
+export function selectActiveUnit(
+  story: StoryEntry,
+  unitStatuses?: Record<string, { status?: string; code_acceptance?: { review_passed?: boolean } }>,
+): string | null {
+  if (!story.execution_units) return null;
+  const unitIds = Object.keys(story.execution_units);
+  if (unitIds.length === 0) return null;
+
+  for (const unitId of unitIds) {
+    const status = unitStatuses?.[unitId];
+    const codeAccepted = status?.code_acceptance?.review_passed === true
+      || status?.status === 'CODE_ACCEPTED';
+    if (!codeAccepted) {
+      return unitId;
+    }
+  }
+  return null;
+}
+
 function buildDispatchPrompt(
   story: StoryEntry,
   stage: PipelineStage,
@@ -274,6 +478,8 @@ function buildDispatchPrompt(
   feedback?: string,
   previousOutput?: PipelineDispatchManifest['previous_output'],
   constitutionRules: string[] = [],
+  unitContext?: { unitId: string; unit: ExecutionUnit },
+  distilledMarkdown = '',
 ): string {
   const role = stageToRole(story.track, stage);
   const lines: string[] = [];
@@ -284,7 +490,23 @@ function buildDispatchPrompt(
   lines.push(`**Track:** ${story.track}`);
   lines.push(`**Stage:** ${stage} (attempt ${pipeline.attempt}/${pipeline.max_retries})`);
   lines.push(`**Total retries:** ${pipeline.total_retries}`);
+  if (unitContext) {
+    lines.push(`**Execution Unit:** \`${unitContext.unitId}\``);
+  }
   lines.push('');
+
+  if (unitContext) {
+    lines.push(`## Execution Unit Focus — ${unitContext.unitId}`);
+    lines.push('');
+    lines.push(`This story uses Story Pack v1.0 with multiple execution units. You are dispatched for unit **${unitContext.unitId}** only.`);
+    if (story.execution_units) {
+      const allUnits = Object.keys(story.execution_units);
+      if (allUnits.length > 1) {
+        lines.push(`Other units in this story (handled by separate dispatches): ${allUnits.filter(u => u !== unitContext.unitId).join(', ')}`);
+      }
+    }
+    lines.push('');
+  }
 
   if (feedback) {
     lines.push('## Feedback from Prior Stage');
@@ -302,6 +524,13 @@ function buildDispatchPrompt(
     for (const rule of constitutionRules) {
       lines.push(`- ${rule}`);
     }
+    lines.push('');
+  }
+
+  // Distilled spec slice (graph-driven) — placed before scope so the agent
+  // reads the relevant requirements/endpoints/entities before touching files.
+  if (distilledMarkdown) {
+    lines.push(distilledMarkdown);
     lines.push('');
   }
 

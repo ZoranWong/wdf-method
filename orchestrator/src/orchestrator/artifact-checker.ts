@@ -8,6 +8,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, extname } from 'path';
 import YAML from 'js-yaml';
+import { isSemanticGateEnabled } from './config.js';
+import { runSemanticConsistency } from './semantic-consistency.js';
 
 export type CheckSeverity = 'error' | 'warning' | 'info';
 
@@ -95,6 +97,13 @@ export function checkArtifact(opts: CheckOptions): CheckResult[] {
     for (const path of allArtifacts) {
       results.push(checkSingleArtifact(path, opts.projectRoot));
     }
+  }
+  // Cross-artifact semantic consistency (advisory). Per-file checks above
+  // validate FORM; this validates that the artifacts AGREE (REQ↔story↔API↔
+  // DB↔test). Only meaningful for a broad check — a single --artifact/--story
+  // run stays scoped to that one file. Honors the semantic_gate opt-out.
+  if (!opts.artifact && !opts.story && isSemanticGateEnabled(opts.projectRoot)) {
+    results.push(runSemanticConsistency(opts.projectRoot));
   }
   return results;
 }

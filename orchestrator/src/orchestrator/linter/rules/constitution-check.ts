@@ -29,7 +29,15 @@ export const ConstitutionCheckRule: LintRule = {
 
   async check(context: LintContext): Promise<LintResult[]> {
     const results: LintResult[] = [];
-    const constitutionPath = join(context.projectRoot, 'constitution.yaml');
+    // Prefer the per-project constitution written by `wdf init`
+    // (_wdf_output/constitution.yaml) over the framework-root one, matching
+    // the injection precedence in pipeline-engine. Without this, an
+    // init-generated project constitution was silently never enforced.
+    const projectConstitution = join(context.projectRoot, '_wdf_output', 'constitution.yaml');
+    const rootConstitution = join(context.projectRoot, 'constitution.yaml');
+    const constitutionPath = existsSync(projectConstitution)
+      ? projectConstitution
+      : rootConstitution;
 
     if (!existsSync(constitutionPath)) {
       // Projects without a constitution are exempt — framework repo always
@@ -114,7 +122,7 @@ export const ConstitutionCheckRule: LintRule = {
   },
 };
 
-interface ConstitutionRule {
+export interface ConstitutionRule {
   id: string;
   name: string;
   level: 'error' | 'warning';
@@ -131,7 +139,7 @@ interface ConstitutionRule {
  * entries with simple scalar fields. A hand-rolled parser keeps the
  * orchestrator dependency-free and resilient to formatting drift.
  */
-function parseConstitutionRules(raw: string): ConstitutionRule[] {
+export function parseConstitutionRules(raw: string): ConstitutionRule[] {
   const rules: ConstitutionRule[] = [];
   const lines = raw.split('\n');
 

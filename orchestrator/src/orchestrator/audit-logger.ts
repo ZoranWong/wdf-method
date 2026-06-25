@@ -32,6 +32,11 @@ export type AuditEventType =
   | 'pipeline_escalation'  // PIPELINE_ESCALATED fired (retry budget exhausted)
   | 'pipeline_fail'        // ESCALATED auto-promoted to FAIL (hold timeout or --reject)
   | 'pipeline_reset'       // FAIL → NOT_STARTED via `wdf reset --force`
+  // Verdict verification (verdict-verifier.ts). The CLI independently re-runs
+  // a story's acceptance_check before trusting an agent-reported PASS at the
+  // testing/qa stage. `status: 'pass'` = CLI confirmed; `status: 'fail'` = CLI
+  // overrode the agent verdict to FAIL because the checks did not actually pass.
+  | 'verdict_verification'
   // Party Mode events (party-engine.ts). These flow through the same audit
   // log as orchestration events; the union keeps appendAudit() type-safe.
   | 'party_created'
@@ -42,7 +47,22 @@ export type AuditEventType =
   | 'party_firstprinciples_completed'
   | 'party_convergence_resolved'
   | 'party_expert_invited'
-  | 'party_completed';
+  | 'party_completed'
+  // Phase C (V3.10.3): integration orchestrator lifecycle. `skip` fires
+  // when the sprint isn't yet fully merged; `complete` fires when cross-story
+  // integration analysis runs after the final merge.
+  | 'integration_orchestrator_skip'
+  | 'integration_orchestrator_complete'
+  // Phase 3.9 → 4 entry gate (phase4-entry-gate.ts). Fires when a spec is
+  // rejected at the implementation boundary for internal inconsistency
+  // (uncovered REQ, orphan endpoint, story with no REQ, incomplete checklist)
+  // before any agent writes code.
+  | 'phase4_entry_blocked'
+  // Phase 4 → MERGED exit gate (phase4-exit-gate.ts). Fires when a story is
+  // blocked from merging because the test side of the traceability chain is
+  // incomplete (AC not test-bound, story has no covering TEST, or spec/code
+  // drift) — the symmetric complement of phase4_entry_blocked.
+  | 'phase4_exit_blocked';
 
 export interface AuditEntry {
   timestamp: string;       // ISO 8601 UTC

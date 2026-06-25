@@ -1,0 +1,39 @@
+# Handoff — {{story_id}}
+
+- Story: {{story_id}}
+- Title: {{title}}
+- Track: {{track}}
+- Run ID: {{run_id}}
+- Completed at: {{completed_at}}
+
+## Summary
+
+<!-- One-paragraph description of what was implemented. -->
+
+## Files changed
+
+<!-- List each file modified, created, or deleted. Use git diff --stat output if available. -->
+
+- `path/to/file.ts` — <brief change description>
+
+## Verification summary
+
+<!-- What was tested and how. Reference self-check.md for command output. -->
+
+- Acceptance checks: <count> run, <count> passed
+- Test coverage: <pct>% (target: per constitution)
+- Type check: pass / fail
+- Lint: pass / fail
+
+## Known gaps
+
+<!-- Anything not covered, deferred, or needing follow-up. -->
+
+- None / <describe gap>
+
+## Handoff artifacts
+
+<!-- Standardized artifact list per Story Pack v1.0 -->
+{{#each handoff_artifacts}}
+- {{this}}
+{{/each}}

@@ -29,8 +29,11 @@ import {
   initPipelineContext,
   advancePipeline,
   isPipelineEscalated,
+  selectActiveUnit,
 } from './pipeline-engine.js';
 import { l2WorktreeRollback } from './error-handling.js';
+import { evaluatePhase4ExitGate, formatPhase4ExitGate } from './phase4-exit-gate.js';
+import { appendAudit } from './audit-logger.js';
 
 // Re-export for downstream callers
 export { initPipelineContext };
@@ -56,6 +59,7 @@ export function processStoryPipeline(
   state: SprintStatusManager,
   outputDir: string,
   projectRoot: string,
+  frameworkRoot?: string,
 ): PipelineAction {
   const subKey = story.track === 'frontend' ? 'phase_4_10' :
                  story.track === 'backend' ? 'phase_4_4' : 'phase_4_4';
@@ -178,6 +182,38 @@ export function processStoryPipeline(
         const qa = readQaReport(story.story_id, reportDir);
         if (qa) {
           if (qa.verdict === 'PASS') {
+            // Phase 4 EXIT gate — the test side of the traceability chain
+            // (AC→TEST) is enforced HERE, not at entry. A story can pass QA
+            // and still have ACs with no bound test or unspec'd routes; that
+            // must not silently reach MERGED. Treat it as testing-stage
+            // incomplete and bounce back through the normal failure loop so
+            // the agent adds the missing tests (reusing the retry/escalation
+            // budget guards against an infinite loop).
+            const exit = evaluatePhase4ExitGate(projectRoot, { storyId: story.story_id });
+            if (exit.enabled && !exit.ok) {
+              pipeline = advancePipeline(pipeline, false);
+              pipeline.last_failure = {
+                stage: 'qa',
+                error: `Phase 4 exit gate blocked — ${exit.gaps.length} test/drift gap(s)`,
+                at: new Date().toISOString(),
+              };
+              pipeline.feedback = formatPhase4ExitGate(exit);
+              pipeline.stage = 'testing'; // bounce to testing to author missing tests
+              appendAudit(projectRoot, 'phase4_exit_blocked', {
+                actor: 'system',
+                story_id: story.story_id,
+                status: 'fail',
+                message: `QA passed but exit gate blocked merge — ${exit.gaps.length} gap(s)`,
+                details: {
+                  gaps: exit.gaps.length,
+                  test_binding: exit.totals.test_binding,
+                  traceability: exit.totals.traceability,
+                  drift: exit.totals.drift,
+                },
+              });
+              handled = true; // stop loop — need new dispatch to add tests
+              break;
+            }
             pipeline = advancePipeline(pipeline, true);
             // Pipeline complete! Mark as MERGED
             state.updateStoryStatus(4, subKey, {
@@ -231,6 +267,13 @@ export function processStoryPipeline(
   // Build manifest for current stage
   const worktreePath = join(projectRoot, '.wdf-story-workspaces', story.story_id);
   const previousOutput = collectPreviousOutput(story.story_id, pipeline.stage, projectRoot);
+
+  // Story Pack v1.0: when a story declares execution_units, scope the
+  // dispatch to the first unit that still needs work. This produces
+  // tighter prompts, smaller scope_write windows, and lets large stories
+  // progress unit-by-unit rather than as one monolithic dispatch.
+  const activeUnitId = selectActiveUnit(story, existing?.units);
+
   const manifest = buildPipelineManifest(
     story,
     pipeline.stage,
@@ -239,9 +282,10 @@ export function processStoryPipeline(
     pipeline.feedback,
     previousOutput,
     projectRoot,
+    activeUnitId ?? undefined,
   );
 
-  const manifestPath = writePipelineManifest(manifest, outputDir);
+  const manifestPath = writePipelineManifest(manifest, outputDir, frameworkRoot);
 
   return {
     kind: 'dispatch',

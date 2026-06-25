@@ -1,0 +1,42 @@
+# compliance — regulated / audited delivery.
+#
+# Tightens every gate: high coverage, full a11y + security audits, strict
+# scope lock with blocking severity, constitution enforced at merge, and
+# the loop halts (rather than auto-retrying past) gate/acceptance failures.
+# Use this for fintech/health/gov work where an auditor will read the trail.
+#
+# Activate:  wdf preset apply compliance
+# Layer:     defaults < skill-base < [compliance] < project overrides
+
+[preset]
+name = "compliance"
+description = "Regulated delivery: max coverage, full a11y + security gates, strict scope lock, constitution enforced."
+version = "1.0.0"
+category = "governance"
+
+[acceptance_gates]
+code_acceptance_min_coverage = 90
+code_acceptance_require_lint = true
+code_acceptance_require_type_check = true
+ui_acceptance_min_lighthouse_performance = 95
+ui_acceptance_min_lighthouse_accessibility = 100
+ui_acceptance_min_lighthouse_best_practices = 95
+ui_acceptance_require_axe_audit = true
+feature_acceptance_require_contract_compliance = true
+feature_acceptance_require_e2e_tests = true
+feature_acceptance_require_security_audit = true
+
+[scope_lock]
+enabled = true
+enforcement_mode = "strict"
+srg_05_severity = "blocking"
+scope_expansion_requires = "user_approval"
+
+[merge_queue]
+constitution_check = true
+integration_check_on_merge = true
+
+[auto_run]
+halt_on_gate_failure = true
+halt_on_acceptance_failure = true
+max_story_retries = 2

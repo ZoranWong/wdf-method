@@ -172,6 +172,12 @@ export interface StoryEntry {
   code_standards_source: string[];
   slices?: StorySlice[];
   execution_units?: Record<string, ExecutionUnit>;
+  /** Story Pack version discriminator. When '1.0', unit-level dispatch is active. */
+  story_pack_version?: '1.0';
+  /** Per-story model override. Absent = use framework default. */
+  recommended_model_profile?: ModelProfile;
+  /** Standardized handoff artifact list (e.g. ['diff_summary', 'test_results', 'blockers']). */
+  handoff_artifacts?: string[];
 }
 
 export interface StorySlice {
@@ -188,6 +194,16 @@ export interface ExecutionUnit {
   scope_write: string[];
   acceptance_check: string[];
   depends_on?: string[];
+}
+
+/**
+ * Per-story model selection (Story Pack v1.0).
+ * Allows different stories to use different models based on complexity.
+ */
+export interface ModelProfile {
+  reasoning_effort: 'low' | 'medium' | 'high';
+  model?: string;
+  max_tokens?: number;
 }
 
 export interface StoryStatus {
@@ -208,6 +224,8 @@ export interface StoryStatus {
   units?: Record<string, UnitStatus>;
   /** Per-story pipeline context tracking */
   pipeline?: PipelineContext;
+  /** ISO timestamp when story first became blocked by unmet dependencies. */
+  blocked_since?: string;
 }
 
 export interface StepHistoryEntry {

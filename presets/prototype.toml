@@ -1,0 +1,34 @@
+# prototype — fast iteration for spikes and throwaway prototypes.
+#
+# Relaxes quality gates so the loop spends time on building, not on
+# coverage thresholds and a11y audits. Scope lock drops to warning-only so
+# an exploratory agent isn't blocked by boundary violations. Use this for
+# proofs-of-concept; switch back to defaults (or `compliance`) before
+# anything ships.
+#
+# Activate:  wdf preset apply prototype
+# Layer:     defaults < skill-base < [prototype] < project overrides
+
+[preset]
+name = "prototype"
+description = "Fast iteration: relaxed gates, chrome-only, more retries. For spikes, not production."
+version = "1.0.0"
+category = "velocity"
+
+[acceptance_gates]
+code_acceptance_min_coverage = 50
+ui_acceptance_min_lighthouse_performance = 60
+ui_acceptance_min_lighthouse_accessibility = 60
+ui_acceptance_min_lighthouse_best_practices = 60
+ui_acceptance_require_axe_audit = false
+feature_acceptance_require_e2e_tests = false
+feature_acceptance_require_security_audit = false
+e2e_browser_acceptance_browsers = ["chrome"]
+
+[scope_lock]
+enforcement_mode = "warning_only"
+srg_05_severity = "warning"
+
+[auto_run]
+max_story_retries = 5
+auto_skip_optional_sub_phases = true

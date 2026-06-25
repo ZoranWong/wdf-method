@@ -1,0 +1,111 @@
+# wdf-method V3.10.2 — Spec Consistency CI Gate
+#
+# Drops into `.github/workflows/spec-analyze.yml` of a wdf-managed project.
+# Triggers whenever a PR touches the planning artifacts that the semantic
+# lint rules reason over: PRD (REQ coverage), stories (AC bindings, scope
+# claims), api-spec.yaml (endpoint mapping), or db-schema.md (entity
+# consistency).
+#
+# Behavior:
+#   - Runs `wdf spec analyze`
+#   - Posts the report as a PR comment for easy review
+#   - Fails the build when any error-severity finding exists
+#     (promote warnings to errors in CI by exporting WDF_LINT_STRICT=1
+#     and re-running `wdf lint --strict`)
+#
+# Install:
+#   cp templates/ci/spec-analyze.yml.tmpl .github/workflows/spec-analyze.yml
+#
+# Customize the path filters below if your project keeps planning artifacts
+# outside `_wdf_output/`.
+
+name: Spec Consistency
+
+on:
+  pull_request:
+    paths:
+      - '_wdf_output/prd.md'
+      - '_wdf_output/epics.md'
+      - '_wdf_output/api-spec.yaml'
+      - '_wdf_output/db-schema.md'
+      - '_wdf_output/stories/**'
+      - '_wdf_output/specs/**'
+      - 'specs/**'
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write  # required to post the report comment
+
+jobs:
+  spec-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wdf-method
+        run: npm install -g wdf-method
+
+      - name: Run spec analyze
+        id: analyze
+        run: |
+          set -uo pipefail
+          # `wdf spec analyze` exits non-zero only on error-severity findings.
+          # Capture output regardless so we can post a comment on failure.
+          wdf spec analyze > analyze-output.txt 2>&1 || ANALYZE_EXIT=$?
+          ANALYZE_EXIT=${ANALYZE_EXIT:-0}
+          echo "exit=$ANALYZE_EXIT" >> $GITHUB_OUTPUT
+          cat analyze-output.txt
+          exit 0  # we'll fail the job explicitly below if needed
+
+      - name: Upload report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-consistency-report
+          path: |
+            _wdf_output/_output/solutioning/consistency-report.md
+            analyze-output.txt
+          if-no-files-found: ignore
+
+      - name: Post report as PR comment
+        if: github.event_name == 'pull_request' && steps.analyze.outputs.exit != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('analyze-output.txt', 'utf8');
+            const report = fs.readFileSync('_wdf_output/_output/solutioning/consistency-report.md', 'utf8');
+            const comment = `## ⚠️ Spec Consistency Findings
+
+            <details><summary>Raw command output</summary>
+
+            \`\`\`
+            ${body}
+            \`\`\`
+
+            </details>
+
+            <details><summary>Full report</summary>
+
+            ${report}
+
+            </details>
+
+            Run \`wdf spec analyze\` locally and address the findings above. Promote to error in CI by setting \`WDF_LINT_STRICT=1\` and re-running with \`wdf lint --strict\`.`;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+      - name: Fail job on error findings
+        if: steps.analyze.outputs.exit != '0'
+        run: |
+          echo "::error::Spec consistency check failed — see report artifact or PR comment"
+          exit 1

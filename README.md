@@ -1,9 +1,9 @@
-# wdf-method — Web Dev Flow V3.6
+# wdf-method — Web Dev Flow V3.9
 
 **Full-lifecycle web development automation powered by AI agents.**
-PRD through parallel BE/FE implementation with dual-layer FSM, Gate Cards, acceptance gates, and hands-free auto-run.
+PRD through parallel BE/FE implementation with dual-layer FSM, entry/exit gates, requirement traceability, an evolvable constitution, and a dev→review→testing→QA pipeline per story.
 
-[![Version](https://img.shields.io/badge/version-3.6.0-blue)](package.json)
+[![Version](https://img.shields.io/badge/version-3.9.0-blue)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![BMAD Module](https://img.shields.io/badge/BMAD-module-wdf-orange)](module.yaml)
 
@@ -22,13 +22,13 @@ wdf-method is a **Claude Code skill** that orchestrates the complete web develop
 - **Implementation** — TDD-driven BE + FE parallel development with 4-tier acceptance gates
 - **Integration** — Merge queue, contract verification, E2E browser acceptance
 
-All through **36 sub-phases** governed by **double-layer FSM** with **Gate Cards** at every transition.
+All through **36 sub-phases** governed by **double-layer FSM** with **gates** at every transition.
 
 ```
 Your Idea
     │
     ▼
- /web-dev-flow init          ← bootstrap project
+ wdf init                    ← bootstrap project + state files
     │
     ▼
  Phase 1: Analysis (opt)     ← Brainstorming → Domain Research → Product Brief
@@ -38,13 +38,27 @@ Your Idea
     │
     ▼
  Phase 3: Solutioning        ← C4 Architecture → Epics → Stories → API → Readiness
-    │
+    │                           (Phase 3.9 → 4 ENTRY gate: semantic + traceability + checklist)
     ▼
- Phase 4: Implementation     ← Sprint → BE Track ═ FE Track (parallel) → Integration
-    │
+ Phase 4: Implementation     ← BE Track ═ FE Track (parallel)
+    │                           each story: dev → review → testing → QA pipeline (≤5 retries)
+    │                           (Phase 4 → MERGED EXIT gate: test binding + no drift)
     ▼
  🎉 Production-ready code + acceptance reports
 ```
+
+---
+
+## Execution Model
+
+wdf-method runs in **two strictly separated layers**. The CLI never dispatches agents and never calls AI — it only answers "where are we, what's missing, is it compliant?"
+
+| Layer | Owns | How it works |
+|-------|------|--------------|
+| **Claude session (controller)** | All AI work: Phase 1-3 artifact authoring; Phase 4 reads the pipeline manifest and dispatches dev/review/testing/QA sub-agents (≤5 retries) via the Agent tool | Calls `wdf start` to get a dispatch manifest → dispatches sub-agents → calls `wdf start` again so the CLI reads stage reports and decides advance/retry/escalate |
+| **TypeScript CLI (state machine + inspector)** | FSM state, artifact validation, pipeline manifest building, escalation. **Never spawns subprocesses, never calls AI** | Reads state, scans artifacts, writes manifests, reads review/test/QA reports to decide. A spec-driven "blackboard". |
+
+This mirrors the spec-driven pattern of BMAD / SpecKit / OpenSpec: Claude is the brain, the CLI is the blackboard.
 
 ---
 
@@ -52,13 +66,17 @@ Your Idea
 
 | Feature | Description |
 |---------|-------------|
-| **Native Agent System** | 13 role-based AI agents (analyst, PM, architect, developer, reviewer, QA...) |
-| **Thin Orchestrator** | Thin state machine dispatches sub-agents with clean ~38KB context |
+| **Native Agent System** | Role-based AI agents (analyst, PM, architect, developer, reviewer, QA...) |
+| **Thin Orchestrator** | CLI is a pure state machine + quality inspector — never spawns agents, never calls AI |
+| **Per-Story Pipeline** | Each story runs dev → review → testing → QA, with ≤5 feedback-driven retries |
 | **One Story = One Agent** | Each story runs in isolated git worktree — zero write conflicts |
+| **Requirement Traceability** | `wdf trace` / `wdf trace blame` link JTBD → REQ → Story → Test → Commit, both directions |
+| **Entry & Exit Gates** | `wdf gate phase4` (semantic + traceability + checklist) on the way in; `wdf gate exit` (test binding + drift) before MERGED |
+| **Evolvable Constitution** | `wdf constitution show/bump/diff` — semver versioning, changelog, sync-impact diff, CI-enforced |
+| **Clarify & Checklist** | `wdf clarify` flags PRD ambiguity with suggested options; `wdf checklist` enforces per-story requirement quality (CHK###) |
 | **4-Tier Acceptance** | CODE → FEATURE → UI → E2E BROWSER acceptance gates |
-| **Autonomous Execution** | Hands-free auto-run mode from Phase 1 to completion |
+| **Autonomous Loop** | `wdf loop` evaluates all story pipelines and returns the next dispatch action |
 | **Pause & Resume** | Signal-based cross-worktree agent communication |
-| **BMAD Compatible** | Install via `npx bmad-method install --custom-source` |
 | **Independent CLI** | `npx wdf-method install` — zero external dependencies |
 
 ---
@@ -85,27 +103,47 @@ bash scripts/setup.sh --project . --init
 
 ### Usage
 
-In a Claude Code session:
+The CLI binary is `wdf`. In a Claude Code session, the same workflow is driven via the `/web-dev-flow` skill.
 
 ```
-/web-dev-flow init              Initialize a new project
-/web-dev-flow status            Show progress dashboard
-/web-dev-flow start             Start/resume current phase
-/web-dev-flow pause             Pause and save state
-/web-dev-flow resume            Resume from pause
+# Lifecycle
+wdf init <path>              Initialize a project + state files
+wdf start                    Query current state, emit next-step prompt (drives the main loop)
+wdf status                   Full progress dashboard
+wdf doctor                   Environment diagnostics
 
-/web-dev-flow freeze requirements   Freeze requirements (at Phase 2.5)
-/web-dev-flow freeze dev-order      Freeze development order (at Phase 3.7)
+# Phase 4 automation
+wdf loop [--json]            Evaluate all story pipelines, return next action
+wdf loop --post-dispatch     Cleanup permissions after an agent completes + get next step
 
-/web-dev-flow accept code       Run CODE ACCEPTANCE
-/web-dev-flow accept ui         Run UI ACCEPTANCE
-/web-dev-flow accept feature    Run FEATURE ACCEPTANCE
-/web-dev-flow accept e2e        Run E2E BROWSER ACCEPTANCE
+# Quality / gates
+wdf check [--artifact=...]   Check artifact quality/compliance
+wdf gate                     Check current gate
+wdf gate phase4              Pre-check Phase 3.9→4 ENTRY gate (semantic + traceability + checklist; CI-usable)
+wdf gate exit [--story=X]    Pre-check Phase 4→MERGED EXIT gate (test binding + STORY_NO_TEST + drift; CI-usable)
+wdf lint --strict            Spec consistency check (includes constitution enforcement)
 
-/web-dev-flow gate 3            Check Phase 3 gate card
-/web-dev-flow queue show        View merge queue
-/web-dev-flow rebuild-status    Rebuild status index
-/web-dev-flow report            Generate progress report
+# Acceptance
+wdf accept code|ui|feature|e2e   Run the corresponding acceptance gate
+
+# Traceability
+wdf trace <id>               Trace a requirement chain (JTBD → REQ → Story → Test → Commit)
+wdf trace blame <file>:<line>   Reverse trace: code line → commit → story → REQ → JTBD
+
+# Requirement quality
+wdf checklist <story-id>     Generate/view a story's requirement-quality checklist (CHK###)
+wdf checklist verify <id>    Verify all CHK items for a story are [x]
+wdf clarify [verify]         Scan PRD for ambiguity (with suggested options); verify requires an Answer per item
+
+# Constitution
+wdf constitution             Run the CONSTITUTION_CHECK
+wdf constitution show|bump|diff   Evolve the constitution: inventory / semver bump + changelog + snapshot / sync-impact diff
+
+# Misc
+wdf hooks install [--strict]   Install the commit-msg hook ([story:S-XXX] traceability)
+wdf snapshot list|create     State snapshot management
+wdf cr list|create|apply     Change-request management
+wdf permissions list|apply   V3 permission injection
 ```
 
 ---
@@ -141,6 +179,11 @@ NOT_STARTED → IN_PROGRESS → IMPLEMENTED → TESTED → SPEC_COMPLIANT
     → E2E_BROWSER_ACCEPTANCE → E2E_BROWSER_ACCEPTED
     → MERGE_QUEUED → MERGED
 ```
+
+Two hard gates bracket Phase 4 to enforce traceability strong-consistency:
+
+- **Entry gate** (`wdf gate phase4`) — before any story enters implementation: semantic consistency + every story reverse-traces to a PRD REQ + checklist. Deliberately *excludes* test-side checks (tests aren't written yet).
+- **Exit gate** (`wdf gate exit`) — before a story is marked MERGED: every AC binds to a TEST (`AC_TEST_BINDING`), no `STORY_NO_TEST`, and no spec drift (missing test / unspecified endpoint). Enforced both in the pipeline QA-pass branch and at atomic merge time. Opt-out via `[semantic_gate] enabled = false`.
 
 ### Story Ready Gate (SRG-01 ~ SRG-09)
 

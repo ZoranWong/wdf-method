@@ -17,6 +17,7 @@ import { applyDelta, summarizePlan, unifiedDiff, loadDelta, planApply, archiveAn
 import { migrateDelta, formatMigrateResult } from './cr-migrate.js';
 import { verifyCrConsistency, formatReport as formatCrVerifyReport } from './cr-verify.js';
 import { renameSync, readdirSync, statSync, rmSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -39,6 +40,12 @@ async function main() {
   if (command === 'constitution') {
     const rootFlag = args.find(a => a.startsWith('--root='));
     const root = resolve(rootFlag ? rootFlag.slice(7) : process.cwd());
+    // Lifecycle subcommands (show/bump/diff) manage the constitution as an
+    // evolvable artifact; bare `constitution` runs the CONSTITUTION_CHECK lint.
+    if (args[1] === 'show' || args[1] === 'bump' || args[1] === 'diff') {
+      await runConstitutionEvolveCommand(args, root);
+      return;
+    }
     await runConstitutionCommand(args, root);
     return;
   }
@@ -86,6 +93,31 @@ async function main() {
     return;
   }
 
+  // Hooks command — install / validate git hooks that enforce wdf
+  // invariants at commit time (e.g. [story:...] tags must resolve to a
+  // story with a REQ mapping). `check-commit-msg` is invoked BY the hook
+  // and must work on any cwd, even uninitialized projects.
+  if (command === 'hooks') {
+    await runHooksCommand(args, process.cwd());
+    return;
+  }
+
+  // Checklist command — per-story requirement quality checklist.
+  // Generates a hybrid checklist (CLI mechanical + Claude soft) and verifies
+  // every item is checked before Phase 4 dispatch.
+  if (command === 'checklist') {
+    await runChecklistCommand(args, process.cwd());
+    return;
+  }
+
+  // Clarify command — scan the PRD for underspecification and maintain the
+  // _wdf_output/clarifications.md artifact. `verify` gates Phase 3 on all
+  // clarifications being resolved. Works on cwd as project root.
+  if (command === 'clarify') {
+    await runClarifyCommand(args, process.cwd());
+    return;
+  }
+
   // Install command — generates platform-specific config (multi-agent).
   // Supports Claude Code, Codex, Cursor, Copilot, Gemini.
   if (command === 'install') {
@@ -118,7 +150,7 @@ async function main() {
     'workspace', 'template', 'preset', 'coverage',
     'schema', 'provider', 'review', 'retro', 'retrospective',
     'health', 'doctor', 'pre-check', 'lint',
-    'spec', 'tasks',
+    'spec', 'tasks', 'import',
   ]);
 
   if (!initialized && !FRAMEWORK_LEVEL_COMMANDS.has(command)) {
@@ -278,6 +310,31 @@ async function main() {
     case 'spec':
       await runSpecCommand(args, projectRoot);
       break;
+
+    case 'import': {
+      // Phase D (V3.10.4): brownfield project onboarding.
+      const { runImport } = await import('./import-cmd.js');
+      const sourceArg = args.find(a => a.startsWith('--source='))?.slice('--source='.length);
+      const rootArg = args.find(a => a.startsWith('--root='))?.slice('--root='.length);
+      const result = await runImport({
+        source: sourceArg as 'nextjs' | 'express' | 'auto' | undefined,
+        root: rootArg ?? projectRoot,
+      });
+      console.log('');
+      console.log(`Brownfield import complete.`);
+      console.log(`  Detected source: ${result.detectedSource}`);
+      console.log(`  Candidates extracted: ${result.reverseEngineer.candidates.length}`);
+      console.log(`    ${Object.entries(result.reverseEngineer.stats).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+      console.log(`  Drift baseline: ${result.driftBaseline.drift.length} item(s)`);
+      if (result.driftBaseline.drift.length > 0) {
+        console.log(`    orphan_endpoints=${result.driftBaseline.counts.orphan_endpoints}, unspec_endpoints=${result.driftBaseline.counts.unspec_endpoints}, missing_tests=${result.driftBaseline.counts.missing_tests}`);
+      }
+      console.log(`  Summary report: ${result.summaryPath}`);
+      if (result.scaffoldedSkeleton) {
+        console.log(`  Scaffolded _bmad-output/ skeleton.`);
+      }
+      break;
+    }
 
     case 'start':
       if (!orchestrator) {
@@ -676,13 +733,57 @@ async function runLoopCommand(args: string[], projectRoot: string) {
 
   const { evaluateNextLoopAction, postDispatchNext } = await import('./dispatch-loop-engine.js');
 
+  // Phase 3.9 → 4 entry gate: fail-closed spec-consistency boundary. The loop
+  // dispatches implementation agents per story; refuse to dispatch onto an
+  // internally inconsistent spec (uncovered REQ, orphan endpoint, story with
+  // no REQ, incomplete checklist). Test-dependent checks are excluded — tests
+  // are authored during Phase 4. Skipped on --post-dispatch (a continuation of
+  // an already-dispatched story, not a fresh entry). Default-on; relaxable per
+  // project via wdf.toml [semantic_gate] enabled = false.
+  if (!postDispatch) {
+    const { evaluatePhase4EntryGate, formatPhase4EntryGate } = await import('./phase4-entry-gate.js');
+    const entry = evaluatePhase4EntryGate(projectRoot);
+    if (entry.enabled && !entry.ok) {
+      if (json) {
+        console.log(JSON.stringify({
+          action: { kind: 'blocked', reason: 'phase4_entry_gate', gate: entry },
+          pipeline_snapshot: [],
+          evaluated_at: new Date().toISOString(),
+        }, null, 2));
+      } else {
+        console.log(formatPhase4EntryGate(entry));
+      }
+      return;
+    }
+  }
+
+  // Trust gate: before the synchronous FSM trusts any agent-reported PASS at
+  // the testing/qa stage, independently re-run the story's acceptance checks
+  // and rewrite the on-disk verdict to FAIL on disagreement. Skipped on
+  // --post-dispatch (that path only revokes permissions + advances dev→review;
+  // there is no fresh testing/qa report to second-guess yet).
+  let verifications: Awaited<ReturnType<typeof import('./verdict-verifier.js')['verifyPendingVerdicts']>> = [];
+  if (!postDispatch) {
+    const { verifyPendingVerdicts } = await import('./verdict-verifier.js');
+    verifications = await verifyPendingVerdicts(state, outputDir, projectRoot);
+  }
+
   const result = (postDispatch && storyId && stage)
     ? postDispatchNext(state, outputDir, projectRoot, frameworkRoot, storyId, stage as any)
     : evaluateNextLoopAction(state, outputDir, projectRoot, frameworkRoot);
 
+  const overrides = verifications.filter(v => v.overridden);
+
   if (json) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify({ ...result, verdict_verifications: verifications }, null, 2));
   } else {
+    if (overrides.length > 0) {
+      console.log('⚠ CLI overrode agent verdict (acceptance checks failed on re-run):');
+      for (const o of overrides) {
+        console.log(`  ✗ ${o.story_id} [${o.stage}] → FAIL: ${o.failures.map(f => f.command).join(', ')}`);
+      }
+      console.log('');
+    }
     console.log(formatLoopResult(result));
   }
 }
@@ -945,11 +1046,44 @@ async function runTraceCommand(args: string[], projectRoot: string) {
     process.exit(result.ok ? 0 : 1);
   }
 
+  // `wdf trace blame <file>:<line>` — reverse traceability from source to REQ/JTBD.
+  if (id === 'blame') {
+    const spec = args[2];
+    if (!spec || spec.startsWith('--')) {
+      console.error('Usage: wdf trace blame <file>:<line> [--rebuild]');
+      console.error('');
+      console.error('Reverse-traceability query: source line → commit → story → REQ → JTBD.');
+      console.error('');
+      console.error('Examples:');
+      console.error('  wdf trace blame src/api/user.ts:42');
+      console.error('  wdf trace blame backend/src/auth.ts:128 --rebuild');
+      process.exit(1);
+    }
+    const colonIdx = spec.lastIndexOf(':');
+    if (colonIdx <= 0) {
+      console.error(`Expected <file>:<line>, got: ${spec}`);
+      process.exit(1);
+    }
+    const file = spec.slice(0, colonIdx);
+    const line = parseInt(spec.slice(colonIdx + 1), 10);
+    if (!Number.isFinite(line) || line < 1) {
+      console.error(`Line must be a positive integer, got: ${spec.slice(colonIdx + 1)}`);
+      process.exit(1);
+    }
+    const { traceBlame } = await import('./trace-blame.js');
+    const rebuild = args.includes('--rebuild');
+    const result = await traceBlame({ file, line, projectRoot, rebuild });
+    console.log(result.formatted);
+    process.exit(0);
+  }
+
   if (!id || id === '--help' || id === '-h') {
     console.error('Usage: wdf trace <id> [--format=text|mermaid] [--rebuild]');
+    console.error('       wdf trace blame <file>:<line> [--rebuild]');
     console.error('       wdf trace --assert [--rebuild]');
     console.error('');
     console.error('Trace a node through the full JTBD→REQ→EPIC→STORY→API/DB→TEST→COMMIT chain.');
+    console.error('Or: `wdf trace blame <file>:<line>` to reverse-trace a source line back to its REQ/JTBD.');
     console.error('');
     console.error('Options:');
     console.error('  --format=text     Human-readable output (default)');
@@ -1043,6 +1177,197 @@ async function runPermissionsCommand(args: string[], projectRoot: string) {
   console.error(`Unknown subcommand: ${sub}`);
   console.error('See: wdf permissions --help');
   process.exit(1);
+}
+
+async function runHooksCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  const { installHooks, uninstallHooks, checkCommitMsg } = await import('./hooks-cmd.js');
+
+  if (sub === '--help' || sub === '-h' || sub === undefined) {
+    console.error('Usage: wdf hooks <install|uninstall|check-commit-msg> [args]');
+    console.error('');
+    console.error('Subcommands:');
+    console.error('  install [--strict] [--force]   Install the commit-msg hook into .git/hooks');
+    console.error('  uninstall                      Remove the wdf commit-msg hook');
+    console.error('  check-commit-msg <file> [--strict]');
+    console.error('                                 Validate a commit message file (used by the hook)');
+    console.error('');
+    console.error('The commit-msg hook validates [story:<id>] tags: the story must exist and');
+    console.error('declare a REQ mapping. --strict additionally requires every commit to be tagged.');
+    process.exit(sub === undefined ? 1 : 0);
+  }
+
+  const strict = args.includes('--strict');
+
+  if (sub === 'install') {
+    const force = args.includes('--force');
+    // Resolve the absolute path to this CLI's entry script so the generated
+    // hook can call back into it regardless of cwd.
+    const cliPath = fileURLToPath(import.meta.url);
+    try {
+      const r = installHooks({ projectRoot, cliPath, force, strict });
+      if (!r.installed) {
+        console.error(r.note ?? 'hook not installed');
+        process.exit(1);
+      }
+      console.log(`✓ commit-msg hook ${r.replaced ? 'updated' : 'installed'} at ${r.hookPath}${strict ? ' (strict)' : ''}`);
+      if (r.note) console.log(`  ${r.note}`);
+    } catch (err) {
+      console.error(`✗ ${(err as Error).message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === 'uninstall') {
+    const r = uninstallHooks(projectRoot);
+    if (!r.removed) {
+      console.log('(no wdf commit-msg hook to remove)');
+      return;
+    }
+    console.log(`✓ removed wdf commit-msg hook${r.preserved_user_section ? ' (preserved your custom section)' : ''}`);
+    return;
+  }
+
+  if (sub === 'check-commit-msg') {
+    const msgFile = args[2];
+    if (!msgFile || msgFile.startsWith('--')) {
+      console.error('Usage: wdf hooks check-commit-msg <msg-file> [--strict]');
+      process.exit(1);
+    }
+    let message: string;
+    try {
+      message = readFileSync(resolve(msgFile), 'utf8');
+    } catch {
+      console.error(`✗ cannot read commit message file: ${msgFile}`);
+      process.exit(1);
+    }
+    const result = checkCommitMsg({ message: message.replace(/\s+$/, ''), projectRoot, strict });
+    if (!result.ok) {
+      console.error(`✗ [wdf-hook] commit rejected: ${result.reason}`);
+      console.error('  (bypass for one commit with: git commit --no-verify)');
+      process.exit(1);
+    }
+    if (result.story_id) {
+      console.error(`✓ [wdf-hook] ${result.story_id} → ${result.req_ids?.join(', ')}`);
+    }
+    process.exit(0);
+  }
+
+  console.error(`Unknown subcommand: ${sub}`);
+  console.error('See: wdf hooks --help');
+  process.exit(1);
+}
+
+async function runChecklistCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  const { generateChecklist, verifyChecklist, listChecklists } = await import('./checklist-cmd.js');
+
+  if (sub === '--help' || sub === '-h') {
+    console.error('Usage: wdf checklist <story-id> [--force]');
+    console.error('       wdf checklist verify <story-id>');
+    console.error('       wdf checklist list');
+    console.error('');
+    console.error('Generate / verify the per-story requirements checklist.');
+    console.error('');
+    console.error('Subcommands:');
+    console.error('  <story-id>          Generate CHK### items (mechanical + soft). Idempotent.');
+    console.error('  verify <story-id>   Check that every CHK### item is [x]. Exit 0 if clean.');
+    console.error('  list                Enumerate every checklist in _wdf_output/checklists/.');
+    console.error('');
+    console.error('Options:');
+    console.error('  --force             Regenerate even if a checklist already exists');
+    process.exit(0);
+  }
+
+  if (sub === 'list' || sub === undefined) {
+    const list = listChecklists({ projectRoot });
+    if (list.length === 0) {
+      console.log('(no checklists — run `wdf checklist <story-id>` to generate one)');
+      return;
+    }
+    for (const e of list) {
+      const mark = e.ok ? '✓' : `✗ ${e.unchecked}/${e.total} unchecked`;
+      console.log(`  ${mark}  ${e.storyId}  (${e.path})`);
+    }
+    process.exit(list.every(e => e.ok) ? 0 : 1);
+  }
+
+  if (sub === 'verify') {
+    const storyId = args[2];
+    if (!storyId) {
+      console.error('Usage: wdf checklist verify <story-id>');
+      process.exit(1);
+    }
+    const r = verifyChecklist({ storyId, projectRoot });
+    console.log(r.path);
+    if (r.ok) {
+      console.log(`✓ all ${r.items.length} items checked`);
+      return;
+    }
+    console.error(`✗ ${r.reason}`);
+    process.exit(1);
+  }
+
+  // Default: generate the checklist for the given story-id.
+  const force = args.includes('--force');
+  try {
+    const r = generateChecklist({ storyId: sub, projectRoot, force });
+    console.log(`${r.created ? '✓ generated' : '✓ existing'}: ${r.path}`);
+    console.log(`  mechanical: ${r.mechanicalItems.length}`);
+    console.log(`  soft:       ${r.items.length - r.mechanicalItems.length} (review in /wdf-checklist session)`);
+    const unchecked = r.items.filter(i => !i.checked).map(i => i.id);
+    if (unchecked.length > 0) {
+      console.log(`  unchecked:  ${unchecked.join(', ')}`);
+    }
+  } catch (err) {
+    console.error(`✗ ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+async function runClarifyCommand(args: string[], projectRoot: string) {
+  const sub = args[1];
+  const { scanClarifications, verifyClarifications } = await import('./clarify-cmd.js');
+
+  if (sub === '--help' || sub === '-h') {
+    console.error('Usage: wdf clarify [scan]      Scan the PRD and update clarifications.md (default)');
+    console.error('       wdf clarify verify      Exit non-zero while any clarification is open');
+    console.error('');
+    console.error('Surface underspecified areas in the PRD (ambiguous adjectives, placeholders,');
+    console.error('non-measurable REQs) and persist them to _wdf_output/clarifications.md.');
+    console.error('Resolve each by checking its box and adding an **Answer:** line, then reflect');
+    console.error('the decision back into prd.md. Re-running preserves resolved answers.');
+    process.exit(0);
+  }
+
+  if (sub === 'verify') {
+    const r = verifyClarifications({ projectRoot });
+    if (!r.exists) {
+      console.error('✗ no clarifications.md — run `wdf clarify` first');
+      process.exit(1);
+    }
+    console.log(r.path);
+    if (r.ok) {
+      console.log(`✓ all ${r.total} clarifications resolved`);
+      return;
+    }
+    console.error(`✗ ${r.open.length}/${r.total} clarification(s) still open: ${r.open.join(', ')}`);
+    process.exit(1);
+  }
+
+  // Default (or explicit `scan`): rescan the PRD and update the artifact.
+  const r = scanClarifications({ projectRoot });
+  console.log(`${r.created ? '✓ generated' : '✓ updated'}: ${r.path}`);
+  console.log(`  open:     ${r.open}`);
+  console.log(`  resolved: ${r.resolved}`);
+  if (r.open > 0) {
+    const openItems = r.items.filter(i => i.status === 'open');
+    for (const i of openItems.slice(0, 10)) {
+      console.log(`    ${i.id} [${i.category}] ${i.source} — ${i.question}`);
+    }
+    if (openItems.length > 10) console.log(`    … and ${openItems.length - 10} more`);
+  }
 }
 
 async function runConvergeCommand(args: string[], projectRoot: string) {
@@ -1429,16 +1754,46 @@ async function runSpecCommand(args: string[], projectRoot: string) {
       break;
     }
 
+    case 'analyze': {
+      // Phase B (V3.10.2): run semantic cross-artifact rules and write
+      // _wdf_output/_output/solutioning/consistency-report.md.
+      const { analyzeConsistency } = await import('./spec-sync.js');
+      const result = await analyzeConsistency(projectRoot);
+      console.log('');
+      console.log(`Spec consistency report written: ${result.reportPath}`);
+      console.log(`Findings: ${result.findings.length}`);
+      if (result.findings.length > 0) {
+        const errors = result.findings.filter(f => f.severity === 'error').length;
+        const warnings = result.findings.filter(f => f.severity === 'warning').length;
+        console.log(`  (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'})`);
+        console.log('');
+        console.log('Top findings:');
+        for (const f of result.findings.slice(0, 10)) {
+          const loc = f.file ? ` [${f.file}${f.line ? `:${f.line}` : ''}]` : '';
+          console.log(`  [${f.ruleId}] ${f.message}${loc}`);
+        }
+        if (result.findings.length > 10) {
+          console.log(`  ... and ${result.findings.length - 10} more (see report)`);
+        }
+      }
+      // Non-zero exit in strict CI mode when any error-severity finding exists
+      if (result.findings.some(f => f.severity === 'error')) {
+        process.exit(1);
+      }
+      break;
+    }
+
     case 'help':
     case '--help':
     case undefined:
-      console.log('Usage: wdf spec <init|list|validate|sync> [options]');
+      console.log('Usage: wdf spec <init|list|validate|sync|analyze> [options]');
       console.log('');
       console.log('Commands:');
       console.log('  init <domain>                    Scaffold empty specs/<domain>/spec.md');
       console.log('  list                             List discovered domains (from epics + specs/)');
       console.log('  validate [<domain>]              Validate against spec-schema.yaml');
       console.log('  sync [--reverse|--forward]       Bidirectional sync (default: reverse)');
+      console.log('  analyze                          Run semantic cross-artifact rules and emit consistency report');
       console.log('');
       console.log('Options:');
       console.log('  --json                           JSON output');
@@ -1511,6 +1866,57 @@ async function runPhaseCommand(args: string[], projectRoot: string, orchestrator
   }
 }
 
+async function runConstitutionEvolveCommand(args: string[], projectRoot: string) {
+  const subCommand = args[1];
+  const json = args.includes('--json');
+  const {
+    loadConstitution,
+    bumpConstitution,
+    diffConstitution,
+    formatConstitution,
+    formatConstitutionDiff,
+  } = await import('./constitution-cmd.js');
+
+  switch (subCommand) {
+    case 'show':
+    case undefined: {
+      const c = loadConstitution(projectRoot);
+      if (json) console.log(JSON.stringify(c, null, 2));
+      else console.log(formatConstitution(c));
+      process.exit(c.exists ? 0 : 1);
+      break;
+    }
+    case 'bump': {
+      const kind = args[2];
+      if (kind !== 'major' && kind !== 'minor' && kind !== 'patch') {
+        console.error('Usage: wdf constitution bump <major|minor|patch> [--reason=...]');
+        process.exit(1);
+      }
+      const reasonArg = args.find(a => a.startsWith('--reason='));
+      const reason = reasonArg ? reasonArg.slice('--reason='.length) : '';
+      const r = bumpConstitution(projectRoot, kind, reason);
+      if (json) {
+        console.log(JSON.stringify(r, null, 2));
+      } else if (r.ok) {
+        console.log(`Constitution bumped: ${r.oldVersion} → ${r.newVersion} (${r.path})`);
+        console.log('Snapshot + changelog updated. Edit rules, then run `wdf constitution diff`.');
+      } else {
+        console.error(r.error);
+      }
+      process.exit(r.ok ? 0 : 1);
+      break;
+    }
+    case 'diff': {
+      const d = diffConstitution(projectRoot);
+      if (json) console.log(JSON.stringify(d, null, 2));
+      else console.log(formatConstitutionDiff(d));
+      break;
+    }
+    default:
+      console.log('Usage: wdf constitution <show|bump|diff>');
+  }
+}
+
 async function runGateCommand(args: string[], projectRoot: string, orchestrator: PhaseOrchestrator) {
   const subCommand = args[1];
   const gateId = args[2];
@@ -1559,8 +1965,37 @@ async function runGateCommand(args: string[], projectRoot: string, orchestrator:
         console.log(orchestrator.formatGateDetails(details));
       }
       break;
+    case 'phase4': {
+      // Preview the Phase 3.9 → 4 entry gate verdict without triggering
+      // Phase 4. CI-usable: exits non-zero when the spec is blocked.
+      const { evaluatePhase4EntryGate, formatPhase4EntryGate } = await import('./phase4-entry-gate.js');
+      const entry = evaluatePhase4EntryGate(projectRoot);
+      if (json) {
+        console.log(JSON.stringify(entry, null, 2));
+      } else {
+        console.log(formatPhase4EntryGate(entry));
+      }
+      process.exit(entry.ok ? 0 : 1);
+      break;
+    }
+    case 'exit': {
+      // Preview the Phase 4 → MERGED exit gate verdict (test-binding +
+      // traceability STORY_NO_TEST + drift). CI-usable: exits non-zero when
+      // any story is blocked. `--story=X` scopes to a single story.
+      const storyArg = args.find(a => a.startsWith('--story='));
+      const storyId = storyArg ? storyArg.slice('--story='.length) : undefined;
+      const { evaluatePhase4ExitGate, formatPhase4ExitGate } = await import('./phase4-exit-gate.js');
+      const exit = evaluatePhase4ExitGate(projectRoot, storyId ? { storyId } : {});
+      if (json) {
+        console.log(JSON.stringify(exit, null, 2));
+      } else {
+        console.log(formatPhase4ExitGate(exit));
+      }
+      process.exit(exit.ok ? 0 : 1);
+      break;
+    }
     default:
-      console.log('Usage: wdf gate <list|eval|show> [gate-id]');
+      console.log('Usage: wdf gate <list|eval|show|phase4|exit> [gate-id]');
   }
 }
 
@@ -1870,14 +2305,40 @@ async function runStoryCommand(args: string[], projectRoot: string, orchestrator
       }
       break;
 
+    case 'migrate-pack': {
+      if (!storyId) {
+        console.error('Usage: wdf story migrate-pack <story-id>');
+        process.exit(1);
+      }
+      const { migrateStoryPack } = await import('./story-migrate-cmd.js');
+      const outputDir = process.env.WDF_OUTPUT_DIR
+        ?? join(projectRoot, '_wdf_output');
+      try {
+        const result = migrateStoryPack(storyId, outputDir);
+        if (result.alreadyV1) {
+          console.log(`Story ${storyId} is already Story Pack v1.0 — no changes.`);
+        } else {
+          console.log(`Migrated ${storyId} → Story Pack v1.0`);
+          console.log(`  - ${result.storyPath}`);
+          console.log(`  - execution_unit: ${result.unitId}`);
+          console.log(`  - next: run \`wdf lint --strict\` to validate the new format`);
+        }
+      } catch (err: any) {
+        console.error(`Migration failed: ${err?.message ?? String(err)}`);
+        process.exit(1);
+      }
+      break;
+    }
+
     default:
-      console.log('Usage: wdf story <list|show|start|status> [options]');
+      console.log('Usage: wdf story <list|show|start|status|migrate-pack> [options]');
       console.log('');
       console.log('Commands:');
       console.log('  list [--track backend|frontend] [--status STATUS]   List all stories');
       console.log('  show <story-id>                                     Show story details');
       console.log('  start <story-id>                                    Start executing a story');
       console.log('  status [story-id]                                   Show story status');
+      console.log('  migrate-pack <story-id>                             Backfill Story Pack v1.0 frontmatter');
   }
 }
 

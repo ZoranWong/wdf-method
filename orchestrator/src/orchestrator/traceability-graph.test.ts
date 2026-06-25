@@ -169,6 +169,25 @@ describe('buildTraceabilityGraph', () => {
     expect(edge).toBeDefined();
   });
 
+  it('emits STORY → REQ edges from a scalar maps_to_req:', () => {
+    // Real stories often declare the requirement via `maps_to_req: REQ-001`
+    // rather than listing it in `refs:`. The graph must still link them so
+    // reverse traceability (wdf trace blame) can resolve the REQ.
+    writeFileSync(join(root, '_wdf_output', 'stories', 'STORY-MAP.md'), [
+      '---',
+      'story_id: STORY-MAP',
+      'title: Mapped story',
+      'maps_to_req: REQ-2',
+      'acceptance_criteria: [AC-MAP]',
+      '---',
+    ].join('\n'));
+    const g = buildTraceabilityGraph({ projectRoot: root });
+    const derives = g.edges.find(e => e.from === 'STORY-MAP' && e.to === 'REQ-2' && e.kind === 'derives_from');
+    const covers = g.edges.find(e => e.from === 'STORY-MAP' && e.to === 'REQ-2' && e.kind === 'covers');
+    expect(derives).toBeDefined();
+    expect(covers).toBeDefined();
+  });
+
   it('is idempotent — same inputs produce identical source_hash', () => {
     const g1 = buildTraceabilityGraph({ projectRoot: root });
     const g2 = buildTraceabilityGraph({ projectRoot: root });

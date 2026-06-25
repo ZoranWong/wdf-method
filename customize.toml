@@ -12,6 +12,35 @@ version = "3.9.0"
 # "full_stack" — Single unified codebase (Next.js, Nuxt, Remix, etc.), merged development phase, stories contain BE+FE tasks
 dev_mode = "separated"
 
+# ── Phase C (V3.10.3): Auto-dispatch mode ──
+# When true, the loop engine populates LoopNextResult.next_dispatch with
+# an explicit recommendation (agent_role, manifest_path, reason) that the
+# main session can act on directly — no inferring from action shape.
+# Additionally, downstream-stage manifests (review/testing/qa) auto-inject
+# their upstream artifacts (dev files_changed, acceptance_check list, prior
+# reports) so the agent has structured context without re-reading the story.
+# Default false to preserve existing manual-dispatch UX.
+auto_dispatch = false
+
+# ── Stage 1: Requirement-quality checklist (CHK###) gate ──
+# req_quality_gate: when true the Story Ready Gate adds a REQ_QUALITY check —
+#   a story is BLOCKED from Phase-4 dispatch unless its checklist exists and
+#   every CHK item is [x]. Opt-in (default false) so existing projects without
+#   checklists are not retroactively blocked. Generate checklists with
+#   `wdf checklist <story-id>`; verify with `wdf checklist verify <story-id>`.
+req_quality_gate = false
+# checklists_output overrides the default `{output_dir}/checklists` directory.
+# checklists_output = "{project-root}/_wdf_output/checklists"
+
+[workflow.checklist]
+# scope_max_files: CHK-M02 passes only when scope_write declares ≤ this many
+#   files (atomic story heuristic). Raise for legitimately broad stories.
+scope_max_files = 8
+# ac_min_count: CHK-M03 passes only when acceptance_check declares ≥ this many
+#   commands. Set to 0 to disable the minimum.
+ac_min_count = 1
+
+
 # ── Tech stack defaults (overrideable per project) ──
 default_frontend_framework = "react"
 default_backend_framework = "express"

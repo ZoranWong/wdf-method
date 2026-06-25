@@ -45,6 +45,13 @@ export interface StoryRunnerOptions {
   protectedPaths?: string[];
   /** Scope lock config from customize.toml. */
   scopeLockConfig?: ScopeLockConfig | null;
+  /**
+   * Enable the REQ_QUALITY gate (per-story checklist must exist and be fully
+   * checked before Phase 4 dispatch). Defaults to false so existing flows
+   * aren't broken; the CLI orchestrator sets this to true once a project has
+   * adopted the checklist workflow.
+   */
+  reqQualityGate?: boolean;
 }
 
 export class StoryRunner {
@@ -56,6 +63,7 @@ export class StoryRunner {
   private projectRoot: string;
   private protectedPaths: string[];
   private scopeLockConfig: ScopeLockConfig | null;
+  private reqQualityGate: boolean;
 
   constructor(
     state: SprintStatusManager,
@@ -73,6 +81,7 @@ export class StoryRunner {
     this.outputDir = outputDir;
     this.projectRoot = projectRoot;
     this.scopeLockConfig = options.scopeLockConfig ?? null;
+    this.reqQualityGate = options.reqQualityGate ?? false;
     // Default protected paths (V3.6) — overridden by config when provided.
     this.protectedPaths = options.protectedPaths && options.protectedPaths.length > 0
       ? options.protectedPaths
@@ -395,6 +404,15 @@ export class StoryRunner {
     const gateResult = await this.runBaseSRGChecks(story);
     // Task 7: Scope-Lock pre-execution gate
     await this.addScopeLockCheck(story, gateResult.results);
+    // Phase 1 (Stage 1) — requirement quality gate: verify the per-story
+    // checklist exists and every CHK### item is checked. Without this, a
+    // story with valid scope/AC but vague content ("make it user-friendly")
+    // sails through SRG-01..09 unchanged. See orchestrator/checklist-cmd.ts.
+    // Opt-in (reqQualityGate) so projects that haven't adopted checklists yet
+    // aren't blocked.
+    if (this.reqQualityGate) {
+      await this.addReqQualityCheck(story, gateResult.results);
+    }
     const all_pass = gateResult.results.every(r => r.status === 'pass');
     return { all_pass, serial_only: gateResult.serial_only, results: gateResult.results };
   }
@@ -445,6 +463,47 @@ export class StoryRunner {
         : 'clean';
       results.push({ id: 'SCOPE-LOCK', status: 'pass', reason: note });
     }
+  }
+
+  /**
+   * Phase 1 (Stage 1) — REQ_QUALITY gate. Verifies the per-story checklist
+   * exists and every CHK### item is checked. This is the hard gate: the
+   * checklist catches "valid shape, vague content" stories that SRG-01..09
+   * miss.
+   *
+   * Why not inline here: the verification logic lives in `checklist-cmd.ts`
+   * so it's reusable by `wdf checklist verify <id>` and by tests.
+   */
+  private async addReqQualityCheck(story: StoryEntry, results: any[]): Promise<void> {
+    let verify: typeof import('./checklist-cmd.js').verifyChecklist;
+    try {
+      ({ verifyChecklist: verify } = await import('./checklist-cmd.js'));
+    } catch {
+      results.push({ id: 'REQ_QUALITY', status: 'pass', reason: 'checklist module unavailable' });
+      return;
+    }
+    let r;
+    try {
+      r = await verify({ storyId: story.story_id, projectRoot: this.projectRoot });
+    } catch (err) {
+      results.push({ id: 'REQ_QUALITY', status: 'fail', reason: `checklist verification crashed: ${(err as Error).message}` });
+      return;
+    }
+    if (r.ok) {
+      results.push({ id: 'REQ_QUALITY', status: 'pass', reason: `${r.items.length} items all checked` });
+      return;
+    }
+    await this.state.appendAudit('req_quality_gate', {
+      story_id: story.story_id,
+      decision: 'block',
+      unchecked: r.unchecked,
+      reason: r.reason,
+    });
+    results.push({
+      id: 'REQ_QUALITY',
+      status: 'fail',
+      reason: r.reason ?? `unchecked items: ${r.unchecked.join(', ')}`,
+    });
   }
 
   /** SRG-01~03,05~07: Base checks from V3.1 */

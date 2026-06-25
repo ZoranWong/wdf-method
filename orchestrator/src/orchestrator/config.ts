@@ -60,6 +60,24 @@ export interface WorkflowSection {
   status_stories_dir?: string;
   status_merge_queue_dir?: string;
 
+  // Phase C (V3.10.3): auto-dispatch mode. When true, the loop engine
+  // populates next_dispatch with an explicit agent_role + manifest_path
+  // recommendation and downstream-stage manifests auto-inject upstream
+  // artifacts (dev files_changed, acceptance_check list, prior reports).
+  // Default false to preserve existing manual-dispatch UX.
+  auto_dispatch?: boolean;
+
+  // Stage 1: requirement-quality checklist (CHK###) gate.
+  // checklists_output overrides the default `_wdf_output/checklists` dir.
+  // req_quality_gate, when true, makes the Story Ready Gate refuse dispatch
+  // unless every CHK item in the story's checklist is `[x]`.
+  checklists_output?: string;
+  req_quality_gate?: boolean;
+  checklist?: {
+    scope_max_files?: number;
+    ac_min_count?: number;
+  };
+
   // Phase outputs (any other *_output keys)
   [extra: string]: any;
 }
@@ -153,6 +171,25 @@ export interface AcceptanceCheckSafetySection {
   allowed_exceptions: string[];
 }
 
+export interface SemanticGateSection {
+  /**
+   * Master switch for cross-artifact semantic validation.
+   *
+   * When true (default):
+   *   - `wdf check` (project-wide / --phase mode) surfaces the four semantic
+   *     rules (REQ_COVERAGE, API_SCOPE_MAPPING, DB_API_CONSISTENCY,
+   *     AC_TEST_BINDING) as advisory warnings — meaning, not just per-file form.
+   *   - The Phase 3.9 → Phase 4 entry gate runs those four rules + the
+   *     traceability gate + per-story checklist verify as a FAIL-CLOSED gate:
+   *     a project with semantic gaps cannot enter implementation.
+   *
+   * Set to false to opt out (legacy / in-flight projects that have not yet
+   * migrated to Story Pack v1.0). Opt-out removes the hard gate AND the
+   * advisory `wdf check` findings.
+   */
+  enabled: boolean;
+}
+
 export interface SpecsSection {
   // v3.8.x: false (PRD remained canonical; reverse sync bootstrapped specs/)
   // v3.9.0 (CHG-2026-015 S6): flipped to true (specs/ becomes source; forward sync overwrites PRD)
@@ -177,6 +214,7 @@ export interface WorkflowConfig {
   defaults: DefaultsSection;
   acceptance_check_safety: AcceptanceCheckSafetySection;
   specs: SpecsSection;
+  semantic_gate: SemanticGateSection;
   bmad_skill_fallbacks?: Record<string, any>;
   // Catch-all for unknown sections
   [extra: string]: any;
@@ -291,6 +329,9 @@ export const DEFAULT_CONFIG: WorkflowConfig = {
     enforce_unique_requirement_names: true,
     api_spec_path: `{project-root}/${DEFAULT_OUTPUT_BASE}/api-spec.yaml`,
     db_schema_path: `{project-root}/${DEFAULT_OUTPUT_BASE}/db-schema.md`,
+  },
+  semantic_gate: {
+    enabled: true,
   },
 };
 
@@ -433,6 +474,40 @@ export interface LoadConfigResult {
  *   4. {projectRoot}/_bmad/custom/web-dev-flow.toml (team)
  *   5. {projectRoot}/_bmad/custom/web-dev-flow.user.toml (user)
  */
+/**
+ * Whether cross-artifact semantic validation is enabled for this project.
+ *
+ * Resolution order:
+ *   1. The project's own wdf.toml [semantic_gate] enabled — this is where
+ *      `wdf init` writes and documents the flag, so it's the place users look.
+ *      (loadConfig does NOT read wdf.toml — it reads the customize.toml /
+ *      _bmad/custom chain — so we check wdf.toml explicitly here.)
+ *   2. The layered config (customize.toml, _bmad/custom/*.toml).
+ *   3. Default: enabled.
+ *
+ * Shared by `wdf check`'s advisory semantic pass (step 3) and the Phase 3.9 →
+ * Phase 4 entry hard gate (step 2) so a single opt-out governs both.
+ */
+export function isSemanticGateEnabled(projectRoot: string): boolean {
+  try {
+    const wdfToml = join(projectRoot, 'wdf.toml');
+    if (existsSync(wdfToml)) {
+      const parsed = parseToml(readFileSync(wdfToml, 'utf8')) as any;
+      const v = parsed?.semantic_gate?.enabled;
+      if (v === false) return false;
+      if (v === true) return true;
+    }
+  } catch {
+    // Fall through to the layered config.
+  }
+  try {
+    const { config } = loadConfig(projectRoot, { silent: true });
+    return config.semantic_gate?.enabled !== false;
+  } catch {
+    return true;
+  }
+}
+
 export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): LoadConfigResult {
   const warnings: string[] = [];
   const sources: string[] = [];
@@ -537,7 +612,7 @@ export function loadConfig(projectRoot: string, opts: LoadConfigOptions = {}): L
   const knownSections = new Set([
     'workflow', 'acceptance_gates', 'scope_lock', 'merge_queue',
     'change_request', 'auto_run', 'agent_communication', 'defaults',
-    'acceptance_check_safety', 'bmad_skill_fallbacks', 'specs',
+    'acceptance_check_safety', 'bmad_skill_fallbacks', 'specs', 'semantic_gate',
   ]);
   for (const key of Object.keys(merged)) {
     if (!knownSections.has(key) && typeof merged[key] === 'object') {

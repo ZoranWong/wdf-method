@@ -28,12 +28,14 @@ import {
   type PipelineStage,
   type PipelineDispatchManifest,
   type PipelineEscalation,
+  type PipelineContext,
 } from './types.js';
 import {
   processStoryPipeline,
   type PipelineAction,
 } from './pipeline-runner.js';
-import { stageToRole, advancePipeline } from './pipeline-engine.js';
+import { stageToRole, advancePipeline, writeEscalationManifest } from './pipeline-engine.js';
+import { classifyDispatch, type DispatchRecommendation } from './dispatch-classifier.js';
 import {
   applyRolePermissions,
   revokePermissions,
@@ -95,6 +97,14 @@ export interface LoopCompleteSummary {
 
 export interface LoopNextResult {
   action: LoopAction;
+  /**
+   * Phase C (V3.10.3): explicit dispatch recommendation. When `action.kind`
+   * is 'dispatch', this carries the agent role, manifest path, reason, and
+   * auto-eligibility flag derived from the classifier — so the main session
+   * reads one field instead of inferring from action shape. Undefined when
+   * there is nothing to dispatch (skip / complete / escalation).
+   */
+  next_dispatch?: DispatchRecommendation;
   /** Full pipeline state snapshot for observability */
   pipeline_snapshot: StoryPipelineSnapshot[];
   /** Timestamp of this evaluation */
@@ -273,7 +283,7 @@ export function evaluateNextLoopAction(
   // Process all stories to get their pipeline actions
   const actions: { story: StoryEntry; action: PipelineAction }[] = [];
   for (const story of devOrder) {
-    const action = processStoryPipeline(story, state, outputDir, projectRoot);
+    const action = processStoryPipeline(story, state, outputDir, projectRoot, frameworkRoot);
     actions.push({ story, action });
   }
 
@@ -364,13 +374,33 @@ export function evaluateNextLoopAction(
       permissions_applied: permissionsApplied,
     };
 
+    // Phase C (V3.10.3): derive an explicit dispatch recommendation so
+    // the main session reads one field instead of inferring from action
+    // shape. The classifier is a pure function over (stage, pipeline,
+    // story) — no filesystem I/O. Pipeline state comes from sprint-status
+    // (single source of truth) rather than the manifest, which only
+    // carries stage/attempt.
+    const existingStatus = state.getStories(4, subKey(next.story.track))
+      .find(s => s.id === next.story.story_id);
+    const next_dispatch = classifyDispatch({
+      stage: next.action.manifest!.stage,
+      pipeline: existingStatus?.pipeline ?? { stage: next.action.manifest!.stage, attempt: 1, total_retries: 0, max_retries: 5 } as PipelineContext,
+      story: next.story,
+      manifestPath,
+    }) ?? undefined;
+
     const snap = snapshots.find(s => s.story_id === next.story.story_id);
     if (snap) snap.is_next = true;
 
-    return { action, pipeline_snapshot: snapshots, evaluated_at: new Date().toISOString() };
+    return { action, next_dispatch, pipeline_snapshot: snapshots, evaluated_at: new Date().toISOString() };
   }
 
-  // ── Priority 3: Blocked stories ──
+  // ── Priority 3: Blocked stories (with dependency-wait timeout) ──
+  // A story is "blocked" when its depends_on are not all MERGED. The
+  // first time we detect this, we stamp blocked_since on the story
+  // status. If the block persists past dependency_wait_timeout_minutes
+  // (default 15), we auto-escalate — otherwise the system would wait
+  // forever for a dependency that may never complete.
   const blocked = actions
     .filter(a => a.action.kind !== 'skip' && a.action.kind !== 'complete')
     .filter(a => !areDependenciesMet(a.story, state));
@@ -378,6 +408,32 @@ export function evaluateNextLoopAction(
   if (blocked.length > 0) {
     const first = blocked[0];
     const unmetDeps = getUnmetDependencies(first.story, state);
+
+    // Check timeout: if this story has been blocked too long, escalate.
+    const timeoutEscalation = checkDependencyTimeout(
+      first.story,
+      unmetDeps,
+      state,
+      outputDir,
+      projectRoot,
+      frameworkRoot,
+    );
+    if (timeoutEscalation) {
+      const remaining = actions.filter(
+        a => a.action.kind !== 'skip' && a.action.kind !== 'complete'
+          && a.story.story_id !== first.story.story_id
+      ).length;
+      const action: LoopAction = {
+        kind: 'escalation',
+        story_id: first.story.story_id,
+        escalation: timeoutEscalation,
+        remaining,
+      };
+      const snap = snapshots.find(s => s.story_id === first.story.story_id);
+      if (snap) snap.is_next = true;
+      return { action, pipeline_snapshot: snapshots, evaluated_at: new Date().toISOString() };
+    }
+
     const action: LoopAction = {
       kind: 'blocked',
       story_id: first.story.story_id,
@@ -521,6 +577,112 @@ function getUnmetDependencies(
     }
   }
   return unmet;
+}
+
+/**
+ * Read dependency_wait_timeout_minutes from config. Falls back to 15min
+ * if config is unreadable or the key is missing. Mirrors the tolerance
+ * pattern used by sweepStaleEscalations.
+ */
+function getDependencyTimeoutMinutes(frameworkRoot: string, projectRoot: string): number {
+  try {
+    const { config } = loadConfig(projectRoot, { skillRoot: frameworkRoot });
+    const concurrency = (config as any)?.auto_run?.concurrency;
+    const raw = concurrency?.dependency_wait_timeout_minutes;
+    if (typeof raw === 'number' && raw > 0) return raw;
+  } catch {
+    // Use default
+  }
+  return 15;
+}
+
+/**
+ * Check whether a blocked story has exceeded its dependency wait window.
+ *
+ * Returns an escalation manifest if the story should be promoted to
+ * PIPELINE_ESCALATED; returns null otherwise.
+ *
+ * Side effects on timeout:
+ *   - Writes ESCALATED.json manifest via writeEscalationManifest
+ *   - Updates story status to PIPELINE_ESCALATED with blocked_since preserved
+ *   - Emits pipeline_escalation audit entry (via writeEscalationManifest)
+ *
+ * Side effects on first detection (no timeout yet):
+ *   - Stamps blocked_since on the story status for future timeout checks
+ */
+function checkDependencyTimeout(
+  story: StoryEntry,
+  unmetDeps: string[],
+  state: SprintStatusManager,
+  outputDir: string,
+  projectRoot: string,
+  frameworkRoot: string,
+): PipelineEscalation | null {
+  if (unmetDeps.length === 0) return null;
+
+  // Locate the story status in either BE or FE track
+  const subKey = story.track === 'frontend' ? 'phase_4_10' : 'phase_4_4';
+  const stories = state.getStories(4, subKey);
+  const existing = stories.find(s => s.id === story.story_id);
+  if (!existing) return null;
+
+  // Already escalated/failed — nothing to do
+  if (existing.status === 'PIPELINE_ESCALATED' || existing.status === 'FAIL') {
+    return null;
+  }
+
+  const now = Date.now();
+  const timeoutMinutes = getDependencyTimeoutMinutes(frameworkRoot, projectRoot);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+
+  // First detection: stamp blocked_since and return null
+  if (!existing.blocked_since) {
+    state.updateStoryStatus(4, subKey, {
+      ...existing,
+      blocked_since: new Date(now).toISOString(),
+    });
+    return null;
+  }
+
+  const blockedAt = new Date(existing.blocked_since).getTime();
+  if (Number.isNaN(blockedAt)) return null;
+
+  const elapsed = now - blockedAt;
+  if (elapsed < timeoutMs) return null;
+
+  // Timeout exceeded — escalate
+  const escalation = writeEscalationManifest(
+    story,
+    existing.pipeline?.stage ?? 'dev',
+    `Dependency wait timeout after ${Math.round(elapsed / 60000)}min (limit ${timeoutMinutes}min). Unmet: ${unmetDeps.join(', ')}`,
+    outputDir,
+    {
+      totalAttempts: existing.pipeline?.total_retries ?? 0,
+      projectRoot,
+      failedStages: existing.pipeline ? [existing.pipeline.stage] : ['dev'],
+      lastFeedback: `Dependencies never completed: ${unmetDeps.join(', ')}`,
+    },
+  );
+
+  state.updateStoryStatus(4, subKey, {
+    ...existing,
+    status: 'PIPELINE_ESCALATED',
+  });
+
+  appendAudit(projectRoot, 'pipeline_escalation', {
+    story_id: story.story_id,
+    status: 'fail',
+    message: `Dependency timeout after ${Math.round(elapsed / 60000)}min waiting on: ${unmetDeps.join(', ')}`,
+    details: {
+      blocked_since: existing.blocked_since,
+      timeout_minutes: timeoutMinutes,
+      unmet_dependencies: unmetDeps,
+      sub_key: subKey,
+      recovery: 'Run `wdf reset --force --story=' + story.story_id + '` after resolving dependencies',
+    },
+  });
+
+  return escalation;
 }
 
 /**

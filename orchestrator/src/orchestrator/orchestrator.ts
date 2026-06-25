@@ -10,7 +10,9 @@ import { MergeQueueManager } from './merge-queue.js';
 import { SignalManager } from './signal-manager.js';
 import { PartyEngine } from './party-engine.js';
 import { runAcceptanceChecks, type AcceptanceReport } from './acceptance-runner.js';
+import { resolveStoryCwd } from './story-cwd.js';
 import { appendAudit, readRecentAudit, formatAuditLines } from './audit-logger.js';
+import { evaluatePhase4EntryGate, formatPhase4EntryGate } from './phase4-entry-gate.js';
 import { SUB_PHASE_AGENT_MAP, isSubPhaseComplete, type SubPhaseContext } from './subphase-executor.js';
 import {
   loadConfig,
@@ -191,6 +193,7 @@ export class PhaseOrchestrator {
       {
         protectedPaths: this.config.scope_lock?.protected_paths ?? [],
         scopeLockConfig: scopeLockCfg,
+        reqQualityGate: this.config.workflow?.req_quality_gate ?? false,
       }
     );
     this.mergeQueue = new MergeQueueManager(this.state, this.projectRoot, scopeLockCfg);
@@ -556,6 +559,28 @@ export class PhaseOrchestrator {
       }
     }
 
+    // Phase 3.9 → 4 entry gate: fail-closed spec-consistency boundary. Reject
+    // an internally inconsistent spec (uncovered REQ, orphan endpoint, story
+    // without a REQ, incomplete checklist) before any agent writes code and
+    // before the phase is marked IN_PROGRESS. Test-dependent checks are
+    // excluded — tests are authored during Phase 4. Default-on; relaxable per
+    // project via wdf.toml [semantic_gate] enabled = false.
+    const entry = evaluatePhase4EntryGate(this.projectRoot);
+    if (entry.enabled && !entry.ok) {
+      console.log(`\n${formatPhase4EntryGate(entry)}`);
+      appendAudit(this.projectRoot, 'phase4_entry_blocked', {
+        status: 'fail',
+        message: `Phase 4 entry blocked — ${entry.gaps.length} spec-consistency gap(s)`,
+        details: {
+          gaps: entry.gaps.length,
+          semantic: entry.totals.semantic,
+          traceability: entry.totals.traceability,
+          checklist: entry.totals.checklist,
+        },
+      });
+      return;
+    }
+
     await this.state.setPhaseStatus(4, 'IN_PROGRESS');
 
     console.log(`\n── Phase 4: Implementation (${gs.task_triage_mode === 'parallel' ? 'PARALLEL' : 'SERIAL'} mode) ──`);
@@ -715,14 +740,7 @@ export class PhaseOrchestrator {
       }
 
       // Determine working directory: first scope_write path that exists, or project root
-      let cwd = this.projectRoot;
-      for (const scope of story.scope_write) {
-        const scopePath = join(this.projectRoot, scope);
-        if (existsSync(scopePath)) {
-          cwd = scopePath;
-          break;
-        }
-      }
+      const cwd = resolveStoryCwd(story, this.projectRoot);
 
       const report: AcceptanceReport = await runAcceptanceChecks(story.acceptance_check, {
         cwd,

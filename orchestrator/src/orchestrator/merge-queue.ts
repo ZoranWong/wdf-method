@@ -160,6 +160,30 @@ export class MergeQueueManager {
    *   - permissive  → silently continue.
    */
   async attemptAtomicMerge(item: MergeQueueItem): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
+    // ── Step -1: Phase 4 EXIT gate (test-side traceability hard block) ──
+    // Last line of defense before git merge: even if QA passed, a story whose
+    // ACs aren't test-bound (or that introduced unspec'd routes) must never
+    // land on main. Scoped to this story so unrelated gaps don't block it.
+    const { evaluatePhase4ExitGate, formatPhase4ExitGate } = await import('./phase4-exit-gate.js');
+    const exit = evaluatePhase4ExitGate(this.projectRoot, { storyId: item.story_id });
+    if (exit.enabled && !exit.ok) {
+      const reason = formatPhase4ExitGate(exit);
+      await this.markFailed(item.story_id, reason);
+      appendAudit(this.projectRoot, 'phase4_exit_blocked', {
+        actor: 'system',
+        story_id: item.story_id,
+        status: 'fail',
+        message: `Merge blocked by exit gate — ${exit.gaps.length} test/drift gap(s)`,
+        details: {
+          gaps: exit.gaps.length,
+          test_binding: exit.totals.test_binding,
+          traceability: exit.totals.traceability,
+          drift: exit.totals.drift,
+        },
+      });
+      return { merged: false, error: reason };
+    }
+
     // ── Step 0: Scope-Lock pre-merge gate (Task 7, post-merge stage) ──
     const scopeBlock = await this.runScopeLockPreMergeGate(item);
     if (scopeBlock) {
@@ -355,6 +379,11 @@ export class MergeQueueManager {
 
   /**
    * Mark a merge as successful.
+   *
+   * Phase C (V3.10.3): triggers integration-orchestrator after each merge
+   * so the orchestrator can detect when all stories are merged and run
+   * cross-story integration checks. The orchestrator is non-blocking —
+   * any failure is recorded as a change-request for the user to pick up.
    */
   async markMerged(storyId: string, commitHash: string): Promise<void> {
     await this.state.updateMergeItem(storyId, {
@@ -362,6 +391,14 @@ export class MergeQueueManager {
       merged_at: new Date().toISOString(),
       merge_commit: commitHash,
     });
+
+    try {
+      const { onStoryMerged } = await import('./integration-orchestrator.js');
+      await onStoryMerged(this.projectRoot, undefined, storyId);
+    } catch {
+      // Non-fatal — integration orchestrator failure must not break the
+      // merge acknowledgement. Failures are visible via the audit log.
+    }
   }
 
   /**
